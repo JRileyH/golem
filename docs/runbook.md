@@ -3,13 +3,35 @@
 Any box with Docker and a public IP will do: a VPS, a Raspberry Pi 5, x86 or
 ARM. golem takes ports 80 and 443 and gets its own certificates; it touches
 nothing else on the box. Already run a reverse proxy on 80 and 443? golem can sit
-behind it instead: [behind-a-proxy.md](behind-a-proxy.md) says what changes. The
-commands below run on the box, in the directory you clone golem into (`~/golem`
-here).
+behind it instead: see [below](#already-running-a-reverse-proxy). The commands
+below run on the box, in the directory you clone golem into (`~/golem` here).
 
 Moving golem from another box, or using an org it has used before? Read
 [Moving to a new box](#moving-to-a-new-box) first: golem brings that org's
 projects back on its first start.
+
+## Already running a reverse proxy?
+
+If a proxy of yours (Caddy, nginx, Traefik...) already holds 80 and 443, on this
+box or in front of it, golem sits behind it. Set it up as
+[behind-a-proxy.md](behind-a-proxy.md) says, then follow the steps below with
+these differences:
+
+- **Step 0:** "nothing else listening on 80 or 443" doesn't apply. The wildcard
+  record points at whatever reaches your proxy, and a home router forwards 80 and
+  443 to the proxy, not to golem. Let's Encrypt never needs to reach golem: your
+  proxy holds a wildcard certificate (DNS challenge), so a CDN proxy in front is
+  fine too.
+- **Step 2:** set `EDGE_PORT` before the second `bin/bootstrap.sh server`, which
+  should then say "front door: plain HTTP on ...".
+- **Step 3:** golem's Traefik gets no certificates: skip the `acme` grep and the
+  wait. Start or reload your proxy after golem, since a proxy in Docker joins
+  `golem-edge`, which golem creates.
+- **Step 4:** first check golem answers on `EDGE_PORT` itself ("Checking it" in
+  behind-a-proxy.md), then through the proxy. `nothing-here` needs no `-k`: the
+  wildcard certificate covers it.
+- **Moving to a new box:** projects need no certificates of their own, so DNS
+  needn't move before golem starts; the new box's proxy needs the same forwarding.
 
 ## 0. Before you start
 
