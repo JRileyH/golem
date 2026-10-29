@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS projects (
     effort TEXT NOT NULL DEFAULT 'high',
     paused INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
-    tag TEXT NOT NULL DEFAULT ''     -- what sort of project it is (tags), '' for none
+    tag TEXT NOT NULL DEFAULT '',    -- what sort of project it is (tags), '' for none
+    proposals TEXT NOT NULL DEFAULT 'off'  -- how often golem looks for improvements to propose (EVERY)
 );
 -- The few big-picture sorts of project ("Game"), shown on the projects page in their color.
 CREATE TABLE IF NOT EXISTS tags (
@@ -127,6 +128,21 @@ CREATE TABLE IF NOT EXISTS defaults (
     model TEXT NOT NULL DEFAULT '',
     effort TEXT NOT NULL DEFAULT ''
 );
+-- Improvements golem proposed for a project while it had nothing else to do (proposals.py),
+-- and what Riggy made of them. An accepted one becomes a change job.
+CREATE TABLE IF NOT EXISTS proposals (
+    id INTEGER PRIMARY KEY,
+    slug TEXT NOT NULL REFERENCES projects(slug),
+    job_id INTEGER NOT NULL REFERENCES jobs(id),  -- the proposals job that made it
+    lens TEXT NOT NULL,              -- the kind of improvement it was looking for (proposals.LENSES)
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,              -- what, why, and roughly how big
+    state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected
+    reason TEXT NOT NULL DEFAULT '', -- Riggy's why, if he gave one
+    built_by INTEGER,                -- the change job an accepted one became, once it's queued
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
 """
 
 # Columns added after the first release, added to older databases on open.
@@ -135,6 +151,7 @@ MIGRATIONS = {
         "model": "TEXT NOT NULL DEFAULT 'opus'",
         "effort": "TEXT NOT NULL DEFAULT 'high'",
         "tag": "TEXT NOT NULL DEFAULT ''",
+        "proposals": "TEXT NOT NULL DEFAULT 'off'",
     },
     "runs": {"step_id": "INTEGER"},
     "steps": {
@@ -155,6 +172,10 @@ ACTIVE = ("queued", "running", "waiting", "parked")
 # Steps in these states are still to do: the first of them is the job's current step.
 OPEN = ("pending", "running", "waiting")
 MODES = ("reckless", "standard", "rigorous")
+# Playbooks whose jobs only look: nothing is committed, pushed or deployed, so they can run
+# between the steps of a project's change.
+LOOKS = ("question", "proposals")
+EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
 MODELS = ("fable", "opus", "sonnet", "haiku")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
@@ -178,6 +199,24 @@ class Project:
     paused: bool
     created_at: str
     tag: str = ""  # a Tag's name, or "" for none
+    proposals: str = "off"  # how often golem looks for improvements to propose (EVERY)
+
+
+@dataclass
+class Proposal:
+    """An improvement golem proposed for a project, and what Riggy made of it."""
+
+    id: int
+    slug: str
+    job_id: int
+    lens: str
+    title: str
+    body: str
+    state: str  # open | accepted | rejected
+    reason: str
+    built_by: int | None  # the change job building it, once accepted and queued
+    created_at: str
+    decided_at: str | None
 
 
 @dataclass
@@ -320,7 +359,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag"}, fields
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -330,11 +369,12 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag FROM projects WHERE slug = ?",
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals FROM projects WHERE slug = ?",
                 (new, old),
             )
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
+            self.db.execute("UPDATE proposals SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE cards SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE messages SET channel = ? WHERE channel = ?", (new, old))
             self.db.execute("DELETE FROM projects WHERE slug = ?", (old,))
@@ -349,6 +389,7 @@ class Store:
             self.db.execute(f"DELETE FROM notes WHERE job_id IN ({jobs})", (slug,))
             self.db.execute(f"DELETE FROM runs WHERE job_id IN ({jobs})", (slug,))
             self.db.execute(f"DELETE FROM steps WHERE job_id IN ({jobs})", (slug,))
+            self.db.execute("DELETE FROM proposals WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM jobs WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM cards WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM messages WHERE channel = ?", (slug,))
@@ -485,11 +526,12 @@ class Store:
 
     def active_job(self, slug: str, questions: bool = True) -> Job | None:
         """The project's unfinished job, if any. A project works on one change at a time; a
-        question can come in between (`questions=False` leaves them out)."""
+        question or a look for proposals can come in between (`questions=False` leaves them out)."""
         marks = ", ".join("?" * len(ACTIVE))
-        skip = "" if questions else " AND playbook != 'question'"
+        skip = "" if questions else f" AND playbook NOT IN ({', '.join('?' * len(LOOKS))})"
         row = self.db.execute(
-            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}){skip} ORDER BY id LIMIT 1", (slug, *ACTIVE)
+            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}){skip} ORDER BY id LIMIT 1",
+            (slug, *ACTIVE, *(() if questions else LOOKS)),
         ).fetchone()
         return Job(**row) if row else None
 
@@ -611,6 +653,56 @@ class Store:
         """Every kind of step back to golem's suggestion, and "every step" unset."""
         self.db.execute("DELETE FROM defaults")
         self.db.executemany("INSERT INTO defaults (name, model, effort) VALUES (?, ?, ?)", [(n, *me) for n, me in suggested.items()])
+
+    # --- proposals ------------------------------------------------------------
+
+    def add_proposals(self, slug: str, job_id: int, lens: str, made: list[tuple[str, str]]) -> list[Proposal]:
+        """A proposals job's (title, body) pairs, in place of any it made before (its step ran again)."""
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute("DELETE FROM proposals WHERE job_id = ? AND state = 'open'", (job_id,))
+            self.db.executemany(
+                "INSERT INTO proposals (slug, job_id, lens, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [(slug, job_id, lens, title, body, now()) for title, body in made],
+            )
+        return self.job_proposals(job_id)
+
+    def proposal(self, proposal_id: int) -> Proposal | None:
+        row = self.db.execute("SELECT * FROM proposals WHERE id = ?", (proposal_id,)).fetchone()
+        return Proposal(**row) if row else None
+
+    def proposals(self, slug: str, states: tuple[str, ...] | None = None, limit: int = 200) -> list[Proposal]:
+        """A project's proposals, newest first; only those in `states` if given."""
+        states = states or ("open", "accepted", "rejected")
+        marks = ", ".join("?" * len(states))
+        rows = self.db.execute(
+            f"SELECT * FROM proposals WHERE slug = ? AND state IN ({marks}) ORDER BY id DESC LIMIT ?", (slug, *states, limit)
+        )
+        return [Proposal(**r) for r in rows]
+
+    def job_proposals(self, job_id: int) -> list[Proposal]:
+        """What a proposals job proposed, in its order."""
+        return [Proposal(**r) for r in self.db.execute("SELECT * FROM proposals WHERE job_id = ? ORDER BY id", (job_id,))]
+
+    def decide_proposal(self, proposal_id: int, accepted: bool, reason: str) -> Proposal:
+        self.db.execute(
+            "UPDATE proposals SET state = ?, reason = ?, decided_at = ? WHERE id = ?",
+            ("accepted" if accepted else "rejected", reason, now(), proposal_id),
+        )
+        return self.proposal(proposal_id)
+
+    def unbuilt_proposals(self) -> list[Proposal]:
+        """Accepted proposals with no job yet (their project was busy), oldest first."""
+        rows = self.db.execute("SELECT * FROM proposals WHERE state = 'accepted' AND built_by IS NULL ORDER BY decided_at, id")
+        return [Proposal(**r) for r in rows]
+
+    def set_built_by(self, proposal_id: int, job_id: int) -> None:
+        self.db.execute("UPDATE proposals SET built_by = ? WHERE id = ?", (job_id, proposal_id))
+
+    def proposal_jobs(self, slug: str) -> list[Job]:
+        """The project's proposals jobs, oldest first."""
+        rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? AND playbook = 'proposals' ORDER BY id", (slug,))
+        return [Job(**r) for r in rows]
 
     # --- runs -----------------------------------------------------------------
 
