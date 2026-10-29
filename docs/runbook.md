@@ -5,6 +5,10 @@ ARM. golem takes ports 80 and 443 and gets its own certificates; it touches
 nothing else on the box. The commands below run on the box, in the directory you
 clone golem into (`~/golem` here).
 
+Moving golem from another box, or using an org it has used before? Read
+[Moving to a new box](#moving-to-a-new-box) first: golem brings that org's
+projects back on its first start.
+
 ## 0. Before you start
 
 **The box:** Docker Engine with the compose plugin, on a 64-bit OS (on a Pi,
@@ -76,6 +80,13 @@ Traefik gets a Let's Encrypt certificate for each host the deployer routes:
 `golem.` and `projects.` when the deployer starts, each project on its first
 deploy. Allow a minute.
 
+On an org golem has used before, its first start also rebuilds the org's
+projects and deploys them again (see [Moving to a new box](#moving-to-a-new-box)):
+
+```sh
+docker compose logs -f golem | grep -E 'rebuilt|started|ERROR'   # "rebuilt <slug> with N jobs from GitHub" per project
+```
+
 ## 4. Verify the stack
 
 ```sh
@@ -103,8 +114,9 @@ On the phone, open `https://golem.<your domain>`, add it to the Home Screen
 with `GOLEM_WEB_PASSWORD` (tick "Keep me signed in"), then "Turn on for this
 device" and "Send a test": the phone should show a notification from golem.
 
-Then describe a small idea on Home (or in golem's own conversation, at the top
-of Projects). Each project gets its own page and conversation. To stop all work
+If golem rebuilt projects from the org, its own conversation (at the top of
+Projects) says which, and which came back up. Then describe a small idea on Home
+(or in golem's own conversation). Each project gets its own page and conversation. To stop all work
 without stopping golem, use "Pause all work" in Settings, or send `!pause` in
 golem's own conversation.
 
@@ -165,20 +177,47 @@ docker compose logs --since 1h golem | grep -E 'WARNING|ERROR'    # failed attem
 
 ## Moving to a new box
 
-Nothing needs copying but `.env`. Set the new box up from step 0 with the same
-`GITHUB_ORG`, point the DNS at it, and start golem. The first time it starts
-with no database, it rebuilds whatever the org has of its own (`recover.py`). It
-makes a project for each repo with golem's issues in it, and a finished job, with
-its old id, for each issue and its PRs. Then it deploys each project's `main`
-again, and says in its own conversation what came back up. On an org golem never
-used, it starts with nothing.
+Nothing needs copying but `.env`: golem rebuilds the rest from the org.
+
+1. **Stop the old box** if it still runs (`docker compose down` there). Two
+   golems on one org would both work on its repos and hand out the same job
+   numbers.
+2. **Point the DNS** (step 0) at the new box before golem starts: its first
+   start deploys every project, and each needs a certificate.
+3. **Set up the new box** from step 0. Copy the old `.env` over before
+   `bin/bootstrap.sh server`, or fill in the same values: above all the same
+   `GITHUB_ORG` and its tokens. `BASE_DOMAIN` may change; projects then live
+   under the new domain.
+4. **Start it** (step 3). With an empty state volume, golem's first start rebuilds
+   what the org has of its own before the web app opens (`recover.py`). Each repo
+   with golem's issues in it becomes a project. Each of those issues, with its
+   PRs, becomes a finished job with its old number, and new jobs are numbered
+   after them. Then, before any new work starts, it deploys each project's
+   `main` again and says in its own conversation which came back up. Repos golem
+   didn't make (`hello`, say) are left alone.
+5. **Check** its own conversation in the web app. A project that didn't come
+   back up says why: ask for a fix in its conversation. Turn notifications on
+   again on each device (step 6): sign-ups don't come along.
 
 What doesn't come along: conversations, notes, run history and cost, proposals,
-tags, project settings (back to the defaults), push sign-ups (turn notifications
-on again on each device), lessons, and any data a project kept in its volumes.
+tags, project settings (back to the defaults), lessons, and any data a project
+kept in its volumes.
 
-So delete a project's repo when you're done with it: on a fresh install, a repo
-that's still in the org comes back.
+If it couldn't read the org (a wrong or missing `GOLEM_GITHUB_TOKEN`), it says
+so in its own conversation and tries again on the next start: fix `.env`, then
+`docker compose up -d`. The rebuild happens only on the first start with an
+empty state volume. If golem first started with the wrong `GITHUB_ORG`, delete
+that state and start again:
+
+```sh
+docker compose down
+docker volume rm golem_golem-state
+docker compose up -d
+```
+
+On an org golem has never used, it starts with nothing. Delete a project's repo
+when you're done with it: on a fresh install, any repo still in the org comes
+back.
 
 ## Starting over
 
@@ -195,8 +234,9 @@ logs, conversation), every other site the deployer has (`hello` too; redeploy it
 with `just deploy hello <sha>` if you want it back), and golem's lessons and
 proposals, and starts golem again. The stack, golem's own conversation, and
 `.env` stay. GitHub repos stay too: delete them in your org's repositories on
-GitHub (golem's token can't). If something can't be deleted it says so;
-running it again retries.
+GitHub (golem's token can't). golem keeps its database, so they don't come back
+by themselves, but a fresh install on the org would bring back any still there.
+If something can't be deleted it says so; running it again retries.
 
 ## Removing golem
 
@@ -208,5 +248,6 @@ docker network rm golem-apps golem-internal 2>/dev/null
 ```
 
 To remove it entirely, also `docker compose down --volumes` (**deletes golem's
-state**) and `rm -rf ~/golem`. To roll back just one change,
+state**; installing again on the same org rebuilds its projects from GitHub)
+and `rm -rf ~/golem`. To roll back just one change,
 `git checkout <previous commit>` and `docker compose up -d --build`.
