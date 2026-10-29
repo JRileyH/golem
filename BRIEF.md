@@ -19,9 +19,9 @@ This runs alongside his hands-on workflow, not instead of it. Projects built her
 
 ## The environment
 
-**The server.** Any box with Docker and a public IP, x86 or ARM: a VPS, a Raspberry Pi 5. RAM is usually the scarce resource. golem owns ports 80 and 443 and touches nothing else on the box, so it doesn't share one with another reverse proxy.
+**The server.** Any box with Docker and a public IP, x86 or ARM: a VPS, a Raspberry Pi 5. RAM is usually the scarce resource. golem touches nothing on the box it didn't make. By default it owns ports 80 and 443. On a box that already has a reverse proxy, `EDGE_PORT` puts it behind that proxy instead: plain HTTP on that port, and the proxy does HTTPS (`docs/behind-a-proxy.md`). Nothing about the host is assumed either way.
 
-**DNS.** A wildcard record for `*.<domain>` points at the box, so new subdomains need no DNS changes. Any DNS provider: certificates use Let's Encrypt's HTTP challenge, one per host.
+**DNS.** A wildcard record for `*.<domain>` points at the box (or the proxy in front of it), so new subdomains need no DNS changes. Any DNS provider: golem's certificates use Let's Encrypt's HTTP challenge, one per host. Behind a proxy, the proxy holds a wildcard certificate instead.
 
 **GitHub.** An org (`GITHUB_ORG`, free plan is fine) holds the agent-built project repos. The golem repo itself lives elsewhere (Riggy's personal account), so tokens scoped to the org can't reach it. Free orgs get no branch protection on private repos and 2,000 Actions minutes a month.
 
@@ -41,7 +41,7 @@ These were argued through already. Don't reopen them without a concrete reason f
 | Chat | golem's own web app at `golem.<domain>`, installed to the phone's home screen, with Web Push notifications. |
 | Packaging | One repo, one compose file: golem, deployer, Traefik. Runs on any box with Docker and a public IP. |
 | Sandbox | The golem container is the sandbox. Workers run inside it. Only the deployer touches Docker. |
-| Routing | One Traefik, golem's own: owns 80/443, a certificate per host, routes only from files the deployer writes. |
+| Routing | One Traefik, golem's own, routing only from files the deployer writes: on 80/443 with a certificate per host, or on `EDGE_PORT` behind the box's own proxy. |
 | Projects | Each project is its own private repo in the `GITHUB_ORG` org, its own compose stack, its own data. Agent picks the stack. Public at `<slug>.<domain>`, its image built for the server's architecture. Project data is disposable. |
 | Process files | Playbooks, skills and prompts live in the golem repo and are baked read-only into the golem image. Agents can't edit them. |
 | Learning | Agents append to a writable lessons file that feeds every prompt, and draft playbook edits for Riggy to apply by hand. |
@@ -56,6 +56,8 @@ Internet → traefik (owns 80/443; :80 redirects to HTTPS)
    ├─ golem.<domain>, projects.<domain> → golem
    └─ <slug>.<domain> → project stacks
 ```
+
+With `EDGE_PORT` set, the box's own proxy owns 80/443 and HTTPS and forwards `*.<domain>` to traefik's plain-HTTP port (`compose.http.yml`, `traefik/http.yml`). Everything behind traefik is the same. A proxy in Docker reaches it through `golem-edge`, a network with only traefik on it.
 
 | Service | Role | Networks |
 | --- | --- | --- |
@@ -76,12 +78,12 @@ Routing is then derived from the slug alone, and agents have no way to claim a h
 ```text
 golem/
   compose.yml          the stack for a server
-  compose.local.yml    local mode's override: plain HTTP
+  compose.http.yml     override when EDGE_PORT is set: plain HTTP (own proxy, local mode)
   .env.example         base domain, harness and GitHub tokens
   AGENTS.md            how to work on this repo (CLAUDE.md points here)
   golem/              Python service + Dockerfile (also the worker image)
   deployer/            Python service + Dockerfile + tests
-  traefik/             static config (server.yml, local.yml); dynamic/ is a volume
+  traefik/             static config (server.yml, http.yml); dynamic/ is a volume
   playbooks/           reckless.md, standard.md, rigorous.md, feature.md
   skills/              deploy.md, new-repo.md, spec-writing.md, review.md
   prompts/             intake triage, reply triage, phase wrappers
@@ -167,7 +169,7 @@ New project flow: intake → spec → scaffold and first deploy (proves hosting 
 
 ## Local mode
 
-The same compose file runs on a laptop, with `compose.local.yml` layered over it and a local env file.
+The same compose file runs on a laptop, with `compose.http.yml` layered over it (as behind a proxy, with nothing in front) and a local env file.
 
 | Setting | Server | Local |
 | --- | --- | --- |

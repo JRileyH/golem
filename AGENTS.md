@@ -12,10 +12,10 @@ changing anything structural.
 | Path | What |
 | --- | --- |
 | `compose.yml` | The whole stack for a server: golem, deployer, traefik (owns 80/443 and TLS) |
-| `compose.local.yml` | Local mode's override: plain HTTP on `EDGE_PORT` |
+| `compose.http.yml` | Override when `EDGE_PORT` is set (behind the box's own proxy, or local mode): plain HTTP on `EDGE_PORT` |
 | `golem/` | Python service, Dockerfile and tests: bot, SQLite queue, scheduler, web app. Also the worker image. |
 | `deployer/` | Python service, Dockerfile and tests. The only container with the Docker socket. |
-| `traefik/` | Traefik static config: `server.yml`, and `local.yml` for local mode |
+| `traefik/` | Traefik static config: `server.yml`, and `http.yml` for `compose.http.yml` |
 | `playbooks/`, `skills/`, `prompts/` | Process files baked read-only into the golem image |
 | `bin/bootstrap.sh` | First-time setup on a fresh box |
 | `docs/` | Runbooks |
@@ -27,9 +27,11 @@ changing anything structural.
   asserting its exact rejection reason. A new rule without a test isn't done.
 - Never print, log or commit secrets. Secrets live in `.env` (git-ignored);
   document new variables in `.env.example`.
-- golem runs on any box with a public IP and nothing else on ports 80 and
-  443. It assumes nothing about the host beyond Docker, and touches only what it
-  made: its own stack, the `golem-*` networks and the `golem-<slug>` projects.
+- golem runs on any box with a public IP. It takes ports 80 and 443 unless
+  `EDGE_PORT` puts it behind a reverse proxy the box already has
+  (`docs/behind-a-proxy.md`). It assumes nothing about the host beyond Docker, and
+  touches only what it made: its own stack, the `golem-*` networks and the
+  `golem-<slug>` projects.
 - Workers run inside the golem container with no Docker access; the deployer
   is their only way to production. Process files (`playbooks/`, `skills/`,
   `prompts/`) are what workers follow: change them as carefully as code.

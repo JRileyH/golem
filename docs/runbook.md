@@ -2,8 +2,10 @@
 
 Any box with Docker and a public IP will do: a VPS, a Raspberry Pi 5, x86 or
 ARM. golem takes ports 80 and 443 and gets its own certificates; it touches
-nothing else on the box. The commands below run on the box, in the directory you
-clone golem into (`~/golem` here).
+nothing else on the box. Already run a reverse proxy on 80 and 443? golem can sit
+behind it instead: [behind-a-proxy.md](behind-a-proxy.md) says what changes. The
+commands below run on the box, in the directory you clone golem into (`~/golem`
+here).
 
 Moving golem from another box, or using an org it has used before? Read
 [Moving to a new box](#moving-to-a-new-box) first: golem brings that org's
@@ -12,7 +14,8 @@ projects back on its first start.
 ## 0. Before you start
 
 **The box:** Docker Engine with the compose plugin, on a 64-bit OS (on a Pi,
-64-bit Raspberry Pi OS). Nothing else listening on 80 or 443. golem itself
+64-bit Raspberry Pi OS). Nothing else listening on 80 or 443 (or see
+[behind-a-proxy.md](behind-a-proxy.md)). golem itself
 takes up to about 2 GB of memory (`GOLEM_MEM_LIMIT` plus ~400 MB), and each
 project up to `DEPLOYER_PROJECT_MEM_CAP_MB` more. Images need ~3 GB of disk.
 
@@ -68,6 +71,9 @@ nano .env                   # fill in what it lists: BASE_DOMAIN, GITHUB_ORG,
                             # and the tokens above
 bin/bootstrap.sh server     # should end with "ok" and nothing left to fill in
 ```
+
+Leave `EDGE_PORT` empty unless golem sits behind your own proxy: bootstrap says
+which it's set up for ("front door: ...").
 
 `GOLEM_WEB_PASSWORD` has no default and golem won't start without it. Make it
 long: signed in, the web app can do everything, deleting projects included.
@@ -266,7 +272,7 @@ If something can't be deleted it says so; running it again retries.
 cd ~/golem
 docker compose -p golem-<slug> down    # each deployed project (keeps its volumes)
 docker compose down                     # the golem stack (keeps volumes: state)
-docker network rm golem-apps golem-internal 2>/dev/null
+docker network rm golem-apps golem-internal golem-edge 2>/dev/null
 ```
 
 To remove it entirely, also `docker compose down --volumes` (**deletes golem's

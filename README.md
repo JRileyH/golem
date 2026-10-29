@@ -149,4 +149,5 @@ GitHub and deploys are pretended.
 
 ## On a server
 
-See `docs/runbook.md`.
+See `docs/runbook.md`. golem takes ports 80 and 443 by default; on a box that
+already runs a reverse proxy, see `docs/behind-a-proxy.md`.
