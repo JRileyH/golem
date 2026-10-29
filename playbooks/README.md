@@ -4,9 +4,10 @@ The steps of a job, read by the scheduler and written into its database when the
 job starts. Front matter lists the steps; each `## <name>` section is an agent
 step's instructions. Every other step is golem's own code: `setup`, `push`,
 `pr`, `checks`, `merge`, `push-main`, `deploy`, `checkin`, `choose`, `alert`,
-`refresh`, `answer`. A playbook either ships something, starting with `setup` and
-ending with `deploy, alert`, or only answers a question, starting with `refresh`
-and ending with `answer` (the loader refuses anything else). The model and effort
+`refresh`, `answer`, `proposals`. A playbook either ships something, starting
+with `setup` and ending with `deploy, alert`, or only looks, starting with
+`refresh` and ending with `answer` or `proposals` (the loader refuses anything
+else). The model and effort
 are chosen in the web app: for a kind of step (all `docs` steps, say), a project,
 or one step. Baked read-only into the golem image.
 
@@ -21,6 +22,12 @@ or one step. Baked read-only into the golem image.
   looks into it as much as it needs and changes nothing (golem puts the checkout
   back), and golem's `answer` sends him the answer. Its prompt is
   `prompts/question.md` rather than `step.md`.
+- `proposals.md`: golem's own ideas for a live project, when it has nothing
+  else to do and the project's settings ask for them (`golem/golem/proposals.py`).
+  A `propose` step looks the project over through one lens (features, security,
+  polish…, in turn) and changes nothing; golem's `proposals` step posts what it
+  proposes for Riggy's thumbs up (a change job) or down. Its prompt is
+  `prompts/proposals.md`, with every earlier proposal and what he said.
 
 `optional: true` lets Riggy skip a step from the status page. Use it for reviews,
 docs, the check-in and the pick, never for the work itself; golem's push-to-deploy steps

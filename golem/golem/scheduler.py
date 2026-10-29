@@ -6,8 +6,12 @@ Agent steps are headless Claude Code runs that do one piece of work and commit i
 Every other step is golem's own code: setting up the repo, pushing, pull requests,
 waiting for CI, merging, deploying, the MVP check-in, showing Riggy options to pick from
 (options.py) and telling him it's done. Each playbook ends with deploy and alert, so a
-finished job is a deployed one; except a question's, which only looks and answers
-(refresh, examine, answer): nothing is committed, pushed or deployed for a question.
+finished job is a deployed one; except those that only look: a question's (refresh,
+examine, answer) and proposals' (refresh, propose, proposals). Nothing is committed,
+pushed or deployed for those.
+
+With nothing else to do, golem looks for improvements to propose on projects that want
+them, and builds the ones Riggy accepts once their project is free (proposals.py).
 
 When CI fails or the deployer refuses a commit, a `fix` agent step is inserted after the
 failed one, followed by the steps from the last push again. Each step's outcome is
@@ -23,14 +27,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import options, plan
+from . import options, plan, proposals
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
 from .talk import STATUS, Talk
 from .prompts import Prompts
-from .store import ACTIVE, Job, Project, Step, Store, later, now
+from .store import ACTIVE, LOOKS, Job, Project, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import Workspace, WorkspaceError
 
@@ -145,7 +149,11 @@ class Scheduler:
                 self.ensure_steps(job)
         self.backfill = asyncio.create_task(self.missing_cards())
         while True:
+            if not self.paused:
+                await self.build_accepted()
             job = None if self.paused else self.store.next_job()
+            if job is None and not self.paused and self.propose() is not None:
+                continue
             if job is None:
                 try:
                     await asyncio.wait_for(self._wake.wait(), IDLE_POLL_SECONDS)
@@ -167,6 +175,26 @@ class Scheduler:
             elif task.exception():
                 log.error("job %s crashed", job.id, exc_info=task.exception())
                 await self.retry_or_ask(job, f"golem error: {task.exception()!r}")
+
+    def propose(self) -> Job | None:
+        """With nothing else to do, a proposals job for the project most overdue for one."""
+        project = proposals.due(self.store, datetime.now(UTC))
+        if project is None:
+            return None
+        job = proposals.start(self.store, project)
+        log.info("job %s: %s on %s", job.id, job.request, project.slug)
+        return job
+
+    async def build_accepted(self) -> None:
+        """A change job for each proposal Riggy accepted, once its project has no other change under way."""
+        for p in self.store.unbuilt_proposals():
+            project = self.store.project(p.slug)
+            if project is None or self.store.active_job(p.slug, questions=False):
+                continue
+            job = self.store.add_job(p.slug, "change", proposals.request(p), "feature")
+            self.store.set_built_by(p.id, job.id)
+            await self.say(project, f"Building the proposal you accepted: {p.title} (job {job.id}).", notice=True)
+            self.wake()
 
     def ensure_steps(self, job: Job) -> list[Step]:
         """The job's steps, written from its playbook the first time."""
@@ -204,7 +232,7 @@ class Scheduler:
                 steps = self.store.steps(job.id)
                 finished = plan.current(steps) is None
                 self.store.update_job(job.id, state="done" if finished else "queued", attempts=0, resume_session=None)
-                quiet = job.playbook == "question"  # its answer step says it
+                quiet = job.playbook in LOOKS  # its last step says it
                 if outcome.state == "done" and not quiet and (step.kind == "agent" or step.kind in ANNOUNCED):
                     link = next(iter(outcome.links.values()), "")
                     nxt = "" if finished else f"\nNext: {plan.upcoming(steps, step)}."
@@ -258,6 +286,10 @@ class Scheduler:
             self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(ERROR_RETRY), resume_session=None)
             log.warning("job %s attempt %s failed: %s", job.id, attempts, error)
             return
+        if job.playbook == "proposals":  # nobody asked for it: no reason to interrupt Riggy, just stop
+            self.store.update_job(job.id, state="failed", attempts=0, resume_session=None)
+            await self.say(project, f"I couldn't finish looking for proposals: {error[:300]}", notice=True)
+            return
         # Stuck after retries is one of the few reasons to interrupt Riggy.
         self.store.update_job(job.id, state="waiting", attempts=0, resume_session=None)
         step = plan.current(self.store.steps(job.id))
@@ -272,10 +304,10 @@ class Scheduler:
 
     async def do_agent(self, job: Job, project: Project, step: Step) -> Outcome:
         """One headless run that does the step's work on the job's branch and commits it. A
-        question's looks at the checkout as it is (main, or a job's work under way), and
-        anything it changes there is put back."""
-        question = job.playbook == "question"
-        if question:
+        question's or a proposal's looks at the checkout as it is (main, or a job's work under
+        way), and anything it changes there is put back."""
+        looking = job.playbook in LOOKS
+        if looking:
             branch = await self.workspace.current_branch(project.slug)
             was_clean = await self.workspace.clean(project.slug)
         else:
@@ -285,7 +317,13 @@ class Scheduler:
         feedback = [text for _, text in notes]
         if job.resume_session:
             prompt, resume = self.prompts.resume(feedback), job.resume_session
-        elif question:
+        elif job.playbook == "proposals":
+            jobs, said = self.history(project, job)
+            book = plan.load(self.settings, job.playbook)
+            earlier = [p for p in self.store.proposals(project.slug, limit=proposals.PAST_SHOWN) if p.job_id != job.id]
+            lens = proposals.lens(self.store, job)
+            prompt, resume = self.prompts.proposals(project, job, book, step, branch, lens, jobs, said, earlier), None
+        elif job.playbook == "question":
             busy = self.store.active_job(project.slug, questions=False) is not None
             jobs, said = self.history(project, job)
             book = plan.load(self.settings, job.playbook)
@@ -296,7 +334,7 @@ class Scheduler:
             steps = self.store.steps(job.id)
             prompt, resume = self.prompts.step(project, job, book, step, steps, branch, feedback, lessons), None
 
-        schema = options.SCHEMA if step.name == "options" else None  # the options come with its verdict
+        schema = {"options": options.SCHEMA, "propose": proposals.SCHEMA}.get(step.name)  # what it made comes with its verdict
         result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema)
         if result.outcome == "max_turns" and result.session_id:
             wrapup = await self.execute(
@@ -309,7 +347,7 @@ class Scheduler:
                 result = RunResult("verdict", {"verdict": "done", "message": said}, session_id=wrapup.session_id)
             else:
                 result = RunResult("error", error=f"ran out of turns: {said}")
-        if question and was_clean:
+        if looking and was_clean:
             await self.workspace.discard(project.slug)
         if result.outcome == "limit":
             return Outcome("limit")
@@ -327,14 +365,17 @@ class Scheduler:
         self.store.consume_notes([i for i, _ in notes])
         message, link = str(v.get("message", "")).strip(), str(v.get("link") or "").strip()
         links = {"link": link} if link.startswith(("https://", "http://")) else {}
+        if job.playbook == "proposals":  # nobody is waiting to answer: a question back is nothing to propose
+            made = self.store.add_proposals(project.slug, job.id, proposals.lens(self.store, job).name, proposals.collect(v.get("proposals")))
+            return Outcome("done", message or f"Proposed {len(made)}.", links)
         if v["verdict"] == "blocked":
             return Outcome("blocked", message, links, session_id=result.session_id)
-        if not question:
+        if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted")
         return Outcome("done", message, links)
 
     def history(self, project: Project, job: Job) -> tuple[list[str], list[str]]:
-        """For a question: the project's latest jobs, and its conversation lately."""
+        """For a job that only looks: the project's latest jobs, and its conversation lately."""
         jobs = []
         for j in [j for j in self.store.jobs(limit=300) if j.slug == project.slug and j.id != job.id][:5]:
             said = plan.last_said(self.store.steps(j.id))
@@ -443,13 +484,16 @@ class Scheduler:
         return Outcome("done", "Repo, checkout and issue ready.", links)
 
     async def do_refresh(self, job: Job, project: Project, step: Step) -> Outcome:
-        """A question's first step: the checkout up to date with main, unless a job's work is
-        under way in it (then that's what the question is about, most likely)."""
+        """The first step of a job that only looks: the checkout up to date with main, unless a
+        job's work is under way in it (then that's what a question is about, most likely)."""
         await self.workspace.ensure_repo(project.slug, project.summary)
         busy = self.store.active_job(project.slug, questions=False)
         if busy is None:
             await self.workspace.sync_main(project.slug)
-        await self.say(project, f"Looking into it: {_first_line(job.request)}", notice=True)
+        if job.playbook == "proposals":
+            await self.say(project, f"Nothing else on, so I'm looking at its {proposals.lens(self.store, job).name} for things to propose.", notice=True)
+        else:
+            await self.say(project, f"Looking into it: {_first_line(job.request)}", notice=True)
         return Outcome("done", "Looking at what's live." if busy is None else f"Looking at job {busy.id}'s work so far.")
 
     async def do_answer(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -458,6 +502,16 @@ class Scheduler:
         answer = found.summary if found and found.summary else "I looked into it but came up without an answer. Try asking another way?"
         await self.say(project, _join(answer, found.links.get("link", "") if found else ""))
         return Outcome("done", "Answered you.")
+
+    async def do_proposals(self, job: Job, project: Project, step: Step) -> Outcome:
+        """A proposals job's last step: what it proposed, in the conversation, to decide on on the project's page."""
+        made, name = self.store.job_proposals(job.id), proposals.lens(self.store, job).name
+        if not made:
+            said = plan.last_said(self.store.steps(job.id))
+            await self.say(project, f"I looked at its {name} and found nothing worth proposing." + (f" {said}" if said else ""), notice=True)
+            return Outcome("done", "Nothing worth proposing.")
+        await self.say(project, proposals.announcement(name, made, f"{self.settings.url('golem')}/p/{project.slug}"))
+        return Outcome("done", f"Proposed {len(made)} for you to decide on.")
 
     async def do_push(self, job: Job, project: Project, step: Step) -> Outcome:
         branch = self.branch(job)

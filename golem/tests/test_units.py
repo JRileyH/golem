@@ -67,6 +67,41 @@ def test_playbooks_load(name, mode, agents):
     assert book.intro
 
 
+@pytest.mark.parametrize("name, agent, last", [("question", "examine", "answer"), ("proposals", "propose", "proposals")])
+def test_playbooks_that_only_look_load_in_every_mode(name, agent, last):
+    book = playbooks.load(REPO / "playbooks" / f"{name}.md")
+    for mode in ("reckless", "standard", "rigorous"):
+        assert [(s.kind, s.name) for s in book.for_mode(mode)] == [("refresh", "refresh"), ("agent", agent), (last, last)]
+
+
+def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
+    from golem.proposals import MAX_PER_RUN, collect, past
+    from golem.store import Proposal
+
+    raw = [
+        {"title": "  Offline   mode ", "what": "Cache the deck in a service worker.", "why": "Hikes have no signal.", "size": "medium"},
+        {"title": "", "what": "untitled"},  # dropped
+        "not a proposal",
+        {"title": "Bigger cards", "what": "Fill the screen on phones.", "why": "", "size": "huge"},
+        *[{"title": f"Extra {i}", "what": "x", "why": "y", "size": "small"} for i in range(5)],
+    ]
+    found = collect(raw)
+    assert len(found) == MAX_PER_RUN and collect("nonsense") == []
+    assert found[0] == ("Offline mode", "Cache the deck in a service worker.\n\nWhy: Hikes have no signal.\n\nSize: medium.")
+    assert found[1] == ("Bigger cards", "Fill the screen on phones.")  # no why, and no size it can't use
+
+    def made(title, state, reason=""):
+        return Proposal(1, "t", 1, "polish", title, "body", state, reason, None, "2026-10-01T00:00:00+00:00", None)
+
+    listed = past([made("Dark mode", "rejected", "it's a  daytime\napp"), made("Streaks", "accepted"), made("Sounds", "open")])
+    assert listed.splitlines() == [
+        "- [polish] Dark mode — turned down: “it's a daytime app”",
+        "- [polish] Streaks — accepted",
+        "- [polish] Sounds — not decided yet",
+    ]
+    assert past([]) == "(none yet: these are the first)"
+
+
 @pytest.mark.parametrize(
     "steps, sections, error",
     [

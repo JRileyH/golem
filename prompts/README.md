@@ -10,6 +10,9 @@ the golem image.
   question's.
 - `question.md`: the wrapper around a question's `examine` step: the project,
   its latest jobs and conversation, and the question.
+- `proposals.md`: the wrapper around a proposals job's `propose` step: the
+  project, its latest jobs and conversation, this time's lens, and every earlier
+  proposal with what Riggy decided and why.
 - `fix.md`: the instructions of a `fix` step, which golem inserts when CI fails
   or the deployer refuses a commit.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.

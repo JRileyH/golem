@@ -13,6 +13,8 @@
   answer to a question, a check-in or some options (a pick), which picks the job back up. Or give one upcoming
   agent step some context, which only that step gets.
 - Give a project a tag, or none; add, rename, recolor and delete the tags themselves.
+- Say how often golem looks for improvements to propose for a project, and give each
+  proposal a thumbs up (it becomes a change job) or down, with why (proposals.py).
 
 Each change to a project is posted in its conversation, so it stays the record of the job.
 """
@@ -23,7 +25,7 @@ import re
 
 from . import plan
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, MODELS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, EFFORTS, EVERY, MODELS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
@@ -67,7 +69,7 @@ class Control:
     def kinds(self) -> list[str]:
         """The kinds of agent step, by name, in the order the playbooks use them; fix last."""
         names: list[str] = []
-        for book in ("standard", "rigorous", "reckless", "feature", "options", "question"):
+        for book in ("standard", "rigorous", "reckless", "feature", "options", "question", "proposals"):
             for spec in plan.load(self.scheduler.settings, book).steps:
                 if spec.kind == "agent" and spec.name not in names:
                     names.append(spec.name)
@@ -145,8 +147,18 @@ class Control:
         return f"Stopped job {job.id}."
 
     async def setting(self, slug: str, name: str, value: str) -> str:
-        """A project's model or effort for all its agent steps, "" for each step's default; or its tag, "" for none."""
+        """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
+        none; or how often golem looks for improvements to propose, "" for never."""
         project = self._project(slug)
+        if name == "proposals":
+            every = value or "off"
+            if every not in EVERY:
+                raise ControlError(f"Proposals can't be {value}.")
+            self.store.update_project(slug, proposals=every)
+            said = "No proposals now" if every == "off" else f"Proposals {every}, when there's nothing else to do"
+            await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
+            self.scheduler.wake()
+            return f"{project.name}: {said.lower()}."
         if name == "tag":
             tag = self._tag(value) if value else None
             self.store.update_project(slug, tag=tag.name if tag else "")
@@ -217,6 +229,24 @@ class Control:
         n = self.store.tag_counts().get(tag.name, 0)
         self.store.delete_tag(tag.name)
         return f"Deleted the {tag.name} tag." + (f" {n} project{'s have' if n != 1 else ' has'} none now." if n else "")
+
+    async def decide(self, proposal_id: int, accepted: bool, reason: str) -> str:
+        """Riggy's thumbs up or down on a proposal, with why if he says. Up queues it as a change
+        once its project has no other change under way."""
+        p = self.store.proposal(proposal_id)
+        if p is None or p.state != "open":
+            raise ControlError("That proposal has been decided already.")
+        reason = " ".join(reason.split())[:1000]
+        p = self.store.decide_proposal(p.id, accepted, reason)
+        project = self._project(p.slug)
+        await self.scheduler.chat.heard(project.slug, f"{'👍' if accepted else '👎'} {p.title}" + (f": {reason}" if reason else ""))
+        if not accepted:
+            return f"Turned down “{p.title}”. golem takes that into account next time."
+        await self.scheduler.build_accepted()
+        p = self.store.proposal(p.id)
+        if p.built_by:
+            return f"Accepted “{p.title}”: job {p.built_by} builds it."
+        return f"Accepted “{p.title}”: it's built once {project.name}'s current job is done."
 
     async def note(self, job_id: int, text: str, step_id: int = 0, position: int = 0) -> str:
         job, project = self._job(job_id)

@@ -8,7 +8,8 @@ from string import Template
 from . import plan
 from .config import Settings
 from .playbook import Playbook
-from .store import Job, Project, Step
+from .proposals import LENSES, Lens, past
+from .store import Job, Project, Proposal, Step
 
 # Golem's own steps worth telling a worker about in "Done so far".
 TOLD = {"merge", "push-main", "deploy", "checkin", "choose"}
@@ -87,6 +88,32 @@ class Prompts:
             feedback=f"He added:\n\n{format_feedback(feedback)}" if more else "",
             jobs="\n".join(jobs) or "(none yet)",
             said="\n".join(said) or "(nothing yet)",
+            step=step.name,
+            intro=book.intro,
+            instructions=book.instructions(step.name),
+            skills=s.process_dir / "skills",
+        )
+
+    def proposals(self, project: Project, job: Job, book: Playbook, step: Step, branch: str, lens: Lens,
+                  jobs: list[str], said: list[str], earlier: list[Proposal]) -> str:  # fmt: skip
+        """A proposals job's step: the project, what's happened lately, the lens to look through,
+        and every earlier proposal with what Riggy made of it."""
+        s = self.settings
+        return self.render(
+            "proposals",
+            name=project.name,
+            slug=project.slug,
+            summary=project.summary,
+            mode=project.mode,
+            url=s.project_url(project.slug),
+            repo=s.repo_url(project.slug),
+            branch=branch,
+            lens=lens.name,
+            focus=lens.focus,
+            lenses=", ".join(x.name for x in LENSES),
+            jobs="\n".join(jobs) or "(none yet)",
+            said="\n".join(said) or "(nothing yet)",
+            past=past(earlier),
             step=step.name,
             intro=book.intro,
             instructions=book.instructions(step.name),

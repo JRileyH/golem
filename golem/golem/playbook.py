@@ -21,8 +21,9 @@ section of instructions per agent step.
 An agent step is one headless Claude Code run that does a piece of work and commits it.
 Every other step is golem's own code (CODE_STEPS), so pushing, pull requests, CI,
 merging, deploying, asking Riggy and telling him happen the same way every time. A job
-either ships something (setup first, deploy and alert last) or only answers a question
-(refresh first, answer last: nothing is committed, pushed or deployed). `modes` limits a
+either ships something (setup first, deploy and alert last) or only looks: answers a
+question (refresh first, answer last) or proposes improvements (refresh first, proposals
+last), and nothing is committed, pushed or deployed. `modes` limits a
 step to projects in those modes; `optional` lets Riggy skip it from the status page
 (a review, say, but never the work itself or golem's push-to-deploy steps). The model
 and effort are chosen on the status page, per step, project or kind of step (plan.engine).
@@ -39,9 +40,13 @@ import yaml
 from .store import MODES
 
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
-CODE_STEPS = ("setup", "push", "pr", "checks", "merge", "push-main", "deploy", "checkin", "choose", "alert", "refresh", "answer")
-# How every job starts and ends, in every mode: shipping something, or answering a question.
-SHAPES = ((("setup",), ("deploy", "alert")), (("refresh",), ("answer",)))
+CODE_STEPS = (
+    "setup", "push", "pr", "checks", "merge", "push-main", "deploy", "checkin", "choose", "alert", "refresh", "answer",
+    "proposals",
+)  # fmt: skip
+# How every job starts and ends, in every mode: shipping something, or only looking, to answer
+# a question or to propose improvements (proposals.py).
+SHAPES = ((("setup",), ("deploy", "alert")), (("refresh",), ("answer",)), (("refresh",), ("proposals",)))
 # Golem's only steps that can be optional: skipping a check-in means "looks good", skipping
 # the pick between options leaves it to the next step.
 SKIPPABLE = ("checkin", "choose")

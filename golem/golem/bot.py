@@ -312,7 +312,7 @@ class Bot:
         project = self.store.project(job.slug)
         steps = plan.planned(self.settings, self.store, job)
         step = plan.current(steps)
-        what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question") else "change"
+        what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
         held = " (project paused)" if project.paused else ""
         state = job.state
         if state == "parked":  # a grace period before a new project starts, CI running, or a retry

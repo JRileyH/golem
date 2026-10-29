@@ -81,7 +81,7 @@ def _later(lane: LaneData, now: datetime) -> str:
     first = next((s for s in lane.steps if s.state == "pending"), None)
     eta = lane.etas.get(first.position) if first else None
     at = "paused" if p.paused else when(eta.start, now) if eta else f"#{lane.position}" if lane.position else "queued"
-    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question") else "change"
+    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
     return (
         f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
         f"<span class=muted>{what}: {escape(_short(job.request, 80))}</span><span class=when>{at}</span></li>"

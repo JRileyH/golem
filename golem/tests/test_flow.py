@@ -8,6 +8,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from conftest import Golem
 
 from golem import nuke, plan, scheduler
@@ -649,6 +650,142 @@ def test_question_on_command_and_its_question_back(golem):
         assert golem.chat.texts(room)[-1] == "The streak." and golem.harness.calls[-1].resume == "s"
         await golem.say(golem.inbox, "!question")
         assert golem.chat.texts(golem.inbox)[-1].startswith("Usage: !question")
+
+    run(go())
+
+
+# --- proposals ------------------------------------------------------------------
+
+
+OFFLINE = {"title": "Offline mode", "what": "Cache the deck in a service worker.", "why": "Hikes have no signal.", "size": "medium"}
+BIGGER = {"title": "Bigger cards", "what": "Fill the screen on phones.", "why": "They're small on a phone.", "size": "small"}
+
+
+def proposing(*made: dict, message: str = "Played a few rounds on a phone.") -> dict:
+    return {**verdict("done", message), "proposals": list(made)}
+
+
+def long_ago(golem: Golem) -> None:
+    """As if the project's proposals jobs ran long enough ago to be due again."""
+    golem.store.db.execute("UPDATE jobs SET created_at = '2026-01-01T00:00:00+00:00' WHERE playbook = 'proposals'")
+
+
+def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
+    from golem import proposals
+    from golem.control import Control, ControlError
+
+    async def go():
+        room = await idle_project(golem)
+        assert golem.store.project("tree-cards").proposals == "off" and golem.scheduler.propose() is None  # off by default
+        golem.store.update_project("tree-cards", proposals="daily")
+        job = golem.scheduler.propose()
+        assert (job.playbook, job.priority, job.request) == ("proposals", proposals.PRIORITY, "Look at its features for things to propose")
+        assert golem.scheduler.propose() is None  # one at a time
+
+        before = len(golem.workspace.actions)
+        golem.harness.script = by_label({"propose": [proposing(OFFLINE, BIGGER)]})
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done" and golem.labels(job.id) == ["catch up", "propose", "proposals for you"]
+        assert golem.workspace.actions[before:] == ["discard"]  # nothing pushed, merged or deployed; the checkout put back
+        call = next(c for c in golem.harness.calls if c.label == "propose")
+        assert call.schema == proposals.SCHEMA and "# This time's lens: features" in call.prompt
+        assert "(none yet: these are the first)" in call.prompt and re.search(r"\$[a-z]", call.prompt) is None
+        offline, bigger = golem.store.job_proposals(job.id)
+        assert (offline.title, offline.lens, offline.state) == ("Offline mode", "features", "open")
+        assert golem.chat.texts(room)[-2] == "Nothing else on, so I'm looking at its features for things to propose."
+        said = golem.chat.sent[-1]
+        assert said[0] == room and not said[2]  # it notifies him
+        assert said[1].startswith("I looked at its features and have 2 proposals for you:\n\n1. Offline mode\nCache the deck")
+        assert said[1].endswith("Thumbs up or down (and why) on its page: https://golem.unlaunched.dev/p/tree-cards")
+        assert golem.scheduler.propose() is None  # not due again for a day
+
+        control = Control(golem.store, golem.scheduler)
+        assert "takes that into account" in await control.decide(offline.id, False, "  it's a web  app, always online ")
+        assert await control.decide(bigger.id, True, "") == f"Accepted “Bigger cards”: job {job.id + 1} builds it."
+        built = golem.store.active_job("tree-cards")
+        assert (built.playbook, built.request.splitlines()[0]) == ("feature", "Bigger cards")
+        assert "Riggy accepted it." in built.request and "Fill the screen on phones." in built.request
+        assert golem.store.proposal(bigger.id).built_by == built.id
+        assert golem.chat.sent[-1] == (room, f"Building the proposal you accepted: Bigger cards (job {built.id}).", True)
+        heard = [m.text for m in golem.store.messages(room) if m.who == "riggy"]
+        assert heard[-2:] == ["👎 Offline mode: it's a web app, always online", "👍 Bigger cards"]
+        with pytest.raises(ControlError, match="decided already"):
+            await control.decide(bigger.id, False, "")
+
+        await golem.finish()  # the accepted one is built and deployed
+        long_ago(golem)
+        again = golem.scheduler.propose()
+        golem.harness.script = by_label({"propose": [proposing()]})
+        await golem.finish()
+        call = [c for c in golem.harness.calls if c.label == "propose"][-1]
+        assert "# This time's lens: code health" in call.prompt  # the next lens in turn
+        assert "- [features] Bigger cards — accepted\n- [features] Offline mode — turned down: “it's a web app, always online”" in call.prompt
+        assert golem.chat.texts(room)[-1].startswith("I looked at its code health and found nothing worth proposing.")
+        assert golem.store.job_proposals(again.id) == []
+
+    run(go())
+
+
+def test_proposals_wait_until_golem_and_the_project_are_free(golem):
+    from golem import proposals
+    from golem.control import Control
+
+    async def go():
+        room = await new_project(golem, [])
+        golem.store.update_project("tree-cards", proposals="hourly")
+        assert golem.scheduler.propose() is None  # not live yet
+        golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
+        golem.store.set_paused("tree-cards", True)
+        assert golem.scheduler.propose() is None
+        golem.store.set_paused("tree-cards", False)
+        golem.store.add_project("other", "Other", "Something else.")
+        other = golem.store.add_job("other", "new", "something else", "standard")
+        assert golem.scheduler.propose() is None  # golem has other work
+        golem.store.update_job(other.id, state="waiting")  # waiting on Riggy doesn't hold the worker
+        assert golem.scheduler.propose() is not None
+
+        # Proposals are only made while fewer than MAX_OPEN await him.
+        golem.harness.script = by_label({"propose": [proposing(OFFLINE, BIGGER, {**BIGGER, "title": "Sound"})] * 2})
+        await golem.finish()
+        long_ago(golem)
+        assert golem.scheduler.propose() is not None
+        await golem.finish()
+        open_ = golem.store.proposals("tree-cards", ("open",))
+        assert len(open_) == 6 >= proposals.MAX_OPEN
+        long_ago(golem)
+        assert golem.scheduler.propose() is None
+
+        # Accepted while a change is under way: built once it's done.
+        golem.harness.script = by_label({"request": [{"kind": "change"}]})
+        await golem.say(room, "make the cards flip faster")
+        change = golem.store.active_job("tree-cards")
+        await Control(golem.store, golem.scheduler).decide(open_[0].id, True, "yes please")
+        assert golem.store.proposal(open_[0].id).built_by is None
+        await golem.finish()
+        assert golem.store.job(change.id).state == "done"
+        await golem.scheduler.build_accepted()
+        built = golem.store.active_job("tree-cards")
+        assert built.id != change.id and built.request.endswith("Riggy accepted it: “yes please”)")
+
+    run(go())
+
+
+def test_a_proposals_job_never_asks_riggy_anything(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.store.update_project("tree-cards", proposals="weekly")
+        job = golem.scheduler.propose()
+        golem.harness.script = by_label({"propose": [verdict("blocked", "Should I look at the admin pages too?")]})
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"  # a question back is nothing to propose
+        assert golem.chat.texts(room)[-1].startswith("I looked at its features and found nothing worth proposing.")
+
+        long_ago(golem)
+        job = golem.scheduler.propose()
+        golem.harness.script = lambda call: RunResult("error", error="boom")
+        await golem.finish()
+        assert golem.store.job(job.id).state == "failed"  # not waiting on him: nobody asked for it
+        assert golem.chat.texts(room)[-1] == "I couldn't finish looking for proposals: boom"
 
     run(go())
 
