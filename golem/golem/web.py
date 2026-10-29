@@ -362,7 +362,8 @@ def create_app(
         bottom = conversation.composer(project.slug, conversation.state_of(store.active_job(project.slug))) if signed and bot else ""
         data, _ = project_lane(project, signed)
         said, earlier = _latest(request, store.messages(project.slug, limit=_shown(request) + 1)) if signed else ([], "")
-        body = conversation.project_page(data, said, signed, datetime.now(UTC), earlier)
+        waiting = store.proposals(project.slug, ("open",)) if signed else []
+        body = conversation.project_page(data, said, signed, datetime.now(UTC), earlier, waiting)
         action = f"<a href='/p/{escape(project.slug)}/settings' aria-label='Settings for {escape(project.name)}'>Settings</a>" if signed else ""
         return respond(request, project.name, body, signed, bottom, up=("/p", "Projects"), action=action)
 
@@ -374,7 +375,8 @@ def create_app(
         if not signed:
             return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to change a project.")
         data, jobs = project_lane(project, signed)
-        page = conversation.settings_page(project, data, jobs, [t.name for t in store.tags()])
+        decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
+        page = conversation.settings_page(project, data, jobs, [t.name for t in store.tags()], decided)
         return respond(request, f"{project.name}: settings", page, signed,
                        up=(f"/p/{project.slug}", project.name))  # fmt: skip
 
@@ -517,6 +519,10 @@ def create_app(
                     message = control.delete_tag(form.get("name", ""))
                 case "note":
                     message = await control.note(job, value, step, position)
+                case "proposal":
+                    if value not in ("accept", "reject"):
+                        raise ControlError("Thumbs up or down?")
+                    message = await control.decide(_int(form.get("proposal")), value == "accept", form.get("reason", ""))
                 case _:
                     message = "Unknown action."
         except ControlError as e:

@@ -399,6 +399,38 @@ def test_insights_and_defaults(golem, page):
     assert "sonnet/medium" in page.get(f"/steps/{docs.id}?part=sheet").text
 
 
+def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
+    golem.store.update_job(page.job.id, state="done")
+    looked = golem.store.add_job("trees", "change", "Look at its features for things to propose", "proposals")
+    golem.store.update_job(looked.id, state="done")
+    offline, bigger = golem.store.add_proposals("trees", looked.id, "features", [("Offline <mode>", "Cache it.\n\nWhy: hikes."), ("Bigger cards", "Fill the screen.")])
+    assert "golem proposes" not in page.get("/p/trees").text  # signed out: not shown
+    sign_in(page)
+    html = page.get("/p/trees").text
+    assert "golem proposes" in html and "Offline &lt;mode&gt;" in html and "Cache it.<br><br>Why: hikes." in html
+    assert html.index("Offline &lt;mode&gt;") < html.index("Bigger cards")  # oldest first
+    assert html.count("name=value value=accept") == 2 and "name=proposal value='1'" in html
+
+    assert "Thumbs%20up%20or%20down" in act(page, action="proposal", proposal=offline.id, value="maybe")
+    assert "golem%20takes%20that%20into%20account" in act(page, action="proposal", proposal=offline.id, value="reject", reason="always online")
+    assert golem.store.proposal(offline.id).state == "rejected"
+    assert "decided%20already" in act(page, action="proposal", proposal=offline.id, value="accept")
+    location = act(page, action="proposal", proposal=bigger.id, value="accept")
+    built = golem.store.active_job("trees")
+    assert f"job%20{built.id}%20builds%20it" in location and built.request.startswith("Bigger cards\n\nFill the screen.")
+    assert "golem proposes" not in page.get("/p/trees").text  # nothing left to decide
+
+    html = page.get("/p/trees/settings").text
+    assert "<h2>Proposals</h2>" in html and "<option value='' selected>off</option>" in html
+    assert "👎 Offline &lt;mode&gt;<span class=sub>“always online”</span>" in html and f"👍 Bigger cards <a href='/jobs/{built.id}'>" in html
+    act(page, action="setting", slug="trees", name="proposals", value="hourly")
+    assert golem.store.project("trees").proposals == "hourly" and "<option selected>hourly</option>" in page.get("/p/trees/settings").text
+    assert "Proposals hourly, when there's nothing else to do, from the status page." in [m.text for m in golem.store.messages("trees")]
+    assert "can%27t%20be%20yearly" in act(page, action="setting", slug="trees", name="proposals", value="yearly")
+    act(page, action="setting", slug="trees", name="proposals", value="")
+    assert golem.store.project("trees").proposals == "off"
+
+
 def test_tags_in_settings_and_on_a_project(golem, page):
     html = page.get("/settings").text
     assert "id=tags" in html and "<b>Game</b><span>0 projects</span>" in html and "tag-add" not in html  # signed out: a list

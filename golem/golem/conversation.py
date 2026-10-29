@@ -4,9 +4,10 @@ A project's page has its job's card (where it is, what's running, its pieces of 
 signed in, the conversation with golem about it, what golem is waiting on Riggy for, and
 a box to write in that sticks to the bottom of the screen. What's written there goes to the
 bot (web.py): it answers a question or a check-in, picks an option, becomes a note for the
-running job, or starts a change, or options first. Its settings page has what the !commands
-do: mode, model, effort, pausing, renaming, moving and deleting; the job's place in the
-queue and stopping it; and its jobs.
+running job, or starts a change, or options first. Below that are golem's own proposals for
+it, each to thumbs up or down (proposals.py). Its settings page has what the !commands
+do: mode, model, effort, pausing, renaming, moving and deleting; how often golem proposes
+things; the job's place in the queue and stopping it; and its jobs.
 
 Golem's own conversation is where new ideas are written, with its replies and its
 golem-wide news.
@@ -19,7 +20,7 @@ from datetime import datetime
 from html import escape
 
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
-from .store import ACTIVE, EFFORTS, MODELS, MODES, Job, Project, Said
+from .store import ACTIVE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
@@ -31,16 +32,57 @@ COMPOSE = {
 }
 
 
-def project_page(lane: LaneData, said: list[Said], signed_in: bool, now: datetime, earlier: str = "") -> str:
+def project_page(lane: LaneData, said: list[Said], signed_in: bool, now: datetime, earlier: str = "",
+                 waiting: list[Proposal] = ()) -> str:  # fmt: skip
     """The page's main part, refreshed in place every few seconds; the box to write in is separate (composer)."""
     top = status_card(lane, signed_in, now)
     if not signed_in:
         return top + "<p class=hint>Sign in (Settings) to see the conversation and write to golem.</p>"
-    return top + thread(said, "Nothing said here yet.", earlier) + ask_card(lane, signed_in, back=f"/p/{lane.project.slug}#end", reply=False)
+    back = f"/p/{lane.project.slug}#end"
+    return top + thread(said, "Nothing said here yet.", earlier) + ask_card(lane, signed_in, back=back, reply=False) + proposals_card(waiting, back)
 
 
-def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str]) -> str:
-    return settings_html(project, tags) + job_controls(lane) + jobs_html(jobs) + _danger(project)
+def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = ()) -> str:
+    return settings_html(project, tags) + proposals_settings(project, decided) + job_controls(lane) + jobs_html(jobs) + _danger(project)
+
+
+def proposals_card(waiting: list[Proposal], back: str) -> str:
+    """golem's proposals awaiting Riggy, oldest first, each with a thumbs up (build it) or down and room for why."""
+    if not waiting:
+        return ""
+    items = "".join(
+        f"<li class=proposal><h4>{escape(p.title)}</h4><p class=muted>{escape(p.lens)}</p><p>{_linked(p.body)}</p>"
+        f"<form method=post action=/act>{_hidden(action='proposal', proposal=p.id, back=back)}"
+        f"<input name=reason placeholder='Why? (optional)' aria-label='Why, for {escape(p.title)}' maxlength=1000>"
+        "<div class=row-form><button name=value value=accept class=primary>👍 Build it</button>"
+        "<button name=value value=reject>👎 Not this</button></div></form></li>"
+        for p in reversed(waiting)
+    )
+    return (
+        "<section class='card proposals'><h2>golem proposes</h2><p class=sub>A thumbs up builds it. "
+        f"Saying why, either way, steers what golem proposes next.</p><ol>{items}</ol></section>"
+    )
+
+
+def proposals_settings(project: Project, decided: list[Proposal]) -> str:
+    """How often golem looks for improvements to propose, and what Riggy made of the latest."""
+    slug, back = project.slug, f"/p/{project.slug}/settings"
+    every = select_form("proposals", "" if project.proposals == "off" else project.proposals, EVERY[1:], "off",
+                        action="setting", slug=slug, back=back)  # fmt: skip
+    rows = "".join(
+        f"<li>{'👍' if p.state == 'accepted' else '👎'} {escape(p.title)}"
+        + (f" <a href='/jobs/{p.built_by}'>#{p.built_by}</a>" if p.built_by else "")
+        + (f"<span class=sub>“{escape(p.reason)}”</span>" if p.reason else "")
+        + "</li>"
+        for p in decided
+    )
+    return (
+        "<section class='card settings'><h2>Proposals</h2><p class=sub>When there's nothing else to do, golem looks "
+        "it over for one kind of improvement at a time (features, security, polish…) and proposes a few for you "
+        f"to thumbs up or down.</p><div class=row-form><span>How often</span>{every}</div>"
+        + (f"<p class=sub>What you said lately:</p><ol class=links-list>{rows}</ol>" if rows else "")
+        + "</section>"
+    )
 
 
 def inbox_page(said: list[Said], signed_in: bool, earlier: str = "") -> str:
@@ -145,7 +187,7 @@ def _command(slug: str, command: str, placeholder: str, value: str, label: str, 
 
 
 def _job_words(job: Job) -> str:
-    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question") else "change"
+    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
     state = {"done": "done", "killed": "stopped", "failed": "failed"}.get(job.state, job.state)
     request = job.request if len(job.request) <= 90 else job.request[:89] + "…"
     return f"{what}, {state}: “{request}”"

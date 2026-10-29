@@ -152,7 +152,7 @@ def status_card(lane: LaneData, signed_in: bool, now: datetime) -> str:
         return f"<section class='card status c{lane.color}' id='p-{escape(p.slug)}'>{head}<p class=sub>{escape(p.summary)}</p></section>"
     found = progress.pieces(lane.steps)
     active = job.state in ACTIVE
-    what = "New project" if job.kind == "new" else {"options": "Options, then a change", "question": "Question"}.get(job.playbook, "Change")
+    what = "New project" if job.kind == "new" else {"options": "Options, then a change", "question": "Question", "proposals": "Proposals"}.get(job.playbook, "Change")
     done = sum(1 for x in found if x.state in ("done", "skipped"))
     summary = f"{done} of {len(found)} done" if active else f"How it went: {_n(len(found), 'piece')} of work"
     spent = _spent(lane)
@@ -897,6 +897,11 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .ask > p { margin:.3rem 0; }
 .ask .option { flex-basis:min(12rem, 62%); } .ask .option .shots a:first-child img { aspect-ratio:1 / 1; }
 .ask .option .shots a:not(:first-child) { display:none; }
+.proposals { margin-top:.6rem; } .proposals ol { list-style:none; padding:0; margin:.5rem 0 0; }
+.proposal { padding:.6rem 0; border-top:1px solid var(--line); } .proposal:first-child { border-top:0; }
+.proposal h4 { margin:0; font-size:.98rem; } .proposal p { margin:.25rem 0; font-size:.9rem; }
+.proposal input { font:inherit; font-size:16px; padding:.4rem .6rem; border-radius:10px; border:1px solid var(--line);
+  background:var(--card); color:var(--ink); width:100%; box-sizing:border-box; margin-top:.3rem; }
 .tail summary { cursor:pointer; color:var(--muted); font-size:.85em; }
 .log { font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background:#0f172a; color:#cbd5e1; border-radius:10px;
   padding:.5rem .6rem; margin-top:.35rem; max-height:16rem; overflow:auto; }
