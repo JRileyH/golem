@@ -25,7 +25,7 @@ class Settings:
     git_dir: Path  # bare repos, local mode only
     traefik_url: str  # Traefik's internal entrypoint, for checking a site answers
     policy: Policy
-    edge_port: str = ""  # local mode's Traefik isn't on 80; only used in reported URLs
+    edge_port: str = ""  # Traefik's host port when it doesn't hold 80 and 443; only local URLs use it
     admin_secret: str = ""  # for /delete and /upgrade; golem holds it, workers never do. Empty turns them off.
     golem_dir: Path | None = None  # golem's own checkout, at its host path (upgrade.py); None: upgrades off
     golem_repo_token: str = ""  # read-only, the golem repo only; "" for a public repo

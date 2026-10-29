@@ -159,9 +159,12 @@ class Deployer:
         return self.settings.routes_dir / f"{slug}.yml"
 
     def url(self, slug: str) -> str:
-        scheme = "http" if self.settings.base_domain == "localhost" else "https"
-        port = f":{self.settings.edge_port}" if self.settings.edge_port else ""
-        return f"{scheme}://{slug}.{self.settings.base_domain}{port}"
+        """Traefik's port locally; on a server, https on the usual port, whether golem's
+        Traefik holds 443 or a proxy in front of it does."""
+        if self.settings.base_domain == "localhost":
+            port = self.settings.edge_port.rpartition(":")[2]  # EDGE_PORT may be address:port
+            return f"http://{slug}.localhost" + (f":{port}" if port else "")
+        return f"https://{slug}.{self.settings.base_domain}"
 
 
 def _now() -> str:

@@ -13,7 +13,7 @@ from .store import EFFORTS, MODELS, MODES
 @dataclass(frozen=True)
 class Settings:
     base_domain: str
-    edge_port: str  # local mode's Traefik isn't on 80; only used in links
+    edge_port: str  # Traefik's host port when it doesn't hold 80 and 443; only local links use it
     harness: str  # "claude" or "fake"
     org: str
     deployer_url: str
@@ -61,10 +61,11 @@ class Settings:
         )
 
     def url(self, host: str) -> str:
-        """Public URL for `<host>.<base domain>`: https on a server, Traefik's port locally."""
+        """Public URL for `<host>.<base domain>`: Traefik's port locally; on a server, https on
+        the usual port, whether golem's Traefik holds 443 or a proxy in front of it does."""
         if self.base_domain == "localhost":
-            port = f":{self.edge_port}" if self.edge_port and self.edge_port != "80" else ""
-            return f"http://{host}.localhost{port}"
+            port = self.edge_port.rpartition(":")[2]  # EDGE_PORT may be address:port
+            return f"http://{host}.localhost" + (f":{port}" if port and port != "80" else "")
         return f"https://{host}.{self.base_domain}"
 
     def project_url(self, slug: str) -> str:

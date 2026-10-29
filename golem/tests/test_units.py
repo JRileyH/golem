@@ -34,6 +34,21 @@ def test_settings_need_a_web_password():
             Settings.from_env({"BASE_DOMAIN": "example.com", "GITHUB_ORG": "me", **password})
 
 
+@pytest.mark.parametrize(
+    "domain, edge_port, url",
+    [
+        ("example.com", "", "https://golem.example.com"),
+        ("example.com", "127.0.0.1:8800", "https://golem.example.com"),  # behind the box's own proxy
+        ("localhost", "8800", "http://golem.localhost:8800"),
+        ("localhost", "127.0.0.1:8800", "http://golem.localhost:8800"),
+        ("localhost", "80", "http://golem.localhost"),
+    ],
+)
+def test_links_use_traefiks_port_only_locally(domain, edge_port, url):
+    env = {"BASE_DOMAIN": domain, "GITHUB_ORG": "me", "GOLEM_WEB_PASSWORD": "pw", "EDGE_PORT": edge_port}
+    assert Settings.from_env(env).url("golem") == url
+
+
 @pytest.mark.parametrize("machine, platform", [("aarch64", "linux/arm64"), ("arm64", "linux/arm64"), ("x86_64", "linux/amd64")])
 def test_project_images_are_built_for_this_box(monkeypatch, machine, platform):
     env = {"BASE_DOMAIN": "example.com", "GITHUB_ORG": "me", "GOLEM_WEB_PASSWORD": "pw"}

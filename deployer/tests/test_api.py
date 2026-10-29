@@ -1,5 +1,6 @@
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -126,6 +127,21 @@ def test_deploy_writes_override_route_and_state(tmp_path, valid):
     state = json.loads((tmp_path / "projects" / "hello" / "deployed.json").read_text())
     assert state["sha"] == SHA and state["port"] == 3000
     assert h.audit()[-1] == {**h.audit()[-1], "action": "deploy", "outcome": "ok", "slug": "hello", "sha": SHA}
+
+
+@pytest.mark.parametrize(
+    "domain, edge_port, url",
+    [
+        ("unlaunched.dev", "", "https://hello.unlaunched.dev"),
+        ("unlaunched.dev", "127.0.0.1:8800", "https://hello.unlaunched.dev"),  # behind the box's own proxy
+        ("localhost", "8800", "http://hello.localhost:8800"),
+        ("localhost", "127.0.0.1:8800", "http://hello.localhost:8800"),
+    ],
+)
+def test_urls_use_traefiks_port_only_locally(tmp_path, valid, domain, edge_port, url):
+    h = Harness(tmp_path, FakeSource(valid))
+    settings = replace(h.settings, base_domain=domain, edge_port=edge_port)
+    assert Deployer(settings, FakeSource(valid), h.docker, lambda slug: None).url("hello") == url
 
 
 @pytest.mark.parametrize(
