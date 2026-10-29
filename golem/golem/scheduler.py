@@ -13,6 +13,9 @@ pushed or deployed for those.
 With nothing else to do, golem looks for improvements to propose on projects that want
 them, and builds the ones Riggy accepts once their project is free (proposals.py).
 
+An upgrade of golem itself waits for the running step to finish, and holds new steps
+until it's done (upgrade.py).
+
 When CI fails or the deployer refuses a commit, a `fix` agent step is inserted after the
 failed one, followed by the steps from the last push again. Each step's outcome is
 saved, so a crash or a usage limit costs at most the step that was running.
@@ -33,6 +36,7 @@ from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
 from .talk import STATUS, Talk
+from .upgrade import Upgrades
 from .prompts import Prompts
 from .store import ACTIVE, LOOKS, Job, Project, Proposal, Step, Store, later, now
 from .watch import Steps, Tail, span
@@ -101,6 +105,7 @@ class Scheduler:
         self.prompts = prompts
         self.deployer = deployer
         self.cards = Cards(settings, store, harness)
+        self.upgrades = Upgrades(store, deployer, chat)
         self.current: tuple[int, asyncio.Task] | None = None
         self._wake = asyncio.Event()
 
@@ -148,18 +153,20 @@ class Scheduler:
             if self.store.runs(job.id):  # under way from before steps were tracked
                 self.ensure_steps(job)
         self.backfill = asyncio.create_task(self.missing_cards())
+        self.versions = asyncio.create_task(self.upgrades.watch_forever())
         while True:
+            if self.upgrades.holding():  # no step is running here: the upgrade can go
+                if self.upgrades.state == "pending":
+                    await self.upgrades.start()
+                await self.idle()
+                continue
             if not self.paused:
                 await self.build_accepted()
             job = None if self.paused else self.store.next_job()
             if job is None and not self.paused and self.propose() is not None:
                 continue
             if job is None:
-                try:
-                    await asyncio.wait_for(self._wake.wait(), IDLE_POLL_SECONDS)
-                except TimeoutError:
-                    pass
-                self._wake.clear()
+                await self.idle()
                 continue
             task = asyncio.create_task(self.step(job))
             self.current = (job.id, task)
@@ -175,6 +182,14 @@ class Scheduler:
             elif task.exception():
                 log.error("job %s crashed", job.id, exc_info=task.exception())
                 await self.retry_or_ask(job, f"golem error: {task.exception()!r}")
+
+    async def idle(self) -> None:
+        """Wait to be woken, or IDLE_POLL_SECONDS."""
+        try:
+            await asyncio.wait_for(self._wake.wait(), IDLE_POLL_SECONDS)
+        except TimeoutError:
+            pass
+        self._wake.clear()
 
     def propose(self) -> Job | None:
         """With nothing else to do, a proposals job for the project most overdue for one."""

@@ -15,6 +15,8 @@
 - Give a project a tag, or none; add, rename, recolor and delete the tags themselves.
 - Say how often golem looks for improvements to propose for a project, and give each
   proposal a thumbs up (it becomes a change job) or down, with why (proposals.py).
+- Check for a new version of golem, upgrade to it (once the running step is done), and
+  turn upgrading automatically on or off (upgrade.py).
 
 Each change to a project is posted in its conversation, so it stays the record of the job.
 """
@@ -257,6 +259,26 @@ class Control:
         if p.built_by:
             return f"Accepted “{p.title}”: job {p.built_by} builds it."
         return f"Accepted “{p.title}”: it's built once {project.name}'s current job is done."
+
+    def upgrade(self) -> str:
+        message = self.scheduler.upgrades.request()
+        self.scheduler.wake()
+        return message
+
+    async def check_version(self) -> str:
+        v = await self.scheduler.upgrades.check(fetch=True)
+        if v is None:
+            return "Couldn't reach the deployer to check."
+        if blocked := self.scheduler.upgrades.blocked(v):
+            return blocked
+        n = v.get("behind", 0)
+        return f"{n} new commit{'s' if n != 1 else ''} on GitHub." if n else "golem is up to date."
+
+    def auto_upgrade(self, on: bool) -> str:
+        self.store.put("auto_upgrade", "1" if on else "0")
+        if on:
+            return "golem upgrades itself when it's behind and has no work going."
+        return "golem only upgrades when you say."
 
     async def note(self, job_id: int, text: str, step_id: int = 0, position: int = 0) -> str:
         job, project = self._job(job_id)

@@ -88,16 +88,19 @@ class SheetData:
 
 
 def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", bottom: str = "",
-         tab: str = "", up: tuple[str, str] | None = None, action: str = "") -> str:  # fmt: skip
+         tab: str = "", up: tuple[str, str] | None = None, action: str = "", behind: bool = False) -> str:  # fmt: skip
     """The page around `body` (the part the script refreshes). The top level (Home, Projects,
     Settings) has the tab bar; a page below it has the way back (`up`: where, and its name)
     instead. `action` goes at the header's right. `bottom` sticks to the bottom of the screen,
-    outside the refreshed part, so what's being written there is never lost."""
+    outside the refreshed part, so what's being written there is never lost. `behind` marks the
+    Settings tab: a new version of golem is on GitHub."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tabs = ""
     if up is None:
         tabs = "<nav class=tabs aria-label=Sections>" + "".join(
-            f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span></a>"
+            f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span>"
+            + ("<i class=dot aria-label='new version'></i>" if behind and key == "settings" else "")
+            + "</a>"
             for key, href, label in TABS
         ) + "</nav>"
     banner = "<div class='banner paused'>Work is paused. Nothing new starts until it's resumed (Settings).</div>" if paused else ""
@@ -897,6 +900,9 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .ask > p { margin:.3rem 0; }
 .ask .option { flex-basis:min(12rem, 62%); } .ask .option .shots a:first-child img { aspect-ratio:1 / 1; }
 .ask .option .shots a:not(:first-child) { display:none; }
+.tabs a { position:relative; } .tabs .dot { position:absolute; top:.35rem; right:calc(50% - 1.1rem); width:.5rem; height:.5rem;
+  border-radius:50%; background:var(--blue); }
+.version li { font-size:.88rem; overflow-wrap:anywhere; } .version code { color:var(--muted); margin-right:.35rem; }
 .proposals { margin-top:.6rem; } .proposals ol { list-style:none; padding:0; margin:.5rem 0 0; }
 .proposal { padding:.6rem 0; border-top:1px solid var(--line); } .proposal:first-child { border-top:0; }
 .proposal h4 { margin:0; font-size:.98rem; } .proposal p { margin:.25rem 0; font-size:.9rem; }

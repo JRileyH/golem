@@ -53,6 +53,10 @@ class FakeDeployer:
         self.fail: str | None = None  # set to make deletes fail with this reason
         self.deploys: list[tuple[str, str]] = []
         self.refuse: list[str] = []  # problems for the next deploys, in order
+        self.versions: list[dict] = [{"enabled": False, "reason": "not set up"}]  # /version, in turn; the last repeats
+        self.fetches: list[bool] = []
+        self.upgrades = 0
+        self.upgrade_refused = ""  # set to make upgrades fail with this reason
 
     async def deploy(self, slug: str, sha: str) -> Deployment:
         self.deploys.append((slug, sha))
@@ -72,6 +76,16 @@ class FakeDeployer:
 
     async def projects(self) -> list[str]:
         return list(self.deployed)
+
+    async def version(self, fetch: bool = False) -> dict:
+        self.fetches.append(fetch)
+        return dict(self.versions.pop(0) if len(self.versions) > 1 else self.versions[0])
+
+    async def upgrade(self) -> dict:
+        if self.upgrade_refused:
+            raise DeployerError(self.upgrade_refused)
+        self.upgrades += 1
+        return {"from": "a" * 40, "to": "b" * 40}
 
 
 class Golem:

@@ -33,6 +33,10 @@ changing anything structural.
 - Workers run inside the golem container with no Docker access; the deployer
   is their only way to production. Process files (`playbooks/`, `skills/`,
   `prompts/`) are what workers follow: change them as carefully as code.
+- Only Riggy can push to the golem repo. The web app's upgrades (and automatic ones)
+  deploy whatever is on its `main` to the box with Docker access, so no token
+  golem or a worker holds may ever write to it, and `GOLEM_REPO_TOKEN` (the
+  deployer's alone) is read-only.
 - Small steps, one commit each.
 
 ## Commands

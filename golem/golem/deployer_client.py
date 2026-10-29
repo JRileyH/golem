@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 
 NOT_DEPLOYED = "has not been deployed"
 DEPLOY_TIMEOUT = 900  # pulling images and waiting for the site to answer
+UPGRADE_TIMEOUT = 600  # fetching, fast-forwarding and bootstrap.sh; the rebuild happens after it answers
 
 
 class DeployerError(Exception):
@@ -30,6 +31,8 @@ class Deployer(Protocol):
     async def stop(self, slug: str) -> None: ...
     async def delete(self, slug: str) -> None: ...
     async def projects(self) -> list[str]: ...
+    async def version(self, fetch: bool = False) -> dict: ...
+    async def upgrade(self) -> dict: ...
 
 
 class DeployerClient:
@@ -85,6 +88,26 @@ class DeployerClient:
             raise DeployerError(_problem(r))
         return r.json()["projects"]
 
+    async def version(self, fetch: bool = False) -> dict:
+        """golem's own version: what's running, what GitHub's main has (fetched first if `fetch`), the last upgrade."""
+        try:
+            r = await self.client.get("/version", params={"fetch": "1"} if fetch else None)
+        except httpx.HTTPError as e:
+            raise DeployerError(f"the deployer didn't answer ({type(e).__name__})") from None
+        if r.status_code != 200:
+            raise DeployerError(_problem(r))
+        return {k: v for k, v in r.json().items() if k != "ok"}
+
+    async def upgrade(self) -> dict:
+        """Upgrade golem to GitHub's main: {from, to}. The stack rebuilds and restarts after this answers."""
+        try:
+            r = await self.client.post("/upgrade", headers={"X-Deployer-Admin-Secret": self.admin_secret}, timeout=UPGRADE_TIMEOUT)
+        except httpx.HTTPError as e:
+            raise DeployerError(f"the deployer didn't answer ({type(e).__name__})") from None
+        if r.status_code != 200:
+            raise DeployerError(_problem(r))
+        return {k: v for k, v in r.json().items() if k != "ok"}
+
 
 class OfflineDeployer:
     """For HARNESS=fake: every deploy works and nothing is running."""
@@ -103,6 +126,12 @@ class OfflineDeployer:
 
     async def projects(self) -> list[str]:
         return []
+
+    async def version(self, fetch: bool = False) -> dict:
+        return {"enabled": False, "reason": "there's no deployer with HARNESS=fake"}
+
+    async def upgrade(self) -> dict:
+        raise DeployerError("there's no deployer with HARNESS=fake")
 
 
 def _problem(r: httpx.Response) -> str:

@@ -20,6 +20,7 @@ from .insights import Report
 from .pages import (LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots, headline,
                     signin_card, when)  # fmt: skip
 from .store import Said, Tag
+from .upgrade import SHOWN, Upgrades
 from .watch import span
 
 RECENT = timedelta(days=7)  # finished jobs shown on Home
@@ -135,7 +136,8 @@ def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
 
 
 def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str, tuple[str, str]],
-             fallback: tuple[str, str], report: Report, tags: list[Tag], counts: dict[str, int]) -> str:  # fmt: skip
+             fallback: tuple[str, str], report: Report, tags: list[Tag], counts: dict[str, int],
+             upgrades: Upgrades | None = None) -> str:  # fmt: skip
     if signed_in:
         account = (
             "<section class=card><h2>Signed in</h2><p class=sub>On this device. Sign out to stop it changing things.</p>"
@@ -150,6 +152,7 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
             + "</div></section>"
         )
         account += pwa.panel().replace("class=notify-panel", "class='card notify-panel'") + work
+        account += version_card(upgrades) if upgrades else ""
     else:
         account = signin_card("/settings")
     more = (
@@ -159,6 +162,43 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
         "</ul></section>"
     )
     return account + more + tags_card(tags, counts, signed_in) + defaults_table(kinds, defaults, fallback, report, signed_in)
+
+
+def version_card(upgrades: Upgrades) -> str:
+    """golem's own version: what's running, what's new on GitHub, and upgrading to it."""
+    back, v, state = "/settings", upgrades.version(), upgrades.state
+    check = action_form("check-version", "Check now", back=back)
+    auto = action_form("auto-upgrade", "Upgrade automatically: on" if upgrades.auto else "Upgrade automatically: off",
+                       value="off" if upgrades.auto else "on", back=back)  # fmt: skip
+    head = "<section class='card version'><h2>golem</h2>"
+    if v is None:
+        return head + f"<p class=sub>Not checked for a new version yet.</p><div class=row-form>{check}</div></section>"
+    if not v.get("enabled"):
+        return head + f"<p class=sub>{escape(upgrades.blocked(v))}</p></section>"
+    running, behind = str(v.get("running") or v.get("checkout") or "")[:7], v.get("behind", 0)
+    when = f" Checked {escape(str(v.get('checked', ''))[:16].replace('T', ' '))} UTC." if v.get("checked") else ""
+    if behind:
+        said = f"Running <code>{escape(running)}</code>; GitHub's main has {behind} new commit{'s' if behind != 1 else ''}.{when}"
+    else:
+        said = f"Running <code>{escape(running)}</code>, up to date.{when}"
+    body = f"<p class=sub>{said}</p>"
+    if behind:
+        body += "<ul class=links-list>" + "".join(
+            f"<li><code>{escape(c['sha'][:7])}</code>{escape(c['subject'])}</li>" for c in v.get("commits", [])[:SHOWN]
+        ) + (f"<li class=sub>and {behind - SHOWN} more</li>" if behind > SHOWN else "") + "</ul>"
+    if blocked := upgrades.blocked(v):
+        body += f"<p class=hint>{escape(blocked)}</p>"
+    last = v.get("upgrade") or {}
+    if last.get("state") in ("failed", "rolled back"):
+        body += f"<p class=hint>Last upgrade, to {escape(str(last.get('to', ''))[:7])}: {escape(last['state'])}. {escape(last.get('detail', ''))}</p>"
+    if state == "pending":
+        body += "<p class=hint>Upgrading once the running step finishes.</p>"
+    elif state == "started":
+        body += "<p class=hint>Upgrading: rebuilding and restarting, back in a few minutes.</p>"
+    button = ""
+    if behind and not blocked and not state:
+        button = action_form("upgrade", "Upgrade now", back=back, confirm="Upgrade golem now? It restarts once nothing is running.")
+    return head + body + f"<div class=row-form>{button}{check}{auto}</div></section>"
 
 
 def tags_card(tags: list[Tag], counts: dict[str, int], signed_in: bool) -> str:

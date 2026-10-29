@@ -104,8 +104,10 @@ The deployer is the only door from agents to Docker. Assume anything calling it 
 | `GET /projects` | Every project with deploy files, running or stopped |
 | `GET /status?slug=` | Running state, deployed commit, route |
 | `GET /logs?slug=&service=&tail=` | Container logs, for agents debugging failed deploys |
+| `GET /version` | golem's own version: the commit running, what GitHub's `main` has (`?fetch=1`), the last upgrade |
+| `POST /upgrade` | Admin secret only. Fast-forward golem's checkout to GitHub's `main`, bootstrap, rebuild and restart the stack from a helper container, roll back if it isn't healthy |
 
-Data is deleted only when Riggy asks (`!delete`, `bin/nuke.sh`): `/delete` needs a second secret that golem holds and workers never get.
+Data is deleted only when Riggy asks (`!delete`, `bin/nuke.sh`): `/delete` needs a second secret that golem holds and workers never get. `/upgrade` needs it too: Riggy presses "Upgrade now" in the web app, or turns on automatic upgrades. The deployer mounts golem's checkout at its host path for it, and reads the golem repo with its own read-only token, which nothing else gets.
 
 **Deploys come from pushed commits only.** The deployer fetches the compose file from GitHub itself with a read-only org token, never from the agent workspace, so nothing uncommitted can reach production. It also requires every check run on that commit to have passed. Reckless-mode projects simply have fewer checks (at minimum, the image build), so no mode flag is needed or trusted.
 

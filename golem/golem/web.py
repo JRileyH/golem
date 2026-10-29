@@ -265,7 +265,8 @@ def create_app(
         if request.query_params.get("part") == "lanes":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         flash = request.query_params.get("msg", "")[:300]
-        html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, tab=tab, up=up, action=action)
+        behind = signed and scheduler.upgrades.behind() > 0
+        html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, tab=tab, up=up, action=action, behind=behind)
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     async def healthz(request: Request) -> JSONResponse:
@@ -286,7 +287,7 @@ def create_app(
         since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
         body = home.settings(signed, scheduler.paused, control.kinds(), store.defaults(),
                              (settings.default_model, settings.default_effort), insights.report(store, since),
-                             store.tags(), store.tag_counts())  # fmt: skip
+                             store.tags(), store.tag_counts(), scheduler.upgrades)  # fmt: skip
         return respond(request, "Settings", body, signed, tab="settings")
 
     async def step_page(request: Request) -> Response:
@@ -519,6 +520,12 @@ def create_app(
                     message = control.delete_tag(form.get("name", ""))
                 case "note":
                     message = await control.note(job, value, step, position)
+                case "upgrade":
+                    message = control.upgrade()
+                case "check-version":
+                    message = await control.check_version()
+                case "auto-upgrade":
+                    message = control.auto_upgrade(value == "on")
                 case "proposal":
                     if value not in ("accept", "reject"):
                         raise ControlError("Thumbs up or down?")

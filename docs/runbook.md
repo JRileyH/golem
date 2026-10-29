@@ -42,6 +42,10 @@ Behind a home router, forward 80 and 443 to it. Check from anywhere:
    repository creation plus Contents, Pull requests, Issues and Workflows read
    and write, and Actions read-only (golem reads CI on PRs and main itself
    before merging and deploying). Goes in `GOLEM_GITHUB_TOKEN`.
+4. **Fine-grained token** for upgrading golem from the web app (optional): resource
+   owner whoever owns the golem repo (your account, not the org), only that repo,
+   **Contents: Read-only**. Goes in `GOLEM_REPO_TOKEN`; only the deployer gets
+   it. Leave it empty if the golem repo is public.
 
 **hello on GitHub (optional, to prove hosting before any job):** `<org>/hello`
 has the contents of `examples/hello` on `main`, with `your-org` replaced by your
@@ -122,7 +126,25 @@ golem's own conversation.
 
 ## Updating
 
-After pushing new golem commits:
+**From the web app:** Settings → golem says what's running and what's new on
+GitHub's `main` (it checks every 15 minutes; "Check now" checks straight away),
+and the Settings tab gets a dot when golem is behind. "Upgrade now" waits for a
+running step to finish, then does what's below on the box: a fast-forward of
+`main`, `bin/bootstrap.sh`, and `docker compose up -d --build`. If the new
+version won't build, nothing changes; if golem or the deployer doesn't come up
+healthy within 5 minutes, the previous commit is put back and rebuilt. golem
+says how it went in its own conversation. "Upgrade automatically" does the same
+whenever golem is behind and has no work queued or running, and never retries a
+commit that failed.
+
+It needs the checkout on `main` with no local changes or commits of its own,
+`GOLEM_HOST_DIR` (bootstrap sets it: run bootstrap again after moving the
+checkout), and `GOLEM_REPO_TOKEN` unless the repo is public. Anyone who can push
+to the golem repo's `main` can then change what runs on the box, with automatic
+upgrades on without anyone pressing a button: keep it to you. To see an upgrade's
+progress, `docker logs -f golem-upgrade` while it runs.
+
+**By hand,** after pushing new golem commits:
 
 ```sh
 cd ~/golem
