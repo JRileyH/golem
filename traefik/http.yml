@@ -1,5 +1,5 @@
-# Traefik in local mode (compose.local.yml): plain HTTP for *.localhost, no
-# certificates. Otherwise the same as traefik/server.yml.
+# Traefik behind something else (compose.http.yml): plain HTTP, no certificates; your
+# proxy or, locally, nothing handles HTTPS. Otherwise the same as traefik/server.yml.
 log:
   level: INFO
 
@@ -7,6 +7,10 @@ entryPoints:
   web:
     address: ":80"
     asDefault: true
+    # Keep the proxy's X-Forwarded-Proto (https) and -For, so sites see what visitors
+    # used. Only the proxy should reach EDGE_PORT: docs/behind-a-proxy.md.
+    forwardedHeaders:
+      insecure: true
     http:
       aliasHeadersStrategy: delete
   internal:

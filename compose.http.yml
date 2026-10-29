@@ -1,0 +1,19 @@
+# golem behind something else, layered over compose.yml by COMPOSE_FILE in .env, which
+# bin/bootstrap.sh sets whenever EDGE_PORT is: Traefik serves plain HTTP on EDGE_PORT
+# and leaves ports 80 and 443, and HTTPS, to what's in front. On a server that's your
+# own reverse proxy (docs/behind-a-proxy.md); locally, nothing (http://golem.localhost:8800).
+services:
+  traefik:
+    ports: !override
+      - "${EDGE_PORT:-8800}:80"
+    volumes:
+      - ./traefik/http.yml:/etc/traefik/traefik.yml:ro
+    networks:
+      # For a proxy that runs in Docker on this box: it joins golem-edge and forwards
+      # to http://golem-traefik. Only Traefik is on it, not golem or any project.
+      golem-edge:
+        aliases: [golem-traefik]
+
+networks:
+  golem-edge:
+    name: golem-edge

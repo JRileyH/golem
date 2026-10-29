@@ -69,13 +69,12 @@ fi
 default HARNESS claude
 # Where this checkout is, for upgrades from the web app (the deployer mounts it at this path).
 mode_setting GOLEM_HOST_DIR "$(pwd)"
-# Replaced by COMPOSE_FILE (local mode's compose.local.yml).
+# Replaced by COMPOSE_FILE (compose.http.yml, below).
 drop COMPOSE_PROFILES
 
 case $mode in
   local)
     mode_setting BASE_DOMAIN localhost
-    mode_setting COMPOSE_FILE compose.yml:compose.local.yml
     mode_setting DEPLOYER_GIT_SOURCE local
     mode_setting DEPLOYER_REQUIRE_CHECKS false
     # No GitHub locally; the org only names images (ghcr.io/<org>/<slug>).
@@ -86,15 +85,34 @@ case $mode in
     ;;
   server)
     # Local mode's placeholders; a server needs real ones.
-    [[ $(get BASE_DOMAIN) != localhost ]] || put BASE_DOMAIN ""
+    if [[ $(get BASE_DOMAIN) == localhost ]]; then
+      put BASE_DOMAIN ""
+      put EDGE_PORT ""
+    fi
     [[ $(get GITHUB_ORG) != local ]] || put GITHUB_ORG ""
-    drop COMPOSE_FILE
-    mode_setting EDGE_PORT ""
     mode_setting DEPLOYER_GIT_SOURCE github
     mode_setting DEPLOYER_REQUIRE_CHECKS true
     mkdir -p var/git
     ;;
 esac
+
+# The front door: golem's Traefik on 80 and 443 with its own certificates, or plain HTTP
+# on EDGE_PORT behind something else (compose.http.yml).
+edge=$(get EDGE_PORT)
+if [[ -z $edge ]]; then
+  drop COMPOSE_FILE
+  echo "front door: golem takes ports 80 and 443 and gets its own certificates"
+elif [[ $edge =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}:)?[0-9]{1,5}$ ]]; then
+  mode_setting COMPOSE_FILE compose.yml:compose.http.yml
+  if [[ $mode == local ]]; then
+    echo "front door: http://golem.localhost:${edge##*:}"
+  else
+    echo "front door: plain HTTP on $edge, for your reverse proxy to forward to (docs/behind-a-proxy.md)"
+  fi
+else
+  echo "EDGE_PORT must be a port (8800) or IPv4 address:port (127.0.0.1:8800), not $edge" >&2
+  exit 1
+fi
 
 missing=()
 for key in CLAUDE_CODE_OAUTH_TOKEN GOLEM_WEB_PASSWORD; do

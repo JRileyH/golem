@@ -3,7 +3,8 @@
 #   Internet -> traefik (owns 80/443 and TLS) -> golem.<domain>, projects.<domain> -> golem
 #                                             -> <slug>.<domain> -> project stacks
 #
-# Locally, COMPOSE_FILE=compose.yml:compose.local.yml serves plain HTTP on EDGE_PORT.
+# With EDGE_PORT set (behind your own reverse proxy, or locally),
+# COMPOSE_FILE=compose.yml:compose.http.yml serves plain HTTP on EDGE_PORT instead.
 
 name: golem
 
