@@ -26,7 +26,8 @@ or one step. Baked read-only into the golem image.
   else to do and the project's settings ask for them (`golem/golem/proposals.py`).
   A `propose` step looks the project over through one lens (features, security,
   polish…, in turn) and changes nothing; golem's `proposals` step posts what it
-  proposes for Riggy's thumbs up (a change job) or down. Its prompt is
+  proposes for Riggy's thumbs up (a change job) or down, with an issue for each
+  on the repo as a record. Its prompt is
   `prompts/proposals.md`, with every earlier proposal and what he said.
 
 `optional: true` lets Riggy skip a step from the status page. Use it for reviews,

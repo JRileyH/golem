@@ -693,6 +693,8 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
         offline, bigger = golem.store.job_proposals(job.id)
         assert (offline.title, offline.lens, offline.state) == ("Offline mode", "features", "open")
         assert golem.chat.texts(room)[-2] == "Nothing else on, so I'm looking at its features for things to propose."
+        assert golem.workspace.issues[-2:] == [("tree-cards", "Proposal: Offline mode"), ("tree-cards", "Proposal: Bigger cards")]
+        assert (offline.issue, bigger.issue) == (len(golem.workspace.issues) - 1, len(golem.workspace.issues))
         said = golem.chat.sent[-1]
         assert said[0] == room and not said[2]  # it notifies him
         assert said[1].startswith("I looked at its features and have 2 proposals for you:\n\n1. Offline mode\nCache the deck")
@@ -705,14 +707,20 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
         built = golem.store.active_job("tree-cards")
         assert (built.playbook, built.request.splitlines()[0]) == ("feature", "Bigger cards")
         assert "Riggy accepted it." in built.request and "Fill the screen on phones." in built.request
-        assert golem.store.proposal(bigger.id).built_by == built.id
+        assert golem.store.proposal(bigger.id).built_by == built.id and built.issue == bigger.issue  # its PR closes it
+        assert golem.workspace.comments == [
+            ("tree-cards", offline.issue, "👎 Turned down: “it's a web app, always online”", True),
+            ("tree-cards", bigger.issue, "👍 Accepted. golem builds it next; its PR closes this.", False),
+        ]
         assert golem.chat.sent[-1] == (room, f"Building the proposal you accepted: Bigger cards (job {built.id}).", True)
         heard = [m.text for m in golem.store.messages(room) if m.who == "riggy"]
         assert heard[-2:] == ["👎 Offline mode: it's a web app, always online", "👍 Bigger cards"]
         with pytest.raises(ControlError, match="decided already"):
             await control.decide(bigger.id, False, "")
 
+        issues = len(golem.workspace.issues)
         await golem.finish()  # the accepted one is built and deployed
+        assert len(golem.workspace.issues) == issues and f"Closes #{bigger.issue}" in golem.workspace.bodies[-1]
         long_ago(golem)
         again = golem.scheduler.propose()
         golem.harness.script = by_label({"propose": [proposing()]})
@@ -744,16 +752,21 @@ def test_proposals_wait_until_golem_and_the_project_are_free(golem):
         golem.store.update_job(other.id, state="waiting")  # waiting on Riggy doesn't hold the worker
         assert golem.scheduler.propose() is not None
 
-        # Proposals are only made while fewer than MAX_OPEN await him.
+        # Proposals are only made while fewer await him than the project allows: 5 unless he says.
+        assert golem.store.project("tree-cards").proposals_max == 5
         golem.harness.script = by_label({"propose": [proposing(OFFLINE, BIGGER, {**BIGGER, "title": "Sound"})] * 2})
         await golem.finish()
         long_ago(golem)
         assert golem.scheduler.propose() is not None
         await golem.finish()
         open_ = golem.store.proposals("tree-cards", ("open",))
-        assert len(open_) == 6 >= proposals.MAX_OPEN
+        assert len(open_) == 6
         long_ago(golem)
         assert golem.scheduler.propose() is None
+        golem.store.update_project("tree-cards", proposals_max=8)
+        assert golem.scheduler.propose() is not None
+        golem.harness.script = by_label({"propose": [proposing()]})
+        await golem.finish()
 
         # Accepted while a change is under way: built once it's done.
         golem.harness.script = by_label({"request": [{"kind": "change"}]})

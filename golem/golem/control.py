@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from . import plan
+from .proposals import WAITING
 from .scheduler import Scheduler
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, Job, Project, Step, Store, Tag
 
@@ -148,8 +149,16 @@ class Control:
 
     async def setting(self, slug: str, name: str, value: str) -> str:
         """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
-        none; or how often golem looks for improvements to propose, "" for never."""
+        none; how often golem looks for improvements to propose, "" for never; or how many proposals
+        may await Riggy before it stops."""
         project = self._project(slug)
+        if name == "proposals_max":
+            if not value.isdigit() or int(value or 0) not in WAITING:
+                raise ControlError(f"Pick how many: {', '.join(map(str, WAITING))}.")
+            self.store.update_project(slug, proposals_max=int(value))
+            await self.scheduler.say(project, f"Up to {value} proposals can wait for you, from the status page.", notice=True)
+            self.scheduler.wake()
+            return f"{project.name}: up to {value} proposals waiting on you."
         if name == "proposals":
             every = value or "off"
             if every not in EVERY:
@@ -240,6 +249,7 @@ class Control:
         p = self.store.decide_proposal(p.id, accepted, reason)
         project = self._project(p.slug)
         await self.scheduler.chat.heard(project.slug, f"{'👍' if accepted else '👎'} {p.title}" + (f": {reason}" if reason else ""))
+        await self.scheduler.record_decision(p)
         if not accepted:
             return f"Turned down “{p.title}”. golem takes that into account next time."
         await self.scheduler.build_accepted()

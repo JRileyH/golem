@@ -5,7 +5,8 @@ When nothing is queued, running or parked anywhere, the scheduler starts a propo
 the live project most overdue for one (`due`). Like a question it only looks: `refresh`
 brings the checkout up to date, a `propose` agent step looks the project over and returns
 up to MAX_PER_RUN proposals with its verdict, and golem's `proposals` step posts them in
-the project's conversation. Nothing is committed, pushed or deployed.
+the project's conversation, and opens an issue for each on its repo. Nothing is committed,
+pushed or deployed.
 
 Each job looks through one lens (features, security, polish…), the next in LENSES each time,
 so that over time every side of the project gets a fresh look rather than the same kind of
@@ -14,7 +15,10 @@ from repeating them and to learn what he values, not as a template.
 
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
 up becomes a change job on the feature playbook, as soon as the project has no other change
-under way. A project with MAX_OPEN proposals awaiting him gets no more until he decides.
+under way, and that job's PR closes the proposal's issue; a thumbs down closes it with his
+reason. The issues are only a record: golem never reads anything back from GitHub. A project
+with as many proposals awaiting him as its settings allow (5 unless he says) gets no more until
+he decides.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from .store import Job, Project, Proposal, Store
 INTERVALS = {"hourly": timedelta(hours=1), "daily": timedelta(days=1), "weekly": timedelta(days=7)}
 PRIORITY = -1000  # behind anything Riggy asks for, from the next step boundary
 MAX_PER_RUN = 3
-MAX_OPEN = 5  # proposals awaiting Riggy before golem stops making more for the project
+WAITING = (1, 2, 3, 4, 5, 6, 8, 10, 15, 20)  # how many may await Riggy, to pick from in a project's settings
 PAST_SHOWN = 60  # earlier proposals in the worker's prompt, newest first
 SIZES = ("small", "medium", "large")
 
@@ -88,7 +92,7 @@ def lens(store: Store, job: Job) -> Lens:
 def due(store: Store, at: datetime) -> Project | None:
     """The project most overdue for proposals, when golem has nothing else to do: nothing
     queued, running or parked anywhere. Only live, unpaused projects with no job of their own
-    under way and fewer than MAX_OPEN proposals awaiting Riggy count."""
+    under way and fewer proposals awaiting Riggy than its settings allow count."""
     if store.jobs(("queued", "running", "parked"), limit=1):
         return None
     found: list[tuple[datetime, Project]] = []
@@ -96,7 +100,7 @@ def due(store: Store, at: datetime) -> Project | None:
         every = INTERVALS.get(project.proposals)
         if every is None or project.paused or store.active_job(project.slug):
             continue
-        if len(store.proposals(project.slug, ("open",))) >= MAX_OPEN:
+        if len(store.proposals(project.slug, ("open",))) >= project.proposals_max:
             continue
         earlier = store.proposal_jobs(project.slug)
         last = datetime.fromisoformat(earlier[-1].created_at) if earlier else datetime.min.replace(tzinfo=UTC)
@@ -140,6 +144,21 @@ def request(p: Proposal) -> str:
     """The change job an accepted proposal becomes: its first line is the job's title."""
     why = f": “{p.reason}”" if p.reason else "."
     return f"{p.title}\n\n{p.body}\n\n(golem proposed this while looking at {p.lens}; Riggy accepted it{why})"
+
+
+def issue(p: Proposal, page: str) -> tuple[str, str]:
+    """The title and body of the proposal's issue: a record on its repo of what golem proposed."""
+    body = (
+        f"{p.body}\n\n---\nProposed by golem (job {p.job_id}) while looking at the project's {p.lens}. "
+        f"Riggy decides on it in golem: {page}. Nothing said here is read back."
+    )
+    return f"Proposal: {p.title}", body
+
+
+def decision(p: Proposal) -> str:
+    """Riggy's decision, for the proposal's issue."""
+    said = "👍 Accepted" if p.state == "accepted" else "👎 Turned down"
+    return said + (f": “{p.reason}”" if p.reason else ".") + (" golem builds it next; its PR closes this." if p.state == "accepted" else "")
 
 
 def announcement(name: str, made: list[Proposal], page: str) -> str:

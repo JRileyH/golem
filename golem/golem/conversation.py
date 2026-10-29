@@ -20,6 +20,7 @@ from datetime import datetime
 from html import escape
 
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
+from .proposals import WAITING
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
@@ -69,6 +70,12 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
     slug, back = project.slug, f"/p/{project.slug}/settings"
     every = select_form("proposals", "" if project.proposals == "off" else project.proposals, EVERY[1:], "off",
                         action="setting", slug=slug, back=back)  # fmt: skip
+    most = (
+        f"<form method=post action=/act class=inline>{_hidden(action='setting', name='proposals_max', slug=slug, back=back)}"
+        "<select name=value aria-label='proposals waiting' onchange='this.form.submit()'>"
+        + "".join(f"<option{' selected' if n == project.proposals_max else ''}>{n}</option>" for n in WAITING)
+        + "</select></form>"
+    )
     rows = "".join(
         f"<li>{'👍' if p.state == 'accepted' else '👎'} {escape(p.title)}"
         + (f" <a href='/jobs/{p.built_by}'>#{p.built_by}</a>" if p.built_by else "")
@@ -79,7 +86,8 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
     return (
         "<section class='card settings'><h2>Proposals</h2><p class=sub>When there's nothing else to do, golem looks "
         "it over for one kind of improvement at a time (features, security, polish…) and proposes a few for you "
-        f"to thumbs up or down.</p><div class=row-form><span>How often</span>{every}</div>"
+        f"to thumbs up or down, each also an issue on its repo as a record.</p><div class=row-form><span>How often</span>{every}"
+        f"<span>At most waiting on you</span>{most}</div>"
         + (f"<p class=sub>What you said lately:</p><ol class=links-list>{rows}</ol>" if rows else "")
         + "</section>"
     )

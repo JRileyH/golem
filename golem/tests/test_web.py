@@ -427,6 +427,11 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     assert golem.store.project("trees").proposals == "hourly" and "<option selected>hourly</option>" in page.get("/p/trees/settings").text
     assert "Proposals hourly, when there's nothing else to do, from the status page." in [m.text for m in golem.store.messages("trees")]
     assert "can%27t%20be%20yearly" in act(page, action="setting", slug="trees", name="proposals", value="yearly")
+    assert "<option selected>5</option>" in page.get("/p/trees/settings").text  # waiting on him at most: 5 unless he says
+    act(page, action="setting", slug="trees", name="proposals_max", value="10")
+    assert golem.store.project("trees").proposals_max == 10 and "<option selected>10</option>" in page.get("/p/trees/settings").text
+    assert "Pick%20how%20many" in act(page, action="setting", slug="trees", name="proposals_max", value="7")
+    assert "Pick%20how%20many" in act(page, action="setting", slug="trees", name="proposals_max", value="")
     act(page, action="setting", slug="trees", name="proposals", value="")
     assert golem.store.project("trees").proposals == "off"
 

@@ -34,7 +34,7 @@ from .deployer_client import Deployer, DeployerError
 from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
 from .talk import STATUS, Talk
 from .prompts import Prompts
-from .store import ACTIVE, LOOKS, Job, Project, Step, Store, later, now
+from .store import ACTIVE, LOOKS, Job, Project, Proposal, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import Workspace, WorkspaceError
 
@@ -192,9 +192,16 @@ class Scheduler:
             if project is None or self.store.active_job(p.slug, questions=False):
                 continue
             job = self.store.add_job(p.slug, "change", proposals.request(p), "feature")
+            if p.issue:  # the job works on the proposal's issue, and its PR closes it
+                job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)
             await self.say(project, f"Building the proposal you accepted: {p.title} (job {job.id}).", notice=True)
             self.wake()
+
+    async def record_decision(self, p: Proposal) -> None:
+        """Riggy's decision on the proposal's issue, closing it if he turned it down. Only a record."""
+        if p.issue:
+            await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state == "rejected")
 
     def ensure_steps(self, job: Job) -> list[Step]:
         """The job's steps, written from its playbook the first time."""
@@ -504,13 +511,18 @@ class Scheduler:
         return Outcome("done", "Answered you.")
 
     async def do_proposals(self, job: Job, project: Project, step: Step) -> Outcome:
-        """A proposals job's last step: what it proposed, in the conversation, to decide on on the project's page."""
+        """A proposals job's last step: what it proposed, in the conversation to decide on on the
+        project's page, and an issue for each on its repo as a record."""
         made, name = self.store.job_proposals(job.id), proposals.lens(self.store, job).name
         if not made:
             said = plan.last_said(self.store.steps(job.id))
             await self.say(project, f"I looked at its {name} and found nothing worth proposing." + (f" {said}" if said else ""), notice=True)
             return Outcome("done", "Nothing worth proposing.")
-        await self.say(project, proposals.announcement(name, made, f"{self.settings.url('golem')}/p/{project.slug}"))
+        page = f"{self.settings.url('golem')}/p/{project.slug}"
+        for p in made:
+            if p.issue is None:  # not opened by an earlier try at this step
+                self.store.set_proposal_issue(p.id, await self.workspace.open_issue(project.slug, *proposals.issue(p, page)))
+        await self.say(project, proposals.announcement(name, made, page))
         return Outcome("done", f"Proposed {len(made)} for you to decide on.")
 
     async def do_push(self, job: Job, project: Project, step: Step) -> Outcome:

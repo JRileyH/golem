@@ -46,6 +46,7 @@ class Workspace(Protocol):
     async def ensure_main(self, slug: str, readme: str) -> None: ...
     async def sync_main(self, slug: str) -> None: ...
     async def open_issue(self, slug: str, title: str, body: str) -> int | None: ...
+    async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None: ...
     async def repo_exists(self, slug: str) -> bool: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
@@ -158,6 +159,17 @@ class GitHubWorkspace:
             return int(out.rstrip("/").rsplit("/", 1)[-1])
         except ValueError:
             return None
+
+    async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None:
+        """Say something on an issue, closing it as not planned if `close`. Only a record: a failure is logged."""
+        repo = ("--repo", f"{self.org}/{slug}")
+        if close:
+            args = ("gh", "issue", "close", str(number), *repo, "--reason", "not planned", "--comment", body)
+        else:
+            args = ("gh", "issue", "comment", str(number), *repo, "--body", body)
+        code, out = await run(*args)
+        if code != 0:
+            log.warning("issue %s#%s: %s", slug, number, out[-300:])
 
     # --- the job's branch, from first commit to merge ---------------------------
 
@@ -320,6 +332,7 @@ class LocalWorkspace:
         self.root = root
         self.repos: set[str] = set()
         self.issues: list[tuple[str, str]] = []
+        self.comments: list[tuple[str, int, str, bool]] = []  # (slug, issue, body, closed it)
         self.actions: list[str] = []
         self.bodies: list[str] = []  # of the PRs opened
         self.has_work = True
@@ -360,6 +373,9 @@ class LocalWorkspace:
     async def open_issue(self, slug: str, title: str, body: str) -> int | None:
         self.issues.append((slug, title))
         return len(self.issues)
+
+    async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None:
+        self.comments.append((slug, number, body, close))
 
     # A pretend GitHub: every step's work is something to push, and CI passes unless
     # `ci_results` says otherwise. `actions` records what golem did, in order.

@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS projects (
     paused INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     tag TEXT NOT NULL DEFAULT '',    -- what sort of project it is (tags), '' for none
-    proposals TEXT NOT NULL DEFAULT 'off'  -- how often golem looks for improvements to propose (EVERY)
+    proposals TEXT NOT NULL DEFAULT 'off',  -- how often golem looks for improvements to propose (EVERY)
+    proposals_max INTEGER NOT NULL DEFAULT 5  -- proposals awaiting Riggy before golem stops making more
 );
 -- The few big-picture sorts of project ("Game"), shown on the projects page in their color.
 CREATE TABLE IF NOT EXISTS tags (
@@ -141,7 +142,8 @@ CREATE TABLE IF NOT EXISTS proposals (
     reason TEXT NOT NULL DEFAULT '', -- Riggy's why, if he gave one
     built_by INTEGER,                -- the change job an accepted one became, once it's queued
     created_at TEXT NOT NULL,
-    decided_at TEXT
+    decided_at TEXT,
+    issue INTEGER                    -- its GitHub issue: a record, never read back
 );
 """
 
@@ -152,7 +154,9 @@ MIGRATIONS = {
         "effort": "TEXT NOT NULL DEFAULT 'high'",
         "tag": "TEXT NOT NULL DEFAULT ''",
         "proposals": "TEXT NOT NULL DEFAULT 'off'",
+        "proposals_max": "INTEGER NOT NULL DEFAULT 5",
     },
+    "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
         "optional": "INTEGER NOT NULL DEFAULT 0",
@@ -200,6 +204,7 @@ class Project:
     created_at: str
     tag: str = ""  # a Tag's name, or "" for none
     proposals: str = "off"  # how often golem looks for improvements to propose (EVERY)
+    proposals_max: int = 5  # proposals awaiting Riggy before golem stops making more
 
 
 @dataclass
@@ -217,6 +222,7 @@ class Proposal:
     built_by: int | None  # the change job building it, once accepted and queued
     created_at: str
     decided_at: str | None
+    issue: int | None = None  # its GitHub issue, a record of it there: golem never reads it back
 
 
 @dataclass
@@ -358,8 +364,8 @@ class Store:
     def set_paused(self, slug: str, paused: bool) -> None:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
-    def update_project(self, slug: str, **fields: str) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals"}, fields
+    def update_project(self, slug: str, **fields: str | int) -> Project:
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -369,8 +375,8 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals FROM projects WHERE slug = ?",
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max FROM projects WHERE slug = ?",
                 (new, old),
             )
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
@@ -698,6 +704,9 @@ class Store:
 
     def set_built_by(self, proposal_id: int, job_id: int) -> None:
         self.db.execute("UPDATE proposals SET built_by = ? WHERE id = ?", (job_id, proposal_id))
+
+    def set_proposal_issue(self, proposal_id: int, issue: int | None) -> None:
+        self.db.execute("UPDATE proposals SET issue = ? WHERE id = ?", (issue, proposal_id))
 
     def proposal_jobs(self, slug: str) -> list[Job]:
         """The project's proposals jobs, oldest first."""
