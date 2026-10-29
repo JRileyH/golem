@@ -1,0 +1,9 @@
+# Compose's own tags (!override, !reset) change merge behavior with the deployer's override.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    networks: !override [default]
+    labels:
+      golem.public: "true"
+      golem.port: "80"

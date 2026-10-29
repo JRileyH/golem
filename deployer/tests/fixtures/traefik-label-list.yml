@@ -1,0 +1,9 @@
+# List form, and a capital T: Traefik label keys are case-insensitive.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    labels:
+      - golem.public=true
+      - golem.port=80
+      - Traefik.enable=true

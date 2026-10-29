@@ -1,0 +1,99 @@
+# golem: one stack for any box with a public IP. Settings come from .env.
+#
+#   Internet -> traefik (owns 80/443 and TLS) -> golem.<domain>, projects.<domain> -> golem
+#                                             -> <slug>.<domain> -> project stacks
+#
+# Locally, COMPOSE_FILE=compose.yml:compose.local.yml serves plain HTTP on EDGE_PORT.
+
+name: golem
+
+services:
+  golem:
+    build:
+      context: .
+      dockerfile: golem/Dockerfile
+    image: golem-golem
+    restart: unless-stopped
+    mem_limit: ${GOLEM_MEM_LIMIT:-1536m}  # one cap for the service and every worker it runs
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
+      EDGE_PORT: ${EDGE_PORT:-}
+      HARNESS: ${HARNESS:-claude}
+      GOLEM_DEFAULT_MODE: ${GOLEM_DEFAULT_MODE:-standard}
+      GOLEM_MODEL: ${GOLEM_MODEL:-opus}
+      GOLEM_EFFORT: ${GOLEM_EFFORT:-high}
+      GOLEM_WEB_PASSWORD: ${GOLEM_WEB_PASSWORD:?set GOLEM_WEB_PASSWORD in .env}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      GH_TOKEN: ${GOLEM_GITHUB_TOKEN:-}  # workers' token; gh and git (via gh) read GH_TOKEN
+      GITHUB_ORG: ${GITHUB_ORG:?set GITHUB_ORG in .env}
+      DEPLOYER_URL: http://deployer:8000
+      DEPLOYER_SECRET: ${DEPLOYER_SECRET:?set DEPLOYER_SECRET in .env}
+      DEPLOYER_ADMIN_SECRET: ${DEPLOYER_ADMIN_SECRET:-}  # for !delete and nuke; never passed to workers
+    volumes:
+      - golem-state:/var/lib/golem
+      - golem-claude:/home/golem/.claude
+      - golem-workspace:/workspace
+      - golem-cache:/home/golem/.cache
+    # Not on golem-apps: workers reach projects only through traefik, like visitors.
+    networks: [golem-internal]
+
+  deployer:
+    build: ./deployer
+    image: golem-deployer
+    restart: unless-stopped
+    mem_limit: 256m
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN}
+      EDGE_PORT: ${EDGE_PORT:-}
+      GITHUB_ORG: ${GITHUB_ORG}
+      DEPLOYER_SECRET: ${DEPLOYER_SECRET}
+      DEPLOYER_ADMIN_SECRET: ${DEPLOYER_ADMIN_SECRET:-}
+      DEPLOYER_GIT_SOURCE: ${DEPLOYER_GIT_SOURCE:-github}
+      DEPLOYER_GITHUB_TOKEN: ${DEPLOYER_GITHUB_TOKEN:-}
+      DEPLOYER_REGISTRY_USER: ${DEPLOYER_REGISTRY_USER:-}
+      DEPLOYER_REGISTRY_TOKEN: ${DEPLOYER_REGISTRY_TOKEN:-}
+      DEPLOYER_REQUIRE_CHECKS: ${DEPLOYER_REQUIRE_CHECKS:-true}
+      DEPLOYER_SERVICE_MEM_CAP_MB: ${DEPLOYER_SERVICE_MEM_CAP_MB:-512}
+      DEPLOYER_PROJECT_MEM_CAP_MB: ${DEPLOYER_PROJECT_MEM_CAP_MB:-1024}
+    volumes:
+      # The only container with the Docker socket.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - deployer-data:/data
+      - routes:/routes
+      # Local mode's bare repos; an empty directory on a server.
+      - ${LOCAL_GIT_DIR:-./var/git}:/git:ro
+    # Only on the internal network: project containers can't reach it.
+    networks: [golem-internal]
+
+  traefik:
+    image: traefik:v3.7.16
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./traefik/server.yml:/etc/traefik/traefik.yml:ro
+      # Read-only here; the deployer writes every file in it.
+      - routes:/etc/traefik/dynamic:ro
+      - traefik-acme:/acme
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+    networks: [golem-apps, golem-internal]
+
+networks:
+  golem-internal:
+    name: golem-internal
+  golem-apps:
+    # Fixed name: the deployer attaches project public services to it.
+    name: golem-apps
+
+volumes:
+  golem-state:
+  golem-claude:
+  golem-workspace:
+  golem-cache:
+  deployer-data:
+  routes:
+  traefik-acme:

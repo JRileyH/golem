@@ -1,0 +1,16 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 400m
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+  worker:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 400m
+  db:
+    image: postgres:18
+    deploy:
+      resources:
+        limits:
+          memory: 400m

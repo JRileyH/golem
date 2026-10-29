@@ -1,0 +1,25 @@
+[project]
+name = "golem"
+version = "0.1.0"
+description = "Bot, queue, scheduler and web app; runs Claude Code workers"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "pywebpush>=2.5.0",
+    "pyyaml>=6.0.3",
+    "starlette>=1.9.0",
+    "uvicorn>=0.54.0",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.16.0",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

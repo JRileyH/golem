@@ -1,0 +1,11 @@
+# Build context is the repo root for the golem image. Keep secrets and
+# local state out of it.
+.env
+.env.*
+.git
+.claude
+var
+**/.venv
+**/__pycache__
+**/.pytest_cache
+deployer

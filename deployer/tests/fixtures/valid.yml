@@ -1,0 +1,55 @@
+# Uses most of what's allowed, so a rule that's too strict shows up here.
+services:
+  web:
+    image: ghcr.io/unlaunched/trees:3f2a9c1
+    restart: unless-stopped
+    command: ["sh", "-c", "echo $$HOME && exec node server.js"]
+    environment:
+      DATABASE_URL: postgres://trees:trees@db:5432/trees
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      golem.public: "true"
+      golem.port: "3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    networks: [default, backend]
+    configs:
+      - source: banner
+        target: /etc/banner.txt
+  db:
+    image: postgres:18
+    restart: no
+    mem_limit: 256m
+    environment:
+      POSTGRES_PASSWORD: trees
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - type: volume
+        source: backups
+        target: /backups
+        read_only: true
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+  cache:
+    image: docker.io/library/redis:8-alpine
+    mem_limit: 64m
+    volumes:
+      - /data
+
+volumes:
+  pgdata:
+  backups: {}
+
+networks:
+  backend:
+    internal: true
+
+configs:
+  banner:
+    content: hello

@@ -1,0 +1,10 @@
+# Untagged on purpose: the deployer pins ghcr.io/<org>/hello to the commit
+# being deployed (CI tags every image with its commit sha). Put your GITHUB_ORG
+# in place of your-org when pushing this to GitHub; `just hello-local` does it.
+services:
+  web:
+    image: ghcr.io/your-org/hello
+    mem_limit: 32m
+    labels:
+      golem.public: "true"
+      golem.port: "80"

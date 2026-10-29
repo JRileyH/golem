@@ -1,0 +1,49 @@
+# Traefik: golem's only proxy. Owns 80 and 443, and gets a Let's Encrypt
+# certificate for each host it routes (HTTP challenge, so any DNS provider works).
+# File provider only, no Docker socket: the deployer writes one <slug>.yml per
+# project into dynamic/. Routes name no entrypoint, so they get the asDefault ones.
+log:
+  level: INFO
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+      # Drop headers like X_Forwarded_Proto that some backends read as X-Forwarded-Proto.
+      aliasHeadersStrategy: delete
+  websecure:
+    address: ":443"
+    asDefault: true
+    http:
+      tls:
+        certResolver: letsencrypt
+      aliasHeadersStrategy: delete
+  # Not published: the deployer checks a site answers through here.
+  internal:
+    address: ":8080"
+    asDefault: true
+    http:
+      aliasHeadersStrategy: delete
+  ping:
+    address: ":8082"
+    http:
+      aliasHeadersStrategy: delete
+
+ping:
+  entryPoint: ping
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      storage: /acme/acme.json
+      httpChallenge:
+        entryPoint: web
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

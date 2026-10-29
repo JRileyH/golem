@@ -1,0 +1,13 @@
+# Would join the edge's network, next to the neighbor stacks.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    networks: [edge]
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+networks:
+  edge:
+    external: true
+    name: web

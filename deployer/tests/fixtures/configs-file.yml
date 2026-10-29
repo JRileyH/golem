@@ -1,0 +1,11 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    configs: [conf]
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+configs:
+  conf:
+    file: /etc/passwd

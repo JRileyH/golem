@@ -1,0 +1,18 @@
+.DS_Store
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# local Claude Code settings
+.claude/settings.local.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# runtime data from local mode
+/var/

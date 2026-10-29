@@ -1,0 +1,8 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    cap_add: [SYS_ADMIN]
+    labels:
+      golem.public: "true"
+      golem.port: "80"

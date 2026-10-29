@@ -1,0 +1,28 @@
+# Traefik in local mode (compose.local.yml): plain HTTP for *.localhost, no
+# certificates. Otherwise the same as traefik/server.yml.
+log:
+  level: INFO
+
+entryPoints:
+  web:
+    address: ":80"
+    asDefault: true
+    http:
+      aliasHeadersStrategy: delete
+  internal:
+    address: ":8080"
+    asDefault: true
+    http:
+      aliasHeadersStrategy: delete
+  ping:
+    address: ":8082"
+    http:
+      aliasHeadersStrategy: delete
+
+ping:
+  entryPoint: ping
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true

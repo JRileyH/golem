@@ -1,0 +1,11 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    labels:
+      golem.public: "true"
+      golem.port: "80"

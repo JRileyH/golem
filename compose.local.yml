@@ -1,0 +1,8 @@
+# Local mode, layered over compose.yml by COMPOSE_FILE in .env (bin/bootstrap.sh local):
+# plain HTTP for *.localhost on EDGE_PORT, no certificates.
+services:
+  traefik:
+    ports: !override
+      - "${EDGE_PORT:-8800}:80"
+    volumes:
+      - ./traefik/local.yml:/etc/traefik/traefik.yml:ro

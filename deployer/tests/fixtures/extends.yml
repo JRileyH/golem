@@ -1,0 +1,10 @@
+services:
+  web:
+    extends:
+      file: ../../other/compose.yml
+      service: app
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    labels:
+      golem.public: "true"
+      golem.port: "80"

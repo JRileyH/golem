@@ -1,0 +1,12 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+  db:
+    image: postgres:18
+    mem_limit: 256m
+    labels:
+      golem.port: "5432"

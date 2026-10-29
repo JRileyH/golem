@@ -1,0 +1,9 @@
+# PyYAML keeps the last duplicate silently; refuse instead of guessing what Compose sees.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+    image: ghcr.io/unlaunched/hello:2

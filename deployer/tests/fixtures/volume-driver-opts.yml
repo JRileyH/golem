@@ -1,0 +1,17 @@
+# A local volume with bind options is a disguised bind mount.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    volumes:
+      - data:/data
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+volumes:
+  data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc

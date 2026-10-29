@@ -1,0 +1,13 @@
+# name: escapes the project's volume namespace and could mount a neighbor's data.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    volumes:
+      - data:/data
+    labels:
+      golem.public: "true"
+      golem.port: "80"
+volumes:
+  data:
+    name: misg_postgres_data

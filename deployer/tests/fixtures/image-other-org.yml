@@ -1,0 +1,7 @@
+services:
+  web:
+    image: ghcr.io/evil/app:1
+    mem_limit: 64m
+    labels:
+      golem.public: "true"
+      golem.port: "80"

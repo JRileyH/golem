@@ -1,0 +1,7 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 1g
+    labels:
+      golem.public: "true"
+      golem.port: "80"

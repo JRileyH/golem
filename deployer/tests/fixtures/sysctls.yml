@@ -1,0 +1,9 @@
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    labels:
+      golem.public: "true"
+      golem.port: "80"

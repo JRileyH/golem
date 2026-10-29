@@ -1,0 +1,10 @@
+# Interpolation would read the deployer's own environment, which holds its tokens.
+services:
+  web:
+    image: ghcr.io/unlaunched/hello:1
+    mem_limit: 64m
+    environment:
+      TOKEN: ${DEPLOYER_GITHUB_TOKEN}
+    labels:
+      golem.public: "true"
+      golem.port: "80"
