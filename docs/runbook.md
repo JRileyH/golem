@@ -163,6 +163,23 @@ docker compose logs --since 1h golem | grep -E 'WARNING|ERROR'    # failed attem
 
 `!kill` in the project's conversation (or Stop in its Settings) stops the job.
 
+## Moving to a new box
+
+Nothing needs copying but `.env`. Set the new box up from step 0 with the same
+`GITHUB_ORG`, point the DNS at it, and start golem. The first time it starts
+with no database, it rebuilds whatever the org has of its own (`recover.py`). It
+makes a project for each repo with golem's issues in it, and a finished job, with
+its old id, for each issue and its PRs. Then it deploys each project's `main`
+again, and says in its own conversation what came back up. On an org golem never
+used, it starts with nothing.
+
+What doesn't come along: conversations, notes, run history and cost, proposals,
+tags, project settings (back to the defaults), push sign-ups (turn notifications
+on again on each device), lessons, and any data a project kept in its volumes.
+
+So delete a project's repo when you're done with it: on a fresh install, a repo
+that's still in the org comes back.
+
 ## Starting over
 
 `!delete` in a project's conversation deletes one project. To delete all of them:

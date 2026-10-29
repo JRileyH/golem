@@ -239,7 +239,10 @@ def _request(body: str) -> str:
 
 
 def _work(body: str) -> list[tuple[str, str]]:
-    """(step name, what it did) for each step a PR golem opened lists."""
+    """(step name, what it did) for each step a PR golem opened lists. A worker's own PR may
+    have lines like them that aren't steps."""
+    if not OPENED_BY.search(body):
+        return []
     found: list[list[str]] = []
     for line in body.splitlines():
         if OPENED_BY.search(line):

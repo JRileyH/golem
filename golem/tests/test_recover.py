@@ -13,7 +13,7 @@ from golem.talk import STATUS
 
 def issue(number, job, request, state="closed", reason="completed", head="Requested in Matrix:"):
     return {
-        "number": number, "title": request[:80], "pr": False, "merged_at": None,
+        "number": number, "title": request.splitlines()[0][:80], "pr": False, "merged_at": None,
         "body": f"{head}\n\n> {request}\n\nWorked on by office (job {job}).",
         "state": state, "state_reason": reason if state == "closed" else None,
         "created_at": f"2026-10-2{number % 10}T01:00:00Z", "closed_at": f"2026-10-2{number % 10}T02:00:00Z" if state == "closed" else None,
@@ -36,7 +36,7 @@ BUGZ = [
     pr(12, "Closes #4\n\n- **change:** The menu is now simpler.\nAnd trips have codes.\n- **review:** Reviewed it.\n\n"
        "Opened by office (job 2); it merges this once CI passes."),
     pr(13, "Closes #4\n\n- **fix:** Fixed the build.\n\nOpened by office (job 2); it merges this once CI passes."),
-    pr(7, "Closes #4.\n\nA stale PR from before.", merged=False, title="The ashen road"),
+    pr(7, "Closes #4.\n\n- **Art:** grimdark, from a worker's own PR.", merged=False, title="The ashen road"),
     issue(11, 7, "I'd like to", state="open"),
     issue(14, 9, "Never mind this one", reason="not_planned"),
     pr(15, "Part of #99\n\n- **change:** Its issue never opened.\n\nOpened by golem (job 21); it merges this once CI passes."),
@@ -139,7 +139,7 @@ def test_github_unreachable_tries_again_next_start(golem):
 
 def test_rebuilt_projects_are_deployed_again(golem):
     pending(golem)
-    github = FakeGitHub({"typhoon-day": [issue(1, 12, "Typhoon Day", state="open")], "bugz": BUGZ})
+    github = FakeGitHub({"typhoon-day": [issue(1, 12, "Typhoon Day", state="open")], "bugz": BUGZ}, {"bugz": "bugz"})
     rebuild(golem, github)
     assert [p.slug for p, _ in golem.store.live_projects()] == ["bugz"]  # typhoon-day's only job never finished
 

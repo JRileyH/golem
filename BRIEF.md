@@ -88,7 +88,7 @@ golem/
   bin/bootstrap.sh     first-time setup on a fresh box
 ```
 
-**Volumes:** golem state (SQLite, logs, `lessons.md`, `proposals/`), Claude Code credentials, agent workspace (repo checkouts), toolchain cache, Traefik's routes and certificates. Moving the golem to another box means moving these plus `.env`.
+**Volumes:** golem state (SQLite, logs, `lessons.md`, `proposals/`), Claude Code credentials, agent workspace (repo checkouts), toolchain cache, Traefik's routes and certificates. None of them need moving to another box: a fresh install with the same `.env` rebuilds its projects and their jobs from the org's repos, issues and PRs, and deploys them again (`recover.py`). On a new org it starts with nothing.
 
 ## Deployer contract
 
