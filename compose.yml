@@ -55,6 +55,8 @@ services:
       DEPLOYER_REQUIRE_CHECKS: ${DEPLOYER_REQUIRE_CHECKS:-true}
       DEPLOYER_SERVICE_MEM_CAP_MB: ${DEPLOYER_SERVICE_MEM_CAP_MB:-512}
       DEPLOYER_PROJECT_MEM_CAP_MB: ${DEPLOYER_PROJECT_MEM_CAP_MB:-1024}
+      GOLEM_HOST_DIR: ${GOLEM_HOST_DIR:-}
+      GOLEM_REPO_TOKEN: ${GOLEM_REPO_TOKEN:-}  # read-only, the golem repo; the deployer's alone
     volumes:
       # The only container with the Docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -62,6 +64,9 @@ services:
       - routes:/routes
       # Local mode's bare repos; an empty directory on a server.
       - ${LOCAL_GIT_DIR:-./var/git}:/git:ro
+      # golem's own checkout, at its path on the host, for upgrades from the web app
+      # (deployer/deployer/upgrade.py): compose run in here hands the daemon host paths.
+      - .:${GOLEM_HOST_DIR:-/golem-checkout}
     # Only on the internal network: project containers can't reach it.
     networks: [golem-internal]
 

@@ -26,7 +26,9 @@ class Settings:
     traefik_url: str  # Traefik's internal entrypoint, for checking a site answers
     policy: Policy
     edge_port: str = ""  # local mode's Traefik isn't on 80; only used in reported URLs
-    admin_secret: str = ""  # for /delete; golem holds it, workers never do. Empty turns /delete off.
+    admin_secret: str = ""  # for /delete and /upgrade; golem holds it, workers never do. Empty turns them off.
+    golem_dir: Path | None = None  # golem's own checkout, at its host path (upgrade.py); None: upgrades off
+    golem_repo_token: str = ""  # read-only, the golem repo only; "" for a public repo
 
     @classmethod
     def from_env(cls, env: dict[str, str] = os.environ) -> Settings:
@@ -75,4 +77,6 @@ class Settings:
             ),
             edge_port=env.get("EDGE_PORT", ""),
             admin_secret=admin_secret,
+            golem_dir=Path(env["GOLEM_HOST_DIR"]) if env.get("GOLEM_HOST_DIR") else None,
+            golem_repo_token=env.get("GOLEM_REPO_TOKEN", ""),
         )

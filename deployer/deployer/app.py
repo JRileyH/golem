@@ -1,7 +1,8 @@
 """HTTP API. Internal network only; every call but /healthz needs the shared secret.
 
-/delete destroys data, so it needs a second secret that only golem holds: workers
-call the API with the first one and never see the admin secret.
+/delete destroys data and /upgrade rebuilds golem from GitHub (upgrade.py), so they need a
+second secret that only golem holds: workers call the API with the first one and never see
+the admin secret.
 """
 
 from __future__ import annotations
@@ -19,13 +20,14 @@ from starlette.routing import Route
 from .audit import Audit
 from .deploy import Deployer, DeployFailed
 from .source import GitHubError
+from .upgrade import Upgrader
 from .validate import Rejected
 
 SECRET_HEADER = "X-Deployer-Secret"
 ADMIN_SECRET_HEADER = "X-Deployer-Admin-Secret"
 
 
-def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str = "") -> Starlette:
+def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str = "", upgrader: Upgrader | None = None) -> Starlette:
     # One change at a time: deploys, stops and deletes are serialized.
     lock = asyncio.Lock()
 
@@ -111,6 +113,19 @@ def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str 
         fields = {"slug": _short(slug), "service": _short(service)}
         return await handle(request, "logs", lambda: deployer.logs(slug, service, tail), fields, mutates=False)
 
+    async def version(request: Request) -> JSONResponse:
+        """golem's own version: what's running, what GitHub's main has (fetched if ?fetch=1), the last upgrade."""
+        fetch = request.query_params.get("fetch") == "1"
+        if upgrader is None:
+            return await handle(request, "version", lambda: {"enabled": False, "reason": "no upgrader"}, {}, mutates=False)
+        return await handle(request, "version", lambda: upgrader.version(fetch), {"fetch": fetch}, mutates=fetch)
+
+    async def upgrade(request: Request) -> JSONResponse:
+        if not admin_secret or upgrader is None:  # never compare against an empty secret
+            audit.write("upgrade", "refused", reason="no admin secret")
+            return JSONResponse({"ok": False, "reasons": ["upgrading is off: DEPLOYER_ADMIN_SECRET is not set"]}, 403)
+        return await handle(request, "upgrade", upgrader.upgrade, {}, mutates=True, auth=(ADMIN_SECRET_HEADER, admin_secret))
+
     async def healthz(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True})
 
@@ -122,6 +137,8 @@ def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str 
             Route("/projects", projects, methods=["GET"]),
             Route("/status", status, methods=["GET"]),
             Route("/logs", logs, methods=["GET"]),
+            Route("/version", version, methods=["GET"]),
+            Route("/upgrade", upgrade, methods=["POST"]),
             Route("/healthz", healthz, methods=["GET"]),
         ]
     )

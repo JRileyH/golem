@@ -67,6 +67,8 @@ if [[ -z $(get DEPLOYER_ADMIN_SECRET) ]]; then
   echo "generated DEPLOYER_ADMIN_SECRET"
 fi
 default HARNESS claude
+# Where this checkout is, for upgrades from the web app (the deployer mounts it at this path).
+mode_setting GOLEM_HOST_DIR "$(pwd)"
 # Replaced by COMPOSE_FILE (local mode's compose.local.yml).
 drop COMPOSE_PROFILES
 

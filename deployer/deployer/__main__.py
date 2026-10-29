@@ -6,6 +6,7 @@ from .compose import Docker, dump, golem_route, write_atomic
 from .config import Settings
 from .deploy import Deployer
 from .source import GitHubSource, LocalSource
+from .upgrade import Upgrader
 
 
 def main() -> None:
@@ -27,7 +28,9 @@ def main() -> None:
         require_checks=settings.require_checks,
         delete=bool(settings.admin_secret),
     )
-    app = create_app(Deployer(settings, source, docker), audit, settings.secret, settings.admin_secret)
+    mode = "local" if settings.base_domain == "localhost" else "server"
+    upgrader = Upgrader(settings.golem_dir, settings.golem_repo_token, settings.data_dir, mode)
+    app = create_app(Deployer(settings, source, docker), audit, settings.secret, settings.admin_secret, upgrader)
     uvicorn.run(app, host="0.0.0.0", port=8000, access_log=False)
 
 
