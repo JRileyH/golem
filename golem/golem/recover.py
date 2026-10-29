@@ -220,8 +220,9 @@ async def _redeploy(settings: Settings, store: Store, workspace: Workspace, depl
 
 
 def _state(issue: dict | None, prs: list[dict]) -> str:
-    """How a job ended. Its last PR closes its issue, so an open one never finished (or was
-    reckless: those push to main with no PR, and leave their issue open)."""
+    """How a job ended. Its last PR closes its issue, or golem does when there's no PR
+    (reckless), so an open one never finished. (Reckless jobs from before golem closed
+    their issues come back failed.)"""
     if issue is None:
         return "done" if prs[-1]["merged_at"] else "failed"
     if issue["state"] == "open":

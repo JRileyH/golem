@@ -639,7 +639,10 @@ class Scheduler:
     async def do_alert(self, job: Job, project: Project, step: Step) -> Outcome:
         """The last step: only reached once the final deploy succeeded."""
         url = self.settings.project_url(project.slug)
-        message = plan.last_said(self.store.steps(job.id)) or f"{project.name} is live."
+        steps = self.store.steps(job.id)
+        message = plan.last_said(steps) or f"{project.name} is live."
+        if job.issue and not any(s.kind == "pr" for s in steps):  # reckless: no PR closed its issue
+            await self.workspace.close_issue(project.slug, job.issue, f"Done: {message}\n\n{url}")
         await self.say(project, _join(f"Done: {message}", url))
         await self.status(f"Finished job {job.id} on {project.name}: {url}", notice=True)
         await self.refresh_card(project)  # what it is now, on the projects page

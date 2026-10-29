@@ -190,6 +190,8 @@ def test_reckless_goes_straight_to_main(tmp_path):
         assert golem.labels(job.id) == ["set up", "build", "push to main", "deploy", "done"]
         assert [a for a in golem.workspace.actions if not a.startswith("CI on")] == ["push main"]
         assert golem.chat.texts(room)[-1] == f"Done: Flip cards to learn twenty trees.\n{URL}"
+        # No PR closed its issue, so golem does: GitHub's record says it finished (recover.py reads it).
+        assert golem.workspace.closed == [(room, job.issue, f"Done: Flip cards to learn twenty trees.\n\n{URL}")]
 
     run(go())
 
@@ -397,6 +399,7 @@ def test_a_change_in_reckless_mode_skips_the_review(golem):
         await golem.finish()
         job = golem.store.jobs()[0]
         assert golem.labels(job.id) == ["set up", "change", "docs", "push", "PR", "CI", "merge", "deploy", "done"]
+        assert golem.workspace.closed == []  # its PR closes its issue
 
     run(go())
 

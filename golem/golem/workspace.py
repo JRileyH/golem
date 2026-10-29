@@ -47,6 +47,7 @@ class Workspace(Protocol):
     async def sync_main(self, slug: str) -> None: ...
     async def open_issue(self, slug: str, title: str, body: str) -> int | None: ...
     async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None: ...
+    async def close_issue(self, slug: str, number: int, body: str) -> None: ...
     async def repo_exists(self, slug: str) -> bool: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
@@ -170,6 +171,14 @@ class GitHubWorkspace:
         code, out = await run(*args)
         if code != 0:
             log.warning("issue %s#%s: %s", slug, number, out[-300:])
+
+    async def close_issue(self, slug: str, number: int, body: str) -> None:
+        """Close an issue as done, saying how. Only a record: a failure is logged."""
+        code, out = await run(
+            "gh", "issue", "close", str(number), "--repo", f"{self.org}/{slug}", "--reason", "completed", "--comment", body
+        )  # fmt: skip
+        if code != 0:
+            log.warning("closing %s#%s: %s", slug, number, out[-300:])
 
     # --- the job's branch, from first commit to merge ---------------------------
 
@@ -333,6 +342,7 @@ class LocalWorkspace:
         self.repos: set[str] = set()
         self.issues: list[tuple[str, str]] = []
         self.comments: list[tuple[str, int, str, bool]] = []  # (slug, issue, body, closed it)
+        self.closed: list[tuple[str, int, str]] = []  # (slug, issue, body): closed as done
         self.actions: list[str] = []
         self.bodies: list[str] = []  # of the PRs opened
         self.has_work = True
@@ -376,6 +386,9 @@ class LocalWorkspace:
 
     async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None:
         self.comments.append((slug, number, body, close))
+
+    async def close_issue(self, slug: str, number: int, body: str) -> None:
+        self.closed.append((slug, number, body))
 
     # A pretend GitHub: every step's work is something to push, and CI passes unless
     # `ci_results` says otherwise. `actions` records what golem did, in order.
