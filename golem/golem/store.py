@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -401,6 +401,21 @@ class Store:
             self.db.execute("DELETE FROM messages WHERE channel = ?", (slug,))
             self.db.execute("DELETE FROM projects WHERE slug = ?", (slug,))
         return ids
+
+    def restore(self, project: Project, jobs: list[tuple[Job, list[Step]]]) -> None:
+        """Put back a project and its finished jobs as GitHub remembers them (recover.py), with
+        their ids: new jobs then come after them, and never reuse an old job's branch."""
+        with self.db:
+            self.db.execute("BEGIN")
+            row = asdict(project)
+            self.db.execute(f"INSERT INTO projects ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+            for job, steps in jobs:
+                row = asdict(job)
+                self.db.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+                self.db.executemany(
+                    "INSERT INTO steps (job_id, position, kind, name, state, summary, links) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [(job.id, i, s.kind, s.name, s.state, s.summary, json.dumps(s.links)) for i, s in enumerate(steps, start=1)],
+                )
 
     def live_projects(self) -> list[tuple[Project, str]]:
         """Projects with a site: deployed by a step, or with a finished job (from before steps
