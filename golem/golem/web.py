@@ -42,7 +42,7 @@ from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
 from .live import LiveRuns
-from .pages import LaneData, SheetData
+from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
 from .store import ACTIVE, Job, Project, Said, Step, Store
@@ -191,7 +191,8 @@ def create_app(
             at = max(x for x in (last.at if last else "", job.updated_at if job else "", project.created_at) if x is not None)
             data = LaneData(project, job, plan.planned(settings, store, job) if job else [], _state(store, job, []) if job else "idle",
                             [], [], set(), set(), None, "", "", palette.get(project.slug, 1))  # fmt: skip
-            out.append(home.Thread(f"/p/{project.slug}#end", project.name, data.color, pages.badge(data), last, project.summary, at))
+            out.append(home.Thread(f"/p/{project.slug}#end", project.name, data.color, pages.badge(data), last, project.summary, at,
+                                   f"/p/{project.slug}/settings"))  # fmt: skip
         out.sort(key=lambda t: t.at, reverse=True)
         said = store.messages(INBOX, limit=1) + store.messages(STATUS, limit=1)
         last = max(said, key=lambda m: m.id) if said else None
@@ -260,14 +261,29 @@ def create_app(
         job = store.active_job(project.slug) or (jobs[0] if jobs else None)
         return lane(job, project, ctx["order"].get(job.id) if job else None, signed, ctx), jobs
 
-    def respond(request: Request, title: str, body: str, signed: bool, bottom: str = "", tab: str = "",
-                up: tuple[str, str] | None = None, action: str = "") -> Response:  # fmt: skip
+    def nav() -> list[NavProject]:
+        """Every project for the sidebar, by name so each stays where it's looked for."""
+        palette = colors()
+        out = []
+        for p in sorted(store.projects(), key=lambda p: p.name.lower()):
+            job = store.active_job(p.slug)
+            state = job.state if job and job.state in ("waiting", "running") and not p.paused else ""
+            out.append(NavProject(p.slug, p.name, palette.get(p.slug, 1), state))
+        return out
+
+    def respond(request: Request, title: str, body: str, signed: bool, bottom: str = "", here: str = "",
+                up: tuple[str, str] | None = None, subnav: str = "") -> Response:  # fmt: skip
         if request.query_params.get("part") == "lanes":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         flash = request.query_params.get("msg", "")[:300]
         behind = signed and scheduler.upgrades.behind() > 0
-        html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, tab=tab, up=up, action=action, behind=behind)
+        html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, here=here, up=up, subnav=subnav,
+                          nav=nav(), behind=behind)  # fmt: skip
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+    def tabs(project: Project, here: str, signed: bool, job: Job | None = None) -> str:
+        """A project's tabs; the job's is the one being looked at, or else the one under way."""
+        return pages.project_tabs(project, colors().get(project.slug, 1), here, signed, job or store.active_job(project.slug))
 
     async def healthz(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "harness": settings.harness})
@@ -276,11 +292,11 @@ def create_app(
         signed = signed_in(request)
         now = datetime.now(UTC)
         bottom = conversation.composer(INBOX, "idle") if signed and bot else ""
-        return respond(request, "golem", home.home(*lanes(signed, now), signed, now), signed, bottom, tab="home")
+        return respond(request, "golem", home.home(*lanes(signed, now), signed, now), signed, bottom, here="home")
 
     async def projects_list(request: Request) -> Response:
         signed = signed_in(request)
-        return respond(request, "Projects", home.projects(threads(signed), signed, datetime.now(UTC)), signed, tab="projects")
+        return respond(request, "Projects", home.projects(threads(signed), signed, datetime.now(UTC)), signed, here="projects")
 
     async def settings_page(request: Request) -> Response:
         signed = signed_in(request)
@@ -288,7 +304,7 @@ def create_app(
         body = home.settings(signed, scheduler.paused, control.kinds(), store.defaults(),
                              (settings.default_model, settings.default_effort), insights.report(store, since),
                              store.tags(), store.tag_counts(), scheduler.upgrades)  # fmt: skip
-        return respond(request, "Settings", body, signed, tab="settings")
+        return respond(request, "Settings", body, signed, here="settings")
 
     async def step_page(request: Request) -> Response:
         step = store.step(request.path_params["step_id"])
@@ -313,7 +329,9 @@ def create_app(
         if request.query_params.get("part") == "sheet":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         body = f"<article class=card>{body}</article><p><a href='/jobs/{job.id}'>The whole job</a></p>"
-        return respond(request, plan.label(step), body, signed, up=(f"/jobs/{job.id}", f"Job #{job.id}"))
+        project = store.project(job.slug)
+        return respond(request, plan.label(step), body, signed, here=job.slug, up=(f"/jobs/{job.id}", f"Job #{job.id}"),
+                       subnav=tabs(project, "", signed, job) if project else "")  # fmt: skip
 
     async def insights_page(request: Request) -> Response:
         signed = signed_in(request)
@@ -322,7 +340,7 @@ def create_app(
         since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds") if days else ""
         report = insights.report(store, since)
         body = pages.insights(report, insights.findings(report), days)
-        return respond(request, "Insights", body, signed, up=("/settings", "Settings"))
+        return respond(request, "Insights", body, signed, here="insights", up=("/settings", "Settings"))
 
     async def projects_page(request: Request) -> Response:
         """Every live project as a card, for anyone (gallery.py)."""
@@ -365,8 +383,8 @@ def create_app(
         said, earlier = _latest(request, store.messages(project.slug, limit=_shown(request) + 1)) if signed else ([], "")
         waiting = store.proposals(project.slug, ("open",)) if signed else []
         body = conversation.project_page(data, said, signed, datetime.now(UTC), earlier, waiting)
-        action = f"<a href='/p/{escape(project.slug)}/settings' aria-label='Settings for {escape(project.name)}'>Settings</a>" if signed else ""
-        return respond(request, project.name, body, signed, bottom, up=("/p", "Projects"), action=action)
+        return respond(request, project.name, body, signed, bottom, here=project.slug, up=("/p", "Projects"),
+                       subnav=tabs(project, "talk", signed))  # fmt: skip
 
     async def project_settings(request: Request) -> Response:
         project = store.project(request.path_params["slug"])
@@ -378,15 +396,15 @@ def create_app(
         data, jobs = project_lane(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
         page = conversation.settings_page(project, data, jobs, [t.name for t in store.tags()], decided)
-        return respond(request, f"{project.name}: settings", page, signed,
-                       up=(f"/p/{project.slug}", project.name))  # fmt: skip
+        return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=("/p", "Projects"),
+                       subnav=tabs(project, "settings", signed))  # fmt: skip
 
     async def inbox_page(request: Request) -> Response:
         signed = signed_in(request)
         shown = _shown(request) + 1
         said, earlier = _latest(request, sorted(store.messages(INBOX, shown) + store.messages(STATUS, shown), key=lambda m: m.id)) if signed else ([], "")
         bottom = conversation.composer(INBOX, "idle") if signed and bot else ""
-        return respond(request, "golem", conversation.inbox_page(said, signed, earlier), signed, bottom, up=("/p", "Projects"))
+        return respond(request, "golem", conversation.inbox_page(said, signed, earlier), signed, bottom, here="inbox", up=("/p", "Projects"))
 
     async def say(request: Request) -> Response:
         """Something written in a conversation, handed to the bot."""
@@ -461,7 +479,8 @@ def create_app(
             return HTMLResponse("No such job.", 404)
         signed = signed_in(request)
         project = store.project(job.slug)
-        return respond(request, f"Job #{job.id}", job_html(job, signed), signed, up=(f"/p/{project.slug}", project.name))
+        return respond(request, f"Job #{job.id}", job_html(job, signed), signed, here=job.slug, up=(f"/p/{project.slug}", project.name),
+                       subnav=tabs(project, "job", signed, job))  # fmt: skip
 
     async def login(request: Request) -> Response:
         form = await _form(request)

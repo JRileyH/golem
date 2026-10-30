@@ -1,5 +1,8 @@
-"""The web app's HTML, phone first: the page around everything, with its tab bar (Home,
-Projects, Settings), and the pieces the pages are made of (home.py, conversation.py).
+"""The web app's HTML, phone first: the page around everything, and the pieces the pages are
+made of (home.py, conversation.py). Every page has the same way around: the tab bar (Home,
+Projects, Settings) on a phone, and on a wide screen a sidebar with those and every project,
+each a click from its conversation or its settings. A project's pages share a row of tabs
+of their own: its conversation, its settings, and the job being looked at.
 
 A project's job shows as a card: where it is in a line of words, what the running step is
 doing, and its pieces of work as a checklist (progress.py). Each piece opens a sheet: what
@@ -28,6 +31,7 @@ SHIP = progress.SHIP  # shown together as one "ship" row in a job's full list of
 ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "failed": "✗", "pending": ""}
 MARKS = {"done": "✓", "skipped": "–", "now": "", "waiting": "?", "failed": "✕", "todo": ""}  # a piece of work's
 TABS = (("home", "/", "Home"), ("projects", "/p", "Projects"), ("settings", "/settings", "Settings"))
+TAB_OF = {"home": "home", "settings": "settings", "insights": "settings"}  # any other page (a project's, the inbox) is under Projects
 # What golem's own steps do, for their sheets.
 DOES = {
     "setup": "Makes sure the repo, the checkout and the job's issue exist.",
@@ -69,6 +73,16 @@ class LaneData:
 
 
 @dataclass
+class NavProject:
+    """A project in the sidebar."""
+
+    slug: str
+    name: str
+    color: int
+    state: str  # "waiting" (needs Riggy), "running" or ""
+
+
+@dataclass
 class SheetData:
     """One step, for its sheet."""
 
@@ -87,40 +101,85 @@ class SheetData:
 # --- the page -------------------------------------------------------------------------
 
 
-def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", bottom: str = "",
-         tab: str = "", up: tuple[str, str] | None = None, action: str = "", behind: bool = False) -> str:  # fmt: skip
-    """The page around `body` (the part the script refreshes). The top level (Home, Projects,
-    Settings) has the tab bar; a page below it has the way back (`up`: where, and its name)
-    instead. `action` goes at the header's right. `bottom` sticks to the bottom of the screen,
-    outside the refreshed part, so what's being written there is never lost. `behind` marks the
-    Settings tab: a new version of golem is on GitHub."""
+def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", bottom: str = "", here: str = "",
+         up: tuple[str, str] | None = None, subnav: str = "", nav: list[NavProject] = (), behind: bool = False) -> str:  # fmt: skip
+    """The page around `body` (the part the script refreshes). `here` is where it is: "home",
+    "projects", "settings", "insights", "inbox" or a project's slug; the tab bar and sidebar
+    light it up. A page below the top level also has the way back (`up`: where, and its name);
+    `subnav` is a row of tabs under the header (a project's: project_tabs). `bottom` sticks to the
+    bottom of the screen, outside the refreshed part, so what's being written there is never
+    lost. `behind` marks Settings: a new version of golem is on GitHub."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
-    tabs = ""
-    if up is None:
-        tabs = "<nav class=tabs aria-label=Sections>" + "".join(
-            f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span>"
-            + ("<i class=dot aria-label='new version'></i>" if behind and key == "settings" else "")
-            + "</a>"
-            for key, href, label in TABS
-        ) + "</nav>"
+    tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
+    marks = {"home": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
+    tabs = "<nav class=tabs aria-label=Sections>" + "".join(
+        f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
+        for key, href, label in TABS
+    ) + "</nav>"
     banner = "<div class='banner paused'>Work is paused. Nothing new starts until it's resumed (Settings).</div>" if paused else ""
     flash_html = f"<div class=flash role=status>{escape(flash)}</div>" if flash else ""
     latest = "<button type=button class=to-latest hidden aria-label='To the latest message'>↓</button>" if bottom else ""
-    dock = f"<div class=dock>{latest}{bottom}{tabs}</div>" if bottom or tabs else ""
     return f"""<!doctype html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name=theme-color content="#0f172a">
 <title>{escape(title if title == "golem" else f"{title} · golem")}</title><style>{STYLE}</style>
 <link rel=manifest href=/manifest.webmanifest><link rel=apple-touch-icon href=/icon-180.png>
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=golem>
-<header class='top{' sub' if up else ''}'>{left}<h1>{escape(title)}</h1><div class=action>{action}</div></header>
-{banner}{flash_html}<main id=lanes>{body}</main>{dock}
+<div class=bar><header class=top>{left}<h1>{escape(title)}</h1></header>{subnav}</div>
+{banner}{flash_html}<main id=lanes>{body}</main><div class=dock>{latest}{bottom}{tabs}</div>
+{sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
 <script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}</html>"""
 
 
-# The tab bar's icons: a house, two speech bubbles, a gear.
+def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, str]) -> str:
+    """The way around on a wide screen: the top level, then golem's own conversation and every
+    project's, each with a way straight to its settings. After `main` in the page, so the page's
+    own content comes first to a screen reader; the style puts it on the left."""
+    items = (("home", "/", "Home"), ("projects", "/p", "Projects"), ("insights", "/insights", "Insights"), ("settings", "/settings", "Settings"))
+    top = "".join(
+        f"<a href='{href}' class='item{' on' if key == here else ''}'{' aria-current=page' if key == here else ''}>"
+        f"{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
+        for key, href, label in items
+    )
+    rows = [f"<li{' class=on' if here == 'inbox' else ''}><a href='/inbox#end'><span class=swatch></span><span class=name>golem</span></a></li>"]
+    for p in nav:
+        state = f"<i class='state {p.state}' aria-label='{'needs you' if p.state == 'waiting' else 'working'}'></i>" if p.state else ""
+        gear = (
+            f"<a class=gear href='/p/{escape(p.slug)}/settings' aria-label='Settings for {escape(p.name)}' title=Settings>{ICONS_SVG['settings']}</a>"
+            if signed_in
+            else ""
+        )
+        rows.append(
+            f"<li class='c{p.color}{' on' if p.slug == here else ''}'><a href='/p/{escape(p.slug)}#end'><span class=swatch></span>"
+            f"<span class=name>{escape(p.name)}</span>{state}</a>{gear}</li>"
+        )
+    return (
+        f"<nav class=side aria-label=golem><a class=brand href='/'>golem</a>{top}"
+        f"<h2>Conversations</h2><ul class=side-projects>{''.join(rows)}</ul></nav>"
+    )
+
+
+def project_tabs(project: Project, color: int, here: str, signed_in: bool, job: Job | None = None) -> str:
+    """A project's own row of tabs, on each of its pages: its conversation, its settings
+    (signed in), and the job being looked at, if one is. `here`: "talk", "settings" or "job"."""
+    tabs = [("talk", f"/p/{project.slug}", "Conversation")]
+    if signed_in:
+        tabs.append(("settings", f"/p/{project.slug}/settings", "Settings"))
+    if job:
+        tabs.append(("job", f"/jobs/{job.id}", f"Job #{job.id}"))
+    return f"<nav class='subnav c{color}' aria-label='{escape(project.name)}'>" + "".join(
+        f"<a href='{escape(href)}'{' class=on aria-current=page' if key == here else ''}>{escape(label)}</a>" for key, href, label in tabs
+    ) + "</nav>"
+
+
+def _count_mark(n: int) -> str:
+    return f"<b class=count aria-label='{n} need{'s' if n == 1 else ''} you'>{n}</b>" if n else ""
+
+
+# The tab bar's icons: a house, two speech bubbles, a gear; and the sidebar's bars, for insights.
 ICONS_SVG = {
+    "insights": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 20V11h3.5v9zm6.25 0V4h3.5v16zM16.5 20v-6H20v6z'/></svg>",
     "home": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/></svg>",
     "projects": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 4h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/>"
     "<path d='M19 8h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-2-2v-.5h6a3 3 0 0 0 3-3z'/></svg>",
@@ -826,12 +885,43 @@ body { margin:0; font:15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", s
   min-height:100vh; display:flex; flex-direction:column; }
 a { color:var(--blue); text-decoration:none; }
 h1, h2, h3 { margin:0; }
-.top { position:sticky; top:0; z-index:5; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:.5rem;
+.bar { position:sticky; top:0; z-index:5; }
+.top { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:.5rem;
   padding:max(.55rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) .55rem max(1rem, env(safe-area-inset-left));
   background:var(--nav); color:#fff; }
 .top h1 { grid-column:2; font-size:1.05rem; font-weight:700; letter-spacing:.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60vw; }
-.top .up { grid-column:1; color:#cbd5e1; font-size:.95rem; white-space:nowrap; }
-.top .action { grid-column:3; justify-self:end; display:flex; gap:.6rem; } .top .action a { color:#cbd5e1; font-size:.95rem; }
+.top .up { grid-column:1; color:#cbd5e1; font-size:.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.subnav { display:flex; justify-content:center; gap:.25rem; overflow-x:auto; background:var(--card); border-bottom:1px solid var(--line);
+  padding:0 max(.75rem, env(safe-area-inset-left)); scrollbar-width:none; }
+.subnav a { padding:.6rem .85rem .5rem; color:var(--muted); font-size:.9rem; font-weight:600; white-space:nowrap; border-bottom:2px solid transparent; }
+.subnav a.on { color:var(--ink); border-bottom-color:var(--pc, var(--blue)); }
+.count { position:absolute; top:.05rem; left:calc(50% + .3rem); min-width:1.1rem; height:1.1rem; padding:0 .3rem; border-radius:999px;
+  background:var(--warning); color:#111827; font-size:.68rem; font-weight:800; line-height:1.1rem; text-align:center; }
+.side { display:none; }
+@media (min-width:64rem) {
+  body { padding-left:16rem; }
+  .dock .tabs { display:none; }
+  .flash { left:calc(50% + 8rem); }
+  .side { display:flex; flex-direction:column; position:fixed; z-index:6; inset:0 auto 0 0; width:16rem; overflow-y:auto;
+    padding:.6rem .6rem 1.5rem; background:var(--nav); color:#cbd5e1; }
+  .side .brand { color:#fff; font-weight:800; font-size:1.1rem; padding:.35rem .7rem .8rem; }
+  .side .item, .side-projects a { position:relative; display:flex; align-items:center; gap:.6rem; padding:.45rem .7rem; border-radius:9px; color:#cbd5e1; }
+  .side .item svg { width:20px; height:20px; fill:currentColor; flex:none; }
+  .side .item:hover, .side-projects a:hover { background:rgb(255 255 255 / .07); color:#fff; }
+  .side .item.on, .side-projects li.on > a:first-child { background:rgb(255 255 255 / .12); color:#fff; }
+  .side .count { position:static; margin-left:auto; }
+  .side .dot { width:.5rem; height:.5rem; border-radius:50%; background:#60a5fa; margin-left:auto; }
+  .side h2 { font-size:.7rem; text-transform:uppercase; letter-spacing:.08em; color:#64748b; margin:1.2rem .7rem .35rem; }
+  .side-projects { list-style:none; padding:0; margin:0; }
+  .side-projects li { display:flex; align-items:center; }
+  .side-projects li > a:first-child { flex:1; min-width:0; }
+  .side-projects .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .side-projects .swatch { margin:0; }
+  .side-projects .gear { padding:.45rem .5rem; opacity:.55; } .side-projects .gear:hover { opacity:1; }
+  .side-projects .gear svg { width:16px; height:16px; fill:currentColor; display:block; }
+  .side .state { width:.5rem; height:.5rem; border-radius:50%; margin-left:auto; flex:none; }
+  .side .state.waiting { background:var(--warning); } .side .state.running { background:#60a5fa; }
+}
 main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75rem, env(safe-area-inset-left)) 1.5rem; }
 .banner { width:100%; max-width:46rem; margin:.75rem auto 0; padding:.6rem 1rem; border-radius:var(--radius); }
 .banner.paused { background:#fef3c7; color:#92400e; }
@@ -851,7 +941,7 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .section-title:first-child { margin-top:.2rem; }
 .hint { color:var(--muted); font-size:.8rem; margin:.4rem 0 0; }
 .sub, .muted { color:var(--muted); font-size:.88em; margin:.15rem 0 0; }
-.card { background:var(--card); border-radius:var(--radius); padding:.85rem 1rem; margin-bottom:.75rem; box-shadow:0 1px 2px rgb(0 0 0 / .06); scroll-margin-top:4rem; }
+.card { background:var(--card); border-radius:var(--radius); padding:.85rem 1rem; margin-bottom:.75rem; box-shadow:0 1px 2px rgb(0 0 0 / .06); scroll-margin-top:6rem; }
 .card h2 { font-size:1.02rem; } .card h2 a { color:inherit; }
 .card-head { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; }
 .card-head h2 { display:flex; align-items:center; }
@@ -923,8 +1013,10 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .compact .muted { margin:0; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .compact .when { margin-left:auto; color:var(--muted); font-size:.82rem; white-space:nowrap; }
 .threads { list-style:none; padding:0; margin:0; background:var(--card); border-radius:var(--radius); box-shadow:0 1px 2px rgb(0 0 0 / .06); }
-.threads li { border-top:1px solid var(--line); } .threads li:first-child { border-top:0; }
-.threads a { display:grid; grid-template-columns:auto 1fr auto; gap:.1rem .7rem; padding:.7rem 1rem; color:var(--ink); }
+.threads li { display:flex; align-items:center; border-top:1px solid var(--line); } .threads li:first-child { border-top:0; }
+.threads .gear { padding:.7rem 1rem .7rem .4rem; color:var(--muted); } .threads .gear svg { width:20px; height:20px; fill:currentColor; display:block; }
+.threads .gear:hover { color:var(--ink); }
+.threads a.thread { flex:1; min-width:0; display:grid; grid-template-columns:auto 1fr auto; gap:.1rem .7rem; padding:.7rem 1rem; color:var(--ink); }
 .threads .avatar { grid-row:1 / 3; width:2.4rem; height:2.4rem; border-radius:50%; background:var(--pc, var(--nav)); color:#fff; display:grid;
   place-items:center; font-weight:800; font-size:1rem; align-self:center; }
 .threads b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

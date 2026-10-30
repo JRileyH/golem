@@ -652,6 +652,25 @@ def test_a_project_page_is_its_conversation(golem, app):
     assert golem.store.project("tree-cards") is None and app.get("/p/tree-cards").status_code == 404
 
 
+def test_every_page_is_a_click_from_anywhere(golem, page):
+    golem.store.add_project("birds", "Birds", "")
+    golem.store.update_job(page.job.id, state="waiting")
+    sign_in(page)
+    for path in ("/", "/p", "/settings", "/insights", "/inbox", "/p/trees", "/p/trees/settings", f"/jobs/{page.job.id}"):
+        html = page.get(path).text
+        assert "<nav class=tabs" in html and "<nav class=side" in html, path  # the tab bar, and the sidebar on a wide screen
+        assert "href='/p/birds/settings'" in html and "href='/settings'" in html, path  # another project's settings, golem's
+        assert "class=count aria-label='1 needs you'>1</b>" in html, path  # trees is waiting on him
+    html = page.get("/p/trees/settings").text  # a project's own tabs: its conversation, settings and the job under way
+    assert "<a href='/p/trees'>Conversation</a><a href='/p/trees/settings' class=on aria-current=page>Settings</a>" in html
+    assert f"<a href='/jobs/{page.job.id}'>Job #{page.job.id}</a>" in html
+    assert "<li class='c1 on'><a href='/p/trees#end'>" in html  # lit up in the sidebar
+    assert "class=gear href='/p/birds/settings'" in page.get("/p").text  # straight to its settings from the list
+    page.post("/logout", follow_redirects=False)
+    html = page.get("/p/trees").text
+    assert "class=gear" not in html and "href='/p/trees/settings'" not in html  # signed out: no settings to go to
+
+
 def test_a_long_conversation_shows_its_latest_messages_first(golem, app):
     from golem.web import SHOWN
 

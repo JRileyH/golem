@@ -17,8 +17,8 @@ from html import escape
 
 from . import pwa
 from .insights import Report
-from .pages import (LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots, headline,
-                    signin_card, when)  # fmt: skip
+from .pages import (ICONS_SVG, LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots,
+                    headline, signin_card, when)  # fmt: skip
 from .store import Said, Tag
 from .upgrade import SHOWN, Upgrades
 from .watch import span
@@ -113,6 +113,7 @@ class Thread:
     last: Said | None
     about: str  # what shows when there's no message to show
     at: str  # when it last moved, for the order
+    settings: str = ""  # its settings page; golem's own has none
 
 
 def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
@@ -121,10 +122,15 @@ def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
         text = (t.last.text or "A picture") if signed_in and t.last else t.about
         who = "You: " if signed_in and t.last and t.last.who == "riggy" else ""
         ago = f"{span(now - _dt(t.at))}" if t.at else ""
+        gear = (
+            f"<a class=gear href='{escape(t.settings)}' aria-label='Settings for {escape(t.name)}' title=Settings>{ICONS_SVG['settings']}</a>"
+            if signed_in and t.settings
+            else ""
+        )
         rows.append(
-            f"<li class=c{t.color}><a href='{escape(t.href)}'><span class=avatar>{escape(t.name[:1].upper())}</span>"
+            f"<li class=c{t.color}><a class=thread href='{escape(t.href)}'><span class=avatar>{escape(t.name[:1].upper())}</span>"
             f"<b>{escape(t.name)}</b><span class=when>{ago}</span>"
-            f"<span class=last>{t.status}{escape(who + _short(text, 120))}</span></a></li>"
+            f"<span class=last>{t.status}{escape(who + _short(text, 120))}</span></a>{gear}</li>"
         )
     html = f"<ol class=threads>{''.join(rows)}</ol>"
     if not signed_in:
