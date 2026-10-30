@@ -7,7 +7,7 @@ bot (web.py): it answers a question or a check-in, picks an option, becomes a no
 running job, or starts a change, or options first. Below that are golem's own proposals for
 it, each to thumbs up or down (proposals.py). Its settings page has what the !commands
 do: mode, model, effort, pausing, renaming, moving and deleting; how often golem proposes
-things; the job's place in the queue and stopping it; and its jobs.
+things, and which kinds; the job's place in the queue and stopping it; and its jobs.
 
 Golem's own conversation is where new ideas are written, with its replies and its
 golem-wide news.
@@ -20,7 +20,7 @@ from datetime import datetime
 from html import escape
 
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
-from .proposals import WAITING
+from .proposals import LENSES, WAITING, kinds
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
@@ -76,6 +76,13 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
         + "".join(f"<option{' selected' if n == project.proposals_max else ''}>{n}</option>" for n in WAITING)
         + "</select></form>"
     )
+    on = kinds(project)
+    boxes = "".join(
+        f"<li><form method=post action=/act>{_hidden(action='proposal-kind', name=x.name, slug=slug, back=back)}"
+        f"<label><input type=checkbox name=value value=on{' checked' if x in on else ''} onchange='this.form.submit()'>"
+        f"<b>{escape(x.name.capitalize())}</b></label><span class=sub>{escape(x.focus)}</span></form></li>"
+        for x in LENSES
+    )
     rows = "".join(
         f"<li>{'👍' if p.state == 'accepted' else '👎'} {escape(p.title)}"
         + (f" <a href='/jobs/{p.built_by}'>#{p.built_by}</a>" if p.built_by else "")
@@ -88,6 +95,8 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
         "it over for one kind of improvement at a time (features, security, polish…) and proposes a few for you "
         f"to thumbs up or down, each also an issue on its repo as a record.</p><div class=row-form><span>How often</span>{every}"
         f"<span>At most waiting on you</span>{most}</div>"
+        "<p class=sub>What it looks for, one kind each time, in this order. Each kind's line is what golem "
+        f"asks the worker to look at; untick the ones this project doesn't need.</p><ul class=lenses>{boxes}</ul>"
         + (f"<p class=sub>What you said lately:</p><ol class=links-list>{rows}</ol>" if rows else "")
         + "</section>"
     )

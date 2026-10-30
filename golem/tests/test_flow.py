@@ -737,6 +737,31 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
     run(go())
 
 
+def test_proposals_skip_the_kinds_riggy_turned_off(golem):
+    from golem import proposals
+
+    async def go():
+        await idle_project(golem)
+        golem.store.update_project("tree-cards", proposals="daily", proposals_off="features,user experience")
+        job = golem.scheduler.propose()
+        assert job.request == "Look at its code health for things to propose"  # features is off
+        golem.store.update_project("tree-cards", proposals_off="features,code health,user experience")
+        golem.harness.script = by_label({"propose": [proposing()]})
+        await golem.finish()
+        call = [c for c in golem.harness.calls if c.label == "propose"][-1]
+        assert "# This time's lens: code health" in call.prompt  # picked when it started, so it stays
+        assert "in turn (code health, security, performance, tests, polish," in call.prompt  # only the kinds on
+
+        long_ago(golem)
+        assert golem.scheduler.propose().request == "Look at its security for things to propose"  # user experience is off
+        await golem.finish()
+        golem.store.update_project("tree-cards", proposals_off=",".join(x.name for x in proposals.LENSES))
+        long_ago(golem)
+        assert golem.scheduler.propose() is None  # every kind off: none due
+
+    run(go())
+
+
 def test_proposals_wait_until_golem_and_the_project_are_free(golem):
     from golem import proposals
     from golem.control import Control

@@ -10,8 +10,11 @@ pushed or deployed.
 
 Each job looks through one lens (features, security, polish…), the next in LENSES each time,
 so that over time every side of the project gets a fresh look rather than the same kind of
-idea again. The worker sees every earlier proposal with what Riggy decided and why: to keep
-from repeating them and to learn what he values, not as a template.
+idea again. The project's settings list every lens as a kind of proposal to turn off (a site
+with no code worth tidying, a game that needs no new features…); all are on until he does,
+and the turn skips the ones he turned off. The worker sees every earlier proposal with what
+Riggy decided and why: to keep from repeating them and to learn what he values, not as a
+template.
 
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
 up becomes a change job on the feature playbook, as soon as the project has no other change
@@ -29,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from .harness import VERDICT_SCHEMA
 from .store import Job, Project, Proposal, Store
 
+REQUEST = "Look at its {} for things to propose"  # a proposals job's request, naming its lens
 INTERVALS = {"hourly": timedelta(hours=1), "daily": timedelta(days=1), "weekly": timedelta(days=7)}
 PRIORITY = -1000  # behind anything Riggy asks for, from the next step boundary
 MAX_PER_RUN = 3
@@ -83,22 +87,39 @@ SCHEMA = {
 }
 
 
+def kinds(project: Project) -> tuple[Lens, ...]:
+    """The kinds of proposal the project gets: every lens Riggy hasn't turned off."""
+    off = set(project.proposals_off.split(","))
+    return tuple(x for x in LENSES if x.name not in off)
+
+
 def lens(store: Store, job: Job) -> Lens:
-    """The job's lens: the next in turn after the project's earlier proposals jobs'."""
-    earlier = sum(1 for j in store.proposal_jobs(job.slug) if j.id < job.id)
+    """The job's lens, picked when it started (`start`) and named in its request."""
+    for x in LENSES:
+        if job.request == REQUEST.format(x.name):
+            return x
+    earlier = sum(1 for j in store.proposal_jobs(job.slug) if j.id < job.id)  # a lens since renamed
     return LENSES[earlier % len(LENSES)]
+
+
+def next_lens(store: Store, project: Project) -> Lens | None:
+    """The first kind still on after the lens the project's last proposals job looked through,
+    in LENSES order; None if he turned them all off."""
+    on, earlier = kinds(project), store.proposal_jobs(project.slug)
+    after = LENSES.index(lens(store, earlier[-1])) + 1 if earlier else 0
+    return next((x for x in LENSES[after:] + LENSES[:after] if x in on), None)
 
 
 def due(store: Store, at: datetime) -> Project | None:
     """The project most overdue for proposals, when golem has nothing else to do: nothing
     queued, running or parked anywhere. Only live, unpaused projects with no job of their own
-    under way and fewer proposals awaiting Riggy than its settings allow count."""
+    under way, a kind of proposal on and fewer proposals awaiting Riggy than its settings allow count."""
     if store.jobs(("queued", "running", "parked"), limit=1):
         return None
     found: list[tuple[datetime, Project]] = []
     for project, _ in store.live_projects():
         every = INTERVALS.get(project.proposals)
-        if every is None or project.paused or store.active_job(project.slug):
+        if every is None or project.paused or store.active_job(project.slug) or not kinds(project):
             continue
         if len(store.proposals(project.slug, ("open",))) >= project.proposals_max:
             continue
@@ -110,9 +131,9 @@ def due(store: Store, at: datetime) -> Project | None:
 
 
 def start(store: Store, project: Project) -> Job:
-    """A proposals job for the project, through the next lens."""
-    name = LENSES[len(store.proposal_jobs(project.slug)) % len(LENSES)].name  # what lens() will say for it
-    return store.add_job(project.slug, "change", f"Look at its {name} for things to propose", "proposals", priority=PRIORITY)
+    """A proposals job for the project, through the next kind in turn (`due` checked one is on)."""
+    request = REQUEST.format(next_lens(store, project).name)
+    return store.add_job(project.slug, "change", request, "proposals", priority=PRIORITY)
 
 
 def collect(raw: object) -> list[tuple[str, str]]:

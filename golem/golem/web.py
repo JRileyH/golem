@@ -504,6 +504,8 @@ def create_app(
                     message = await control.kill(job)
                 case "setting":
                     message = await control.setting(slug, form.get("name", ""), value)
+                case "proposal-kind":
+                    message = await control.proposal_kind(slug, form.get("name", ""), value == "on")
                 case "step-setting":
                     message = await control.step_setting(job, step, position, form.get("name", ""), value)
                 case "default":

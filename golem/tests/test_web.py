@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 from dataclasses import replace
+from html import escape
 from urllib.parse import unquote
 
 import pytest
@@ -434,6 +435,32 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     assert "Pick%20how%20many" in act(page, action="setting", slug="trees", name="proposals_max", value="")
     act(page, action="setting", slug="trees", name="proposals", value="")
     assert golem.store.project("trees").proposals == "off"
+
+
+def test_kinds_of_proposal_are_all_on_until_riggy_unticks_one(golem, page):
+    from golem.proposals import LENSES
+
+    sign_in(page)
+    html = page.get("/p/trees/settings").text
+    assert html.count("name=value value=on checked") == len(LENSES)  # every kind, each ticked
+    for x in LENSES:  # what each kind asks the worker to look at, word for word
+        assert f"<b>{x.name.capitalize()}</b></label><span class=sub>{escape(x.focus)}</span>" in html
+
+    assert "%3A%20no%20proposals%20about%20its%20features%20now." in act(page, action="proposal-kind", slug="trees", name="features")
+    assert golem.store.project("trees").proposals_off == "features"
+    act(page, action="proposal-kind", slug="trees", name="security")
+    assert golem.store.project("trees").proposals_off == "features,security"  # in LENSES order
+    html = page.get("/p/trees/settings").text
+    assert html.count("name=value value=on checked") == len(LENSES) - 2
+    assert "No proposals about its security now, from the status page." in [m.text for m in golem.store.messages("trees")]
+    act(page, action="proposal-kind", slug="trees", name="features", value="on")
+    assert golem.store.project("trees").proposals_off == "security"
+
+    assert "no%20kind%20of%20proposal%20called%20gameplay" in act(page, action="proposal-kind", slug="trees", name="gameplay")
+    for x in LENSES[:-1]:
+        act(page, action="proposal-kind", slug="trees", name=x.name)
+    assert "Leave%20one%20kind%20on" in act(page, action="proposal-kind", slug="trees", name=LENSES[-1].name)
+    assert golem.store.project("trees").proposals_off == ",".join(x.name for x in LENSES[:-1])
 
 
 def test_tags_in_settings_and_on_a_project(golem, page):

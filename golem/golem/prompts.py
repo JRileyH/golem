@@ -8,7 +8,7 @@ from string import Template
 from . import plan
 from .config import Settings
 from .playbook import Playbook
-from .proposals import LENSES, Lens, past
+from .proposals import LENSES, Lens, kinds, past
 from .store import Job, Project, Proposal, Step
 
 # Golem's own steps worth telling a worker about in "Done so far".
@@ -110,7 +110,7 @@ class Prompts:
             branch=branch,
             lens=lens.name,
             focus=lens.focus,
-            lenses=", ".join(x.name for x in LENSES),
+            lenses=", ".join(x.name for x in LENSES if x in kinds(project) or x == lens),
             jobs="\n".join(jobs) or "(none yet)",
             said="\n".join(said) or "(nothing yet)",
             past=past(earlier),

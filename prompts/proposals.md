@@ -14,8 +14,8 @@ propose improvements he can say yes or no to.
 
 $focus
 
-Golem takes the lenses in turn ($lenses), so that over time every side of the
-project gets a fresh look. Stay within this one.
+Golem takes the lenses Riggy wants for this project in turn ($lenses), so that
+over time each of them gets a fresh look. Stay within this one.
 
 # What's happened lately
 

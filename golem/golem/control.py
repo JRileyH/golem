@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 
 from . import plan
-from .proposals import WAITING
+from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, Job, Project, Step, Store, Tag
 
@@ -180,6 +180,22 @@ class Control:
         said = f"{name.title()} is now {value}" if value else f"{name.title()} is each step's default again"
         await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
         return f"{project.name}: {name} {value or 'by step'}, from the next agent step."
+
+    async def proposal_kind(self, slug: str, name: str, on: bool) -> str:
+        """Turn one kind of proposal (a lens) on or off for the project. One stays on: "How often"
+        is what turns proposals off."""
+        project = self._project(slug)
+        if not any(x.name == name for x in LENSES):
+            raise ControlError(f"There's no kind of proposal called {name}.")
+        off = {x.name for x in LENSES} - {x.name for x in kinds(project)}
+        off = off - {name} if on else off | {name}
+        if len(off) == len(LENSES):
+            raise ControlError("Leave one kind on: to stop proposals, set How often to off.")
+        self.store.update_project(slug, proposals_off=",".join(x.name for x in LENSES if x.name in off))
+        said = f"Proposals can look at its {name} again" if on else f"No proposals about its {name} now"
+        await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
+        self.scheduler.wake()
+        return f"{project.name}: {said[0].lower()}{said[1:]}."
 
     async def step_setting(self, job_id: int, step_id: int, position: int, name: str, value: str) -> str:
         """One upcoming agent step's model or effort; "" to go back to the defaults."""

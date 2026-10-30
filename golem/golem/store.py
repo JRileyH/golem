@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT NOT NULL,
     tag TEXT NOT NULL DEFAULT '',    -- what sort of project it is (tags), '' for none
     proposals TEXT NOT NULL DEFAULT 'off',  -- how often golem looks for improvements to propose (EVERY)
-    proposals_max INTEGER NOT NULL DEFAULT 5  -- proposals awaiting Riggy before golem stops making more
+    proposals_max INTEGER NOT NULL DEFAULT 5,  -- proposals awaiting Riggy before golem stops making more
+    proposals_off TEXT NOT NULL DEFAULT ''  -- kinds of proposal (proposals.LENSES) he turned off, comma-separated
 );
 -- The few big-picture sorts of project ("Game"), shown on the projects page in their color.
 CREATE TABLE IF NOT EXISTS tags (
@@ -155,6 +156,7 @@ MIGRATIONS = {
         "tag": "TEXT NOT NULL DEFAULT ''",
         "proposals": "TEXT NOT NULL DEFAULT 'off'",
         "proposals_max": "INTEGER NOT NULL DEFAULT 5",
+        "proposals_off": "TEXT NOT NULL DEFAULT ''",
     },
     "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
@@ -205,6 +207,9 @@ class Project:
     tag: str = ""  # a Tag's name, or "" for none
     proposals: str = "off"  # how often golem looks for improvements to propose (EVERY)
     proposals_max: int = 5  # proposals awaiting Riggy before golem stops making more
+    # Kinds of proposal he turned off, comma-separated (proposals.LENSES): every kind is on
+    # until he turns it off, new ones too.
+    proposals_off: str = ""
 
 
 @dataclass
@@ -365,7 +370,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str | int) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max"}, fields
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -375,8 +380,9 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max FROM projects WHERE slug = ?",
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off"
+                " FROM projects WHERE slug = ?",
                 (new, old),
             )
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
