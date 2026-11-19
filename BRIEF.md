@@ -101,6 +101,7 @@ The deployer is the only door from agents to Docker. Assume anything calling it 
 | Call | Does |
 | --- | --- |
 | `POST /deploy {slug, sha}` | Fetch `deploy/compose.yml` from `<org>/<slug>` at that commit, check it, validate it, deploy it, write the route, verify the URL responds |
+| `POST /validate {slug, sha}` | The same fetch and validation, and nothing else: no checks, no Docker, no route. For golem to vet a repo before adopting it |
 | `POST /stop {slug}` | `compose down` keeping volumes, remove the route |
 | `POST /delete {slug}` | `compose down` with volumes, remove the route and deploy files |
 | `GET /projects` | Every project with deploy files, running or stopped |

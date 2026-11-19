@@ -81,6 +81,15 @@ def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str 
         fields = {"slug": _short(data["slug"]), "sha": _short(data["sha"])}
         return await handle(request, "deploy", lambda: deployer.deploy(data["slug"], data["sha"]), fields, mutates=True)
 
+    async def validate(request: Request) -> JSONResponse:
+        """A deploy's rules without the deploy: changes nothing, so it takes no lock."""
+        try:
+            data = await body(request, {"slug", "sha"})
+        except Rejected as e:
+            return await handle(request, "validate", _raise(e), {}, mutates=False)
+        fields = {"slug": _short(data["slug"]), "sha": _short(data["sha"])}
+        return await handle(request, "validate", lambda: deployer.validate(data["slug"], data["sha"]), fields, mutates=False)
+
     async def stop(request: Request) -> JSONResponse:
         try:
             data = await body(request, {"slug"})
@@ -132,6 +141,7 @@ def create_app(deployer: Deployer, audit: Audit, secret: str, admin_secret: str 
     return Starlette(
         routes=[
             Route("/deploy", deploy, methods=["POST"]),
+            Route("/validate", validate, methods=["POST"]),
             Route("/stop", stop, methods=["POST"]),
             Route("/delete", delete, methods=["POST"]),
             Route("/projects", projects, methods=["GET"]),

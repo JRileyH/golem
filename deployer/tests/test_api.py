@@ -14,7 +14,7 @@ from deployer.audit import Audit
 from deployer.config import Settings
 from deployer.deploy import Deployer
 from deployer.source import GitHubError, GitHubSource
-from deployer.validate import Policy, Project, Rejected
+from deployer.validate import Policy, Project, Rejected, validate_compose
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SECRET = "s" * 40
@@ -81,6 +81,9 @@ class Harness:
     def deploy(self, slug="hello", sha=SHA, headers=AUTH):
         return self.client.post("/deploy", json={"slug": slug, "sha": sha}, headers=headers)
 
+    def validate(self, slug="hello", sha=SHA, headers=AUTH):
+        return self.client.post("/validate", json={"slug": slug, "sha": sha}, headers=headers)
+
     def delete(self, slug="hello", headers=ADMIN):
         return self.client.post("/delete", json={"slug": slug}, headers=headers)
 
@@ -98,8 +101,9 @@ def test_every_call_needs_the_secret(tmp_path, valid):
     assert h.deploy(headers={}).status_code == 401
     assert h.deploy(headers={"X-Deployer-Secret": "wrong"}).status_code == 401
     assert h.client.get("/status", params={"slug": "hello"}).status_code == 401
+    assert h.validate(headers={}).status_code == 401
     assert h.docker.calls == []
-    assert [e["outcome"] for e in h.audit()] == ["unauthorized"] * 3
+    assert [e["outcome"] for e in h.audit()] == ["unauthorized"] * 4
 
 
 def test_healthz_is_open(tmp_path, valid):
@@ -201,6 +205,61 @@ def test_failed_verification_returns_logs_and_keeps_state(tmp_path, valid):
     }
     # Still recorded, so the agent can read logs and stop it.
     assert h.client.get("/logs", params={"slug": "hello"}, headers=AUTH).status_code == 200
+
+
+def test_validate_checks_a_commit_without_deploying_it(tmp_path, valid):
+    h = Harness(tmp_path, FakeSource(valid))
+    r = h.validate()
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "services": ["web", "db", "cache"], "public_service": "web", "port": 3000}
+    assert h.docker.calls == []
+    assert not (tmp_path / "routes" / "hello.yml").exists()
+    assert not (tmp_path / "projects" / "hello").exists()
+    assert h.audit()[-1] == {**h.audit()[-1], "action": "validate", "outcome": "ok", "slug": "hello", "sha": SHA}
+
+
+def test_validate_ignores_checks(tmp_path, valid):
+    """Whether CI passed is a separate question; a deploy still requires it."""
+    h = Harness(tmp_path, FakeSource(valid, failing=["build: failure"]))
+    assert h.validate().status_code == 200
+    assert h.deploy().status_code == 422
+
+
+@pytest.mark.parametrize("fixture", sorted(p.name for p in FIXTURES.glob("*.yml")))
+def test_validate_gives_the_deployers_own_verdict_on_every_fixture(tmp_path, fixture):
+    text = (FIXTURES / fixture).read_text()
+    try:
+        validate_compose(text, Policy())
+        expected = None
+    except Rejected as e:
+        expected = e.reasons
+    r = Harness(tmp_path, FakeSource(text)).validate()
+    assert (r.status_code, r.json().get("reasons")) == ((200, None) if expected is None else (422, expected))
+
+
+@pytest.mark.parametrize(
+    "body, reason",
+    [
+        ({"slug": "Hello", "sha": SHA}, "slug must match ^[a-z0-9][a-z0-9-]{1,30}$ and not end in `-`"),
+        ({"slug": "golem", "sha": SHA}, "slug `golem` is reserved"),
+        ({"slug": "hello", "sha": "main"}, "sha must be a full 40-character lowercase commit hash"),
+        ({"slug": "hello", "sha": SHA, "text": "services: {}"}, "body must be a JSON object with exactly: sha, slug"),
+    ],
+)
+def test_validate_takes_only_a_good_slug_and_sha(tmp_path, valid, body, reason):
+    h = Harness(tmp_path, FakeSource(valid))
+    r = h.client.post("/validate", json=body, headers=AUTH)
+    assert (r.status_code, r.json()["reasons"]) == (422, [reason])
+    assert h.audit()[-1] == {**h.audit()[-1], "action": "validate", "outcome": "rejected"}
+
+
+def test_validate_needs_a_pushed_file(tmp_path, valid):
+    class Missing(FakeSource):
+        def compose_file(self, slug, sha):
+            raise Rejected([f"deploy/compose.yml not found in unlaunched/{slug} at {sha}; is the commit pushed?"])
+
+    r = Harness(tmp_path, Missing(valid)).validate()
+    assert (r.status_code, r.json()["reasons"]) == (422, [f"deploy/compose.yml not found in unlaunched/hello at {SHA}; is the commit pushed?"])
 
 
 def test_stop_keeps_volumes_and_removes_route(tmp_path, valid):

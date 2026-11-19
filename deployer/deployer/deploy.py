@@ -1,4 +1,4 @@
-"""The deploy, stop, delete, status and logs operations behind the API."""
+"""The deploy, validate, stop, delete, status and logs operations behind the API."""
 
 from __future__ import annotations
 
@@ -48,10 +48,21 @@ class Deployer:
         self.docker = docker
         self.verify = verify or self.verify_through_traefik
 
-    def deploy(self, slug: str, sha: str) -> dict:
+    def fetch(self, slug: str, sha: str) -> str:
+        """The compose file at a pushed commit, for a valid slug and sha."""
         check_slug(slug)
         check_sha(sha)
-        text = self.source.compose_file(slug, sha)
+        return self.source.compose_file(slug, sha)
+
+    def validate(self, slug: str, sha: str) -> dict:
+        """Whether the compose file at a pushed commit passes every rule, by the same code and
+        policy as a deploy, without deploying it or looking at its checks. golem asks before it
+        takes on a repo it didn't make."""
+        project = validate_compose(self.fetch(slug, sha), self.settings.policy)
+        return {"services": list(project.services), "public_service": project.public_service, "port": project.public_port}
+
+    def deploy(self, slug: str, sha: str) -> dict:
+        text = self.fetch(slug, sha)
         if self.settings.require_checks:
             failing = self.source.failing_checks(slug, sha)
             if failing:
