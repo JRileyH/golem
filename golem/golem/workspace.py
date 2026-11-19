@@ -40,6 +40,17 @@ class CI:
     url: str = ""
 
 
+@dataclass(frozen=True)
+class About:
+    """A repo in the org, as GitHub has it: what golem looks at before adopting one (adopt.py)."""
+
+    name: str  # its name exactly, capitals and all
+    description: str
+    archived: bool
+    has_main: bool
+    readme: str  # "" for none
+
+
 class Workspace(Protocol):
     def path(self, slug: str) -> Path: ...
     async def ensure_repo(self, slug: str, description: str) -> Path: ...
@@ -49,6 +60,7 @@ class Workspace(Protocol):
     async def comment_issue(self, slug: str, number: int, body: str, close: bool = False) -> None: ...
     async def close_issue(self, slug: str, number: int, body: str) -> None: ...
     async def repo_exists(self, slug: str) -> bool: ...
+    async def about(self, slug: str) -> About | None: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
     async def start_branch(self, slug: str, branch: str) -> None: ...
@@ -95,6 +107,18 @@ class GitHubWorkspace:
     async def repo_exists(self, slug: str) -> bool:
         code, _ = await run("gh", "repo", "view", f"{self.org}/{slug}", "--json", "name")
         return code == 0
+
+    async def about(self, slug: str) -> About | None:
+        """The repo's name, description, README and whether it's archived or has a main branch;
+        None if golem's token can't see a repo by that name."""
+        repo = f"{self.org}/{slug}"
+        code, out = await run("gh", "repo", "view", repo, "--json", "name,description,isArchived")
+        if code != 0:
+            return None
+        info = json.loads(out)
+        main, _ = await run("gh", "api", "--silent", f"repos/{repo}/branches/main")
+        code, readme = await run("gh", "api", f"repos/{repo}/readme", "-H", "Accept: application/vnd.github.raw")
+        return About(info["name"], info.get("description") or "", bool(info.get("isArchived")), main == 0, readme if code == 0 else "")
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         repo = f"{self.org}/{slug}"
@@ -335,11 +359,13 @@ class GitHubWorkspace:
 
 
 class LocalWorkspace:
-    """No GitHub: plain directories. For tests and the fake harness."""
+    """No GitHub: plain directories. For tests and the fake harness. A directory already under
+    `root` counts as a repo in the org, so a fake golem can adopt a copy of a real one."""
 
     def __init__(self, root: Path):
         self.root = root
         self.repos: set[str] = set()
+        self.existing: dict[str, About] = {}  # repos golem didn't make, as GitHub would describe them
         self.issues: list[tuple[str, str]] = []
         self.comments: list[tuple[str, int, str, bool]] = []  # (slug, issue, body, closed it)
         self.closed: list[tuple[str, int, str]] = []  # (slug, issue, body): closed as done
@@ -357,7 +383,15 @@ class LocalWorkspace:
         return self.root / slug
 
     async def repo_exists(self, slug: str) -> bool:
-        return slug in self.repos
+        return slug in self.repos or slug in self.existing or self.path(slug).is_dir()
+
+    async def about(self, slug: str) -> About | None:
+        if slug in self.existing:
+            return self.existing[slug]
+        if not await self.repo_exists(slug):
+            return None
+        readme = self.path(slug) / "README.md"
+        return About(slug, "", False, True, readme.read_text(errors="replace") if readme.is_file() else "")
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         self.repos.add(slug)

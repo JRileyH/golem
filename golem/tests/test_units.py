@@ -676,6 +676,35 @@ def test_ci_is_read_like_the_deployer_reads_it(checkout, monkeypatch):
     assert asyncio.run(checkout.ci("trees", "abc")).state == "none"
 
 
+def test_about_describes_a_repo_golem_did_not_make(checkout, monkeypatch):
+    from golem import workspace
+    from golem.workspace import About, LocalWorkspace
+
+    calls = []
+
+    async def fake_run(*args, cwd=None):
+        calls.append(args)
+        if args[:3] == ("gh", "repo", "view"):
+            if args[3] == "unlaunched/gone":
+                return 1, "GraphQL: Could not resolve to a Repository"
+            return 0, json.dumps({"name": "mimic", "description": "Tabletop cards", "isArchived": False})
+        if args[-1].endswith("branches/main"):
+            return 1, '{"message":"Branch not found"}'
+        return 0, "# mimic\n\nTabletop data in."
+
+    monkeypatch.setattr(workspace, "run", fake_run)
+    assert asyncio.run(checkout.about("mimic")) == About("mimic", "Tabletop cards", False, False, "# mimic\n\nTabletop data in.")
+    assert ("gh", "api", "--silent", "repos/unlaunched/mimic/branches/main") in calls
+    assert asyncio.run(checkout.about("gone")) is None
+
+    # The pretend GitHub: a directory already in its workspace is a repo golem didn't make.
+    local = LocalWorkspace(checkout.root)
+    (checkout.root / "mimic").mkdir()
+    (checkout.root / "mimic" / "README.md").write_text("# mimic\n")
+    assert asyncio.run(local.about("mimic")) == About("mimic", "", False, True, "# mimic\n")
+    assert asyncio.run(local.repo_exists("mimic")) and asyncio.run(local.about("nothing")) is None
+
+
 def test_deployer_client_deploys_and_says_what_to_fix():
     def handler(request):
         sha = json.loads(request.content)["sha"]
