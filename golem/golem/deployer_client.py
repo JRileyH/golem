@@ -28,6 +28,7 @@ class Deployment:
 
 class Deployer(Protocol):
     async def deploy(self, slug: str, sha: str) -> Deployment: ...
+    async def validate(self, slug: str, sha: str) -> Deployment: ...
     async def stop(self, slug: str) -> None: ...
     async def delete(self, slug: str) -> None: ...
     async def projects(self) -> list[str]: ...
@@ -55,6 +56,21 @@ class DeployerClient:
             return Deployment(False, problem="\n".join(body.get("reasons") or []))
         if r.status_code == 502 and "logs" in body:  # it started but didn't answer
             return Deployment(False, problem=f"{body.get('error')}\n\nLogs:\n{str(body['logs'])[-4000:]}")
+        raise DeployerError(_problem(r))
+
+    async def validate(self, slug: str, sha: str) -> Deployment:
+        """Whether a pushed commit's deploy/compose.yml passes the deployer's rules, deploying nothing."""
+        try:
+            r = await self.client.post("/validate", json={"slug": slug, "sha": sha})
+            body = r.json()
+        except httpx.HTTPError as e:
+            raise DeployerError(f"the deployer didn't answer ({type(e).__name__})") from None
+        except ValueError:
+            raise DeployerError(f"the deployer said {r.status_code}") from None
+        if body.get("ok"):
+            return Deployment(True)
+        if r.status_code == 422:
+            return Deployment(False, problem="\n".join(body.get("reasons") or []))
         raise DeployerError(_problem(r))
 
     async def stop(self, slug: str) -> None:
@@ -117,6 +133,9 @@ class OfflineDeployer:
 
     async def deploy(self, slug: str, sha: str) -> Deployment:
         return Deployment(True, url=self.url.format(slug=slug))
+
+    async def validate(self, slug: str, sha: str) -> Deployment:
+        return Deployment(True)
 
     async def stop(self, slug: str) -> None:
         pass

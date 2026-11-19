@@ -339,6 +339,26 @@ def test_deployer_client_deletes_with_the_admin_secret():
     assert seen == ["admin"] * 3
 
 
+def test_deployer_client_validates_a_commit():
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, json.loads(request.content)))
+        if json.loads(request.content)["slug"] == "bad":
+            return httpx.Response(422, json={"ok": False, "reasons": ["service `web`: `ports` is not allowed", "a memory limit is required"]})
+        if json.loads(request.content)["slug"] == "down":
+            return httpx.Response(502, json={"ok": False, "error": "GitHub returned 401 reading deploy/compose.yml"})
+        return httpx.Response(200, json={"ok": True, "services": ["web"], "public_service": "web", "port": 80})
+
+    d = deployer(handler)
+    assert asyncio.run(d.validate("mimic", "a" * 40)).ok
+    found = asyncio.run(d.validate("bad", "a" * 40))
+    assert (found.ok, found.problem) == (False, "service `web`: `ports` is not allowed\na memory limit is required")
+    with pytest.raises(DeployerError, match="^GitHub returned 401"):  # not the project's fault
+        asyncio.run(d.validate("down", "a" * 40))
+    assert seen[0] == ("/validate", {"slug": "mimic", "sha": "a" * 40})
+
+
 def test_deployer_client_lists_projects():
     d = deployer(lambda request: httpx.Response(200, json={"ok": True, "projects": ["hello", "trees"]}))
     assert asyncio.run(d.projects()) == ["hello", "trees"]

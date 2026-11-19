@@ -53,6 +53,8 @@ class FakeDeployer:
         self.fail: str | None = None  # set to make deletes fail with this reason
         self.deploys: list[tuple[str, str]] = []
         self.refuse: list[str] = []  # problems for the next deploys, in order
+        self.validated: list[tuple[str, str]] = []
+        self.invalid = ""  # set to make validating fail with these reasons
         self.versions: list[dict] = [{"enabled": False, "reason": "not set up"}]  # /version, in turn; the last repeats
         self.fetches: list[bool] = []
         self.upgrades = 0
@@ -63,6 +65,10 @@ class FakeDeployer:
         if self.refuse:
             return Deployment(False, problem=self.refuse.pop(0))
         return Deployment(True, url=f"https://{slug}.unlaunched.dev/")
+
+    async def validate(self, slug: str, sha: str) -> Deployment:
+        self.validated.append((slug, sha))
+        return Deployment(False, problem=self.invalid) if self.invalid else Deployment(True)
 
     async def stop(self, slug: str) -> None:
         self.stopped.append(slug)
