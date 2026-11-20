@@ -7,6 +7,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+# The upgrade helper (deployer/upgrade.py) rebuilds golem from this image. Without buildx,
+# compose falls back to the classic builder, which refuses golem/Dockerfile's COPY --chmod.
+COPY --from=docker /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
 COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
