@@ -482,7 +482,7 @@ def test_kinds_of_proposal_are_all_on_until_riggy_unticks_one(golem, page):
 
 def test_tags_in_settings_and_on_a_project(golem, page):
     html = page.get("/settings").text
-    assert "id=tags" in html and "<b>Game</b><span>0 projects</span>" in html and "tag-add" not in html  # signed out: a list
+    assert "id=tags" in html and "<b><span class=swatch></span>Game</b><span class=uses>0 projects</span>" in html and "tag-add" not in html  # signed out: a list
     sign_in(page)
     assert "Added%20the%20Dev%20Tool%20tag" in act(page, action="tag-add", value="  Dev   Tool ")
     assert [(t.name, t.color) for t in golem.store.tags()] == [("Game", 7), ("Dev Tool", 1)]  # a color no tag has
@@ -493,7 +493,7 @@ def test_tags_in_settings_and_on_a_project(golem, page):
     assert golem.store.project("trees").tag == "Dev Tool"
     assert "Tagged Dev Tool, from the status page." in [m.text for m in golem.store.messages("trees")]
     assert "<option selected>Dev Tool</option>" in page.get("/p/trees/settings").text
-    assert "<b>Dev Tool</b><span>1 project</span>" in page.get("/settings").text
+    assert "<b><span class=swatch></span>Dev Tool</b><span class=uses>1 project</span>" in page.get("/settings").text
 
     assert "on%20its%20projects" in act(page, action="tag-rename", name="Dev Tool", value="Developer Tool")
     assert golem.store.project("trees").tag == "Developer Tool"

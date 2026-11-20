@@ -211,24 +211,25 @@ def version_card(upgrades: Upgrades) -> str:
 
 
 def tags_card(tags: list[Tag], counts: dict[str, int], signed_in: bool) -> str:
-    """The sorts of project there are, each in its color on the projects page."""
+    """The sorts of project there are, each in its color on the projects page. One grid holds
+    every tag's row, so a long name doesn't push its controls out of line with the others'."""
     back = "/settings#tags"
     rows = []
     for t in tags:
         n = counts.get(t.name, 0)
-        row = f"<span class=swatch></span><b>{escape(t.name)}</b><span>{n} project{'' if n == 1 else 's'}</span>"
+        row = f"<b><span class=swatch></span>{escape(t.name)}</b><span class=uses>{n} project{'' if n == 1 else 's'}</span>"
         if signed_in:
             colors = "".join(f"<option value={i}{' selected' if i == t.color else ''}>{c}</option>" for i, c in enumerate(COLORS, 1))
             row += (
-                f"<form method=post action=/act class=inline>{_hidden(action='tag-color', name=t.name, back=back)}"
+                f"<form method=post action=/act>{_hidden(action='tag-color', name=t.name, back=back)}"
                 f"<select name=value aria-label='Color of {escape(t.name)}' onchange='this.form.submit()'>{colors}</select></form>"
-                f"<form method=post action=/act class=inline>{_hidden(action='tag-rename', name=t.name, back=back)}"
+                f"<form method=post action=/act class=rename>{_hidden(action='tag-rename', name=t.name, back=back)}"
                 f"<input name=value value='{escape(t.name)}' required maxlength=20 aria-label='New name for {escape(t.name)}'>"
                 "<button>Rename</button></form>"
-                f"<form method=post action=/act class=inline onsubmit='return confirm({escape(json.dumps(f'Delete the {t.name} tag?'))})'>"
+                f"<form method=post action=/act onsubmit='return confirm({escape(json.dumps(f'Delete the {t.name} tag?'))})'>"
                 f"{_hidden(action='tag-delete', name=t.name, back=back)}<button class=danger>Delete</button></form>"
             )
-        rows.append(f"<div class='row-form c{t.color}'>{row}</div>")
+        rows.append(f"<div class='tag c{t.color}'>{row}</div>")
     add = (
         f"<form method=post action=/act class=row-form>{_hidden(action='tag-add', back=back)}"
         "<input name=value placeholder='A new tag, like Dev Tool' required maxlength=20 aria-label='New tag'>"
@@ -240,7 +241,7 @@ def tags_card(tags: list[Tag], counts: dict[str, int], signed_in: bool) -> str:
         "<section class='card settings' id=tags><h2>Tags</h2><p class=sub>The big-picture sorts of project, each in its "
         "color on the projects page. golem gives each new idea one of these, or none, and adds one only for a broad sort "
         "of project none of them covers. A topic or genre isn't a tag.</p>"
-        + ("".join(rows) or "<p class=empty>No tags.</p>")
+        + (f"<div class='tag-list{'' if signed_in else ' readonly'}'>{''.join(rows)}</div>" if rows else "<p class=empty>No tags.</p>")
         + add
         + "</section>"
     )

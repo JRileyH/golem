@@ -1134,6 +1134,21 @@ textarea[rows="1"]::placeholder { white-space:nowrap; overflow:hidden; text-over
 .settings .row-form + .row-form { margin-top:.75rem; } .settings input { font:inherit; font-size:16px; padding:.4rem .6rem; border-radius:var(--radius);
   border:2px solid var(--line); background:var(--card); color:var(--ink); min-width:0; flex:1 1 10rem; }
 .settings .hint { flex-basis:100%; margin:0; }
+/* Tags in settings: every tag's row in one grid, so each column is as wide as its widest and they all line up. */
+.tag-list { display:grid; grid-template-columns:max-content max-content max-content minmax(0, 1fr) max-content; gap:.6rem .75rem;
+  align-items:center; margin:.75rem 0 1rem; }
+.tag-list.readonly { grid-template-columns:max-content 1fr; }
+.tag-list > .tag { display:contents; }
+.tag-list b { display:flex; align-items:center; overflow-wrap:anywhere; }
+.tag-list .uses { color:var(--muted); font-size:.88rem; }
+.tag-list form { margin:0; }
+.tag-list .rename { display:flex; gap:.4rem; min-width:0; }
+@media (max-width:640px) {  /* each tag on two lines: name, count and color, then renaming and deleting it */
+  .tag-list:not(.readonly) { grid-template-columns:minmax(0, 1fr) max-content max-content; gap:.45rem .5rem; }
+  .tag-list:not(.readonly) .rename { grid-column:span 2; }
+  .tag-list:not(.readonly) :is(select, .danger) { width:100%; }
+  .tag-list:not(.readonly) > .tag + .tag > :nth-child(-n+3) { margin-top:.75rem; }
+}
 .adopt > summary { cursor:pointer; color:var(--muted); font-size:.9rem; font-weight:600; }
 .lenses { list-style:none; padding:0; margin:.4rem 0 0; } .lenses li { padding:.45rem 0; border-top:1px solid var(--line); }
 .lenses li:first-child { border-top:0; } .lenses label { display:flex; gap:.45rem; align-items:center; }
