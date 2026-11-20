@@ -19,6 +19,7 @@ import re
 from datetime import datetime
 from html import escape
 
+from . import plan
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
 from .proposals import LENSES, WAITING, kinds
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
@@ -204,7 +205,7 @@ def _command(slug: str, command: str, placeholder: str, value: str, label: str, 
 
 
 def _job_words(job: Job) -> str:
-    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+    what = plan.what(job)
     state = {"done": "done", "killed": "stopped", "failed": "failed"}.get(job.state, job.state)
     request = job.request if len(job.request) <= 90 else job.request[:89] + "…"
     return f"{what}, {state}: “{request}”"

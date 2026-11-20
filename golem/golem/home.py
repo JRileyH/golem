@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 
-from . import pwa
+from . import plan, pwa
 from .insights import Report
 from .pages import (ICONS_SVG, LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots,
                     headline, signin_card, when)  # fmt: skip
@@ -82,7 +82,7 @@ def _later(lane: LaneData, now: datetime) -> str:
     first = next((s for s in lane.steps if s.state == "pending"), None)
     eta = lane.etas.get(first.position) if first else None
     at = "paused" if p.paused else when(eta.start, now) if eta else f"#{lane.position}" if lane.position else "queued"
-    what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+    what = plan.what(job)
     return (
         f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
         f"<span class=muted>{what}: {escape(_short(job.request, 80))}</span><span class=when>{at}</span></li>"

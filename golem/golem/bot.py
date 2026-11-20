@@ -1,7 +1,8 @@
 """What Riggy's messages turn into, written in the web app (web.py hands them to `handle`).
 
 - In golem's own conversation (the inbox), free text is a new idea: it's triaged into a
-  brief, gets a project, its own conversation and a job.
+  brief, gets a project, its own conversation and a job. `!adopt <repo>` takes on a repo
+  in the org that golem didn't make the same way, once it's checked it over (adopt.py).
 - In a project's conversation, free text is about that project: feedback for the job that's
   waiting on him, a question (answered by a quick look, not a job that builds anything,
   even while a job is under way), a note for the job that's running, or else a new job:
@@ -19,7 +20,7 @@ import logging
 import os
 from datetime import timedelta
 
-from . import intake, options, plan, teardown
+from . import adopt, intake, options, plan, teardown
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
@@ -27,7 +28,7 @@ from .prompts import Prompts
 from .scheduler import WORKER_ENV_DENY, Scheduler
 from .store import ACTIVE, EFFORTS, MODELS, MODES, Job, Project, Store, later
 from .talk import INBOX, STATUS, Talk
-from .workspace import Workspace, WorkspaceError
+from .workspace import About, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
 
@@ -44,8 +45,9 @@ HELP = """Commands (in a project's conversation they apply to that project; else
 !pause / !resume — hold a project while you tinker; with no project, in golem's own conversation, all work
 !kill [job] — drop a job
 !delete — delete a project for good: site, data, checkout and history (asks you to confirm)
+!adopt <repo> [what it is] — in golem's own conversation: take on a repo in the org that golem didn't make. It checks it over, fixes what's missing and deploys it, or says what's in the way
 
-With a new idea you can also say the settings ("rigorous, opus, max effort").
+With a new idea you can also say the settings ("rigorous, opus, max effort"), and with !adopt too.
 Each kind of step has a default model and effort, set in Settings.
 Anything else: in golem's own conversation, a new idea; in a project's, feedback, a question, a change, or a request to see options."""
 
@@ -112,11 +114,7 @@ class Bot:
             model=brief.model or "",  # unless named, each step's default
             effort=brief.effort or "",
         )
-        tag, tagged = self.store.tag(brief.tag) if brief.tag else None, ""
-        if tag is None and brief.new_tag:  # triage's bar for a new tag is high: say so when it's met
-            tag, tagged = self.store.add_tag(brief.tag), f". It's the first {brief.tag}: a new tag (Settings has them)"
-        if tag:
-            project = self.store.update_project(slug, tag=tag.name)
+        project, tagged = self.tag_project(project, brief)
         url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
         job = self.store.add_job(slug, "new", text, mode)
         self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
@@ -136,8 +134,67 @@ class Bot:
         )
         self.scheduler.wake()
 
+    def tag_project(self, project: Project, brief: intake.Brief) -> tuple[Project, str]:
+        """The project with triage's tag, and what to add to the news if it's a new tag."""
+        tag, tagged = self.store.tag(brief.tag) if brief.tag else None, ""
+        if tag is None and brief.new_tag:  # triage's bar for a new tag is high: say so when it's met
+            tag, tagged = self.store.add_tag(brief.tag), f". It's the first {brief.tag}: a new tag (Settings has them)"
+        if tag:
+            project = self.store.update_project(project.slug, tag=tag.name)
+        return project, tagged
+
     async def slug_taken(self, slug: str) -> bool:
         return self.store.project(slug) is not None or await self.workspace.repo_exists(slug)
+
+    # --- adopting a repo golem didn't make (adopt.py) ---------------------------
+
+    async def adopt(self, args: list[str]) -> str:
+        """`!adopt <slug> [what it is]`. The quick checks answer at once; then the repo becomes a
+        project like a new idea does, and its job checks it over (vet) after the same grace."""
+        if not args:
+            return f"Usage: !adopt <repo> [what it is], for a repo in github.com/{self.settings.org} that golem didn't make."
+        slug, words = args[0].lower(), " ".join(args[1:])
+        if existing := self.store.project(slug):
+            return f"{existing.name} ({slug}) is already one of my projects: {self.settings.url('golem')}/p/{slug}"
+        about = await self.workspace.about(slug) if intake.valid_slug(slug) else None
+        if blocked := adopt.preflight(slug, about, False, self.settings.org):
+            return adopt.refusal(slug, blocked)
+        brief = await self.adopt_brief(slug, words, about)
+        project = self.store.add_project(
+            slug, brief.name, brief.summary, mode=brief.mode or self.settings.default_mode, model=brief.model or "", effort=brief.effort or ""
+        )  # fmt: skip
+        project, tagged = self.tag_project(project, brief)
+        job = self.store.add_job(slug, "adopt", f"!adopt {slug} {words}".strip(), "adopt")
+        self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
+        url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
+        said = f"You said: “{words}”" if words else "From its README and description: you didn't say what it is."
+        await self.chat.send(
+            slug,
+            f"{brief.name}\n\n{brief.summary}\n\n{said}\n\n"
+            f"I'm taking on {repo}, to live at {url}. First I'll check it over: that it builds and its tests pass "
+            "here, its CI, the deployer's rules, and the shape every project of mine has. If something's in the way "
+            "I'll say what in golem's conversation and leave it alone. If it only needs tidying I'll do that, then "
+            "deploy it, and it's mine from then on, like any project I built.\n\n"
+            f"{settings_line(project)}. Starting in a minute: to change that first, say !mode, !model or !effort "
+            "here (!help for the options).",
+        )
+        self.scheduler.wake()
+        return f"Adopting {brief.name} ({slug}), {settings_line(project).lower()}. Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}"
+
+    async def adopt_brief(self, slug: str, words: str, about: About) -> intake.Brief:
+        if self.settings.harness == "fake":
+            return intake.adopt_fallback(slug, words, about)
+        return await intake.adopt_triage(
+            self.harness,
+            self.prompts.dir / "adopt.md",
+            slug,
+            words,
+            about,
+            cwd=self.settings.state_dir / "triage",
+            log_path=self.settings.state_dir / "triage" / "adopt.jsonl.gz",
+            env={k: v for k, v in os.environ.items() if k not in WORKER_ENV_DENY},
+            tags=[t.name for t in self.store.tags()],
+        )
 
     async def triage(self, text: str) -> intake.Brief:
         if self.settings.harness == "fake":
@@ -291,6 +348,8 @@ class Bot:
                 return await self.move(project, rest[0].lower())
             case "delete":
                 return await self.delete(args, here)
+            case "adopt":
+                return await self.adopt(args)
             case _:
                 return f"Unknown command !{name}.\n\n{HELP}"
 
@@ -312,7 +371,7 @@ class Bot:
         project = self.store.project(job.slug)
         steps = plan.planned(self.settings, self.store, job)
         step = plan.current(steps)
-        what = "new project" if job.kind == "new" else job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+        what = plan.what(job)
         held = " (project paused)" if project.paused else ""
         state = job.state
         if state == "parked":  # a grace period before a new project starts, CI running, or a retry
@@ -349,6 +408,8 @@ class Bot:
         elif setting == "mode" and job and job.kind == "new" and job.playbook != value:
             self.store.update_job(job.id, playbook=value)
             reply += f" The new-project job will follow the {value} playbook."
+        elif setting == "mode" and job and job.kind == "adopt":
+            reply += f" Adopting it goes the same way in every mode; its changes after that follow {value} rules."
         elif setting != "mode" and job:
             reply += " Takes effect from the next step."
         return reply

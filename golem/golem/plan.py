@@ -119,6 +119,13 @@ def engine(settings: Settings, store: Store, project: Project, step: Step) -> En
     return Engine(model, effort, model_from, effort_from)
 
 
+def what(job: Job) -> str:
+    """What sort of job it is, in a word or two: "new project", "adoption", "question"…"""
+    if job.kind in ("new", "adopt"):
+        return "new project" if job.kind == "new" else "adoption"
+    return job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+
+
 def current(steps: list[Step]) -> Step | None:
     return next((s for s in steps if s.state in OPEN), None)
 

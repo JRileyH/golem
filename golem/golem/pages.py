@@ -214,7 +214,7 @@ def status_card(lane: LaneData, signed_in: bool, now: datetime) -> str:
         return f"<section class='card status c{lane.color}' id='p-{escape(p.slug)}'>{head}<p class=sub>{escape(p.summary)}</p></section>"
     found = progress.pieces(lane.steps)
     active = job.state in ACTIVE
-    what = "New project" if job.kind == "new" else {"options": "Options, then a change", "question": "Question", "proposals": "Proposals"}.get(job.playbook, "Change")
+    what = "New project" if job.kind == "new" else {"adopt": "Adopting it", "options": "Options, then a change", "question": "Question", "proposals": "Proposals"}.get(job.playbook, "Change")
     done = sum(1 for x in found if x.state in ("done", "skipped"))
     summary = f"{done} of {len(found)} done" if active else f"How it went: {_n(len(found), 'piece')} of work"
     spent = _spent(lane)
