@@ -112,6 +112,21 @@ def test_projects_and_jobs_come_back_with_their_ids(golem):
     assert [p.slug for p, _ in golem.store.live_projects()] == ["bugz", "typhoon-day"]  # their finished jobs
 
 
+def test_an_adopted_repo_comes_back_as_one(golem):
+    """Its adoption's issue is what makes it golem's; the jobs after it are changes as usual."""
+    pending(golem)
+    mimic = [
+        issue(1, 4, "!adopt mimic cards for my D&D table", head="Requested:"),
+        pr(2, "Closes #1\n\n- **adopt:** It deploys through golem now.\n\nOpened by golem (job 4); it merges this once CI passes."),
+        issue(3, 6, "Add a dark theme", head="Requested:"),
+    ]
+    rebuild(golem, FakeGitHub({"mimic": mimic}, {"mimic": "mimic"}))
+    jobs = {j.id: j for j in golem.store.jobs(limit=100)}
+    assert (jobs[4].kind, jobs[4].playbook, jobs[4].request) == ("adopt", "adopt", "!adopt mimic cards for my D&D table")
+    assert [s.name for s in golem.store.steps(4)] == ["setup", "adopt", "pr", "merge"]
+    assert (jobs[6].kind, jobs[6].playbook) == ("change", "feature")
+
+
 def test_only_a_new_database_is_rebuilt(golem):
     rebuild(golem, FakeGitHub({"bugz": BUGZ}))
     assert golem.store.projects() == []

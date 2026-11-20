@@ -5,7 +5,8 @@ it to a new box is a fresh install with the same .env. On an org golem has never
 starts with nothing. On one it has, its first start rebuilds what the org remembers:
 
 - a project for each repo with golem's issues in it: its name (the README's heading), its
-  summary (the repo's description) and when it began. Settings are golem's defaults.
+  summary (the repo's description) and when it began. Settings are golem's defaults. A repo
+  golem adopted (`!adopt`) has one from the adoption, so it comes back the same way.
 - a finished job for each of those issues, with its id ("Worked on by golem (job 7)"),
   Riggy's request, and steps from its PRs ("- **change:** what it did").
 - then each project's main, deployed again, so its site is back up.
@@ -118,12 +119,12 @@ def records(settings: Settings, repo: Repo) -> tuple[Project, list[tuple[Job, li
     url = settings.repo_url(repo.slug)
     found = []
     for job_id, (issue, job_prs) in sorted(jobs.items()):
-        kind = "new" if job_id == first else "change"
+        request = (_request(issue["body"] or "") or issue["title"]) if issue else job_prs[-1]["title"]
+        kind = "change" if job_id != first else "adopt" if request.startswith("!adopt ") else "new"
         start, end = issue or job_prs[0], issue or job_prs[-1]
         job = Job(
-            id=job_id, slug=repo.slug, kind=kind,
-            request=(_request(issue["body"] or "") or issue["title"]) if issue else job_prs[-1]["title"],
-            playbook="standard" if kind == "new" else "feature", phase=0, state=_state(issue, job_prs), priority=0,
+            id=job_id, slug=repo.slug, kind=kind, request=request,
+            playbook={"new": "standard", "adopt": "adopt"}.get(kind, "feature"), phase=0, state=_state(issue, job_prs), priority=0,
             resume_session=None, attempts=0, retry_at=None, issue=issue["number"] if issue else None,
             created_at=_time(start["created_at"]), updated_at=_time(end["closed_at"] or end["created_at"]),
         )  # fmt: skip
