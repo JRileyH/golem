@@ -125,7 +125,7 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <meta name=theme-color content="#0d1012" media="(prefers-color-scheme: dark)">
 {FONT_PRELOADS}<title>{escape("Golem" if title == "golem" else f"{title} · Golem")}</title><style>{STYLE}</style>
 <link rel=icon href=/favicon.svg type="image/svg+xml">
-<link rel=manifest href=/manifest.webmanifest><link rel=apple-touch-icon href=/icon-180.png>
+<link rel=manifest href=/manifest.webmanifest>{pwa.TOUCH_ICON}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
 <div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1></header>{subnav}</div>
 {banner}{flash_html}<main id=lanes>{body}</main><div class=dock>{latest}{bottom}{tabs}</div>

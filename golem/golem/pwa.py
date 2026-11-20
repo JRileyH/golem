@@ -1,20 +1,22 @@
 """What makes the web app installable on a phone's home screen, with notifications: the
-manifest, its icon (drawn here: a line through three steps, as on the status page), the
-service worker that shows pushed messages and opens them, and the panel that turns
-notifications on for a device.
+manifest, its icon (drawn here from the mark, brand.py), the service worker that shows pushed
+messages and opens them, and the panel that turns notifications on for a device.
 
 iPhones only allow notifications for web apps added to the Home Screen (Share, then Add
-to Home Screen), and opened from there.
+to Home Screen), and opened from there. The icon is the mark on ember, dark or light: iOS
+can't switch a web app's icon with the phone's appearance, so the page hands it the one that
+matches the phone at the moment it's added (TOUCH_ICON).
 """
 
 from __future__ import annotations
 
+import math
+import re
 import struct
 import zlib
 from functools import cache
 
-BACKGROUND = (15, 23, 42)  # the header's navy
-DOTS = ((42, 120, 214), (27, 175, 122), (237, 161, 0))  # the first three project colors
+from . import brand
 
 MANIFEST = {
     "name": "Golem",
@@ -23,14 +25,20 @@ MANIFEST = {
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
-    "background_color": "#0f172a",
-    "theme_color": "#0f172a",
+    "background_color": "#302b28",  # ember's granite, behind the icon while it opens
+    "theme_color": "#283035",  # the header's slate
     "icons": [
         {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
         {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
     ],
 }
 ICON_SIZES = (180, 192, 512)
+# The home-screen icon, swapped for the light one on a phone in light mode as the page loads.
+TOUCH_ICON = (
+    "<link rel=apple-touch-icon href=/icon-180.png id=touch-icon><script>"
+    "if (matchMedia('(prefers-color-scheme: light)').matches) document.getElementById('touch-icon').href = '/icon-180-light.png';"
+    "</script>"
+)
 
 SERVICE_WORKER = """
 self.addEventListener('install', () => self.skipWaiting());
@@ -108,27 +116,109 @@ def panel() -> str:
 
 
 @cache
-def icon(size: int) -> bytes:
-    """golem's icon as a PNG: three steps on a line, on the header's navy."""
+def icon(size: int, light: bool = False) -> bytes:
+    """golem's icon as a PNG: the mark on ember, full bleed (iOS rounds the corners itself, and
+    the mark sits well inside the middle 80% Android's masks keep). 60% of the height, a touch high."""
+    stops, ink = (brand.EMBER_LIGHT, brand.EMBER_LIGHT_INK) if light else (brand.EMBER, brand.EMBER_INK)
+    ink = _rgb(ink)
+    # At 135deg a pixel's color depends only on x + y: one strip of colors, a window of it per row.
+    strip = b"".join(bytes(_at(stops, (d + 1) / (2 * size))) for d in range(2 * size))
+    scale = 0.6 * size / 312
+    cover = _coverage(_edges(brand.MARK, scale, (size - 276 * scale) / 2 - 118 * scale,
+                             (size - 312 * scale) / 2 - size * 0.015 - 128 * scale), size)  # fmt: skip
     rows = []
-    mid, line = size / 2, size * 0.022
-    centers = [size * x for x in (0.2, 0.5, 0.8)]
-    radius = size * 0.085
     for y in range(size):
-        row = bytearray([0])
-        for x in range(size):
-            color = BACKGROUND
-            if centers[0] <= x <= centers[-1] and abs(y - mid) <= line:
-                color = (241, 245, 249)
-            for cx, dot in zip(centers, DOTS):
-                d = (x - cx) ** 2 + (y - mid) ** 2
-                if d <= (radius + size * 0.025) ** 2:
-                    color = BACKGROUND if d > radius**2 else dot  # a gap around each dot
-            row += bytes(color)
-        rows.append(bytes(row))
+        row = bytearray(strip[3 * y : 3 * (y + size)])
+        for x, c in cover.get(y, {}).items():
+            row[3 * x : 3 * x + 3] = bytes(round(b + (i - b) * c) for b, i in zip(row[3 * x : 3 * x + 3], ink))
+        rows.append(b"\0" + bytes(row))
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
     header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b"")
+
+
+def _rgb(color: str) -> tuple[int, int, int]:
+    return tuple(int(color[i : i + 2], 16) for i in (1, 3, 5))
+
+
+def _at(stops: tuple[tuple[float, str], ...], t: float) -> tuple[int, ...]:
+    """The gradient's color at `t` (0 to 1)."""
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        if t <= b:
+            f = (t - a) / (b - a) if b > a else 0
+            return tuple(round(x + (y - x) * f) for x, y in zip(_rgb(ca), _rgb(cb)))
+    return _rgb(stops[-1][1])
+
+
+def _edges(d: str, scale: float, dx: float, dy: float) -> list[tuple[float, float, float, float]]:
+    """A path of M, L, A and Z (absolute, circular arcs) as straight edges in pixels, arcs cut
+    into short chords."""
+    edges, points, start = [], [], (0.0, 0.0)
+    tokens = re.findall(r"[MLAZ]|-?[\d.]+", d)
+    at = lambda: float(tokens.pop(0))  # noqa: E731
+    while tokens:
+        cmd = tokens.pop(0)
+        if cmd == "M":
+            points = [(at(), at())]
+            start = points[0]
+        elif cmd == "L":
+            points.append((at(), at()))
+        elif cmd == "A":
+            r, _, _, large, sweep, x, y = (at() for _ in range(7))
+            points += _arc(points[-1], (x, y), r, bool(large), bool(sweep))
+        elif cmd == "Z":
+            points.append(start)
+            px = [(dx + x * scale, dy + y * scale) for x, y in points]
+            edges += [(*p, *q) for p, q in zip(px, px[1:]) if p[1] != q[1]]
+    return edges
+
+
+def _arc(p0, p1, r, large, sweep):
+    """Points along a circular arc from p0 to p1 (SVG's endpoint form), ending at p1."""
+    hx, hy = (p0[0] - p1[0]) / 2, (p0[1] - p1[1]) / 2
+    half = hx * hx + hy * hy
+    r = max(r, math.sqrt(half))
+    k = math.sqrt(max(0.0, (r * r - half) / half)) * (-1 if large == sweep else 1)
+    cx, cy = k * hy + (p0[0] + p1[0]) / 2, -k * hx + (p0[1] + p1[1]) / 2
+    a0 = math.atan2(p0[1] - cy, p0[0] - cx)
+    turn = math.atan2(p1[1] - cy, p1[0] - cx) - a0
+    if sweep and turn < 0:
+        turn += 2 * math.pi
+    elif not sweep and turn > 0:
+        turn -= 2 * math.pi
+    n = max(2, math.ceil(abs(turn) / (math.pi / 24)))
+    return [(cx + r * math.cos(a0 + turn * i / n), cy + r * math.sin(a0 + turn * i / n)) for i in range(1, n)] + [p1]
+
+
+def _coverage(edges, size: int, rows: int = 8) -> dict[int, dict[int, float]]:
+    """How much of each pixel the shape covers (even-odd), 0 to 1, by row then column: exact
+    across, `rows` samples down each pixel."""
+    found: dict[int, dict[int, float]] = {}
+    for y in range(size):
+        live = [e for e in edges if min(e[1], e[3]) < y + 1 and max(e[1], e[3]) > y]
+        if not live:
+            continue
+        part, step = [0.0] * (size + 1), [0.0] * (size + 1)
+        for k in range(rows):
+            sy = y + (k + 0.5) / rows
+            xs = sorted(x0 + (sy - y0) * (x1 - x0) / (y1 - y0) for x0, y0, x1, y1 in live if min(y0, y1) <= sy < max(y0, y1))
+            for a, b in zip(xs[::2], xs[1::2]):
+                a, b = max(a, 0.0), min(b, float(size))
+                ia, ib = int(a), int(b)
+                if ia == ib:
+                    part[ia] += (b - a) / rows
+                    continue
+                part[ia] += (ia + 1 - a) / rows
+                part[min(ib, size)] += (b - ib) / rows
+                step[ia + 1] += 1 / rows
+                step[ib] -= 1 / rows
+        run, row = 0.0, {}
+        for x in range(size):
+            run += step[x]
+            if (c := min(1.0, run + part[x])) > 0.002:
+                row[x] = c
+        found[y] = row
+    return found

@@ -57,9 +57,31 @@ LOCKUP = (
     f"<path transform='translate(1131.54 0)' d='{WORD}'/></svg>"
 )
 
-# The tab's icon: the small cut in a square, dark on a light browser and light on a dark one.
+# Ember: granite warming into brick, lit from the top-left, so always at 135deg (top-left to
+# bottom-right). The app icon's background, and the gradient that recurs in the app. The light
+# version is for phones in light mode. Each: (where, color) stops, and the mark's color on it.
+EMBER = ((0, "#4a4541"), (0.35, "#302b28"), (0.62, "#4a2b23"), (1, "#8a3a2a"))
+EMBER_INK = "#ece8e1"
+EMBER_LIGHT = ((0, "#f8f5f1"), (0.48, "#e9dfd6"), (1, "#d2876a"))
+EMBER_LIGHT_INK = "#2a2826"
+
+
+def gradient(stops: tuple[tuple[float, str], ...]) -> str:
+    """The stops as a CSS gradient, at ember's angle."""
+    return "linear-gradient(135deg, " + ", ".join(f"{color} {at:.0%}" for at, color in stops) + ")"
+
+
+def _tile(height: float) -> str:
+    """The transform that puts the mark in a 512 square, `height` of it tall, centered, a touch high."""
+    s = height * 512 / 312
+    return f"matrix({s:.4f} 0 0 {s:.4f} {(512 - 276 * s) / 2 - 118 * s:.2f} {(512 - 312 * s) / 2 - 8 - 128 * s:.2f})"
+
+
+# The tab's icon: the app icon in small, a rounded ember tile with the small cut, bigger in it
+# than on the home screen so it reads at 16px.
 FAVICON = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='100 128 312 312'><style>path{fill:#1c2023}"
-    "@media (prefers-color-scheme: dark){path{fill:#e5e8e8}}</style>"
-    f"<path fill-rule='evenodd' d='{SMALL}'/></svg>"
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><linearGradient id='e' x2='1' y2='1'>"
+    + "".join(f"<stop offset='{at}' stop-color='{color}'/>" for at, color in EMBER)
+    + f"</linearGradient><rect width='512' height='512' rx='112' fill='url(#e)'/>"
+    f"<path fill='{EMBER_INK}' fill-rule='evenodd' transform='{_tile(0.72)}' d='{SMALL}'/></svg>"
 )

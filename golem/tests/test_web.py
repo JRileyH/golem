@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import zlib
 from dataclasses import replace
 from html import escape
 from urllib.parse import unquote
@@ -728,7 +729,14 @@ def test_installable_with_its_own_icon_and_service_worker(app):
     assert manifest.json()["display"] == "standalone" and manifest.json()["start_url"] == "/"
     icon = app.get("/icon-180.png")
     assert icon.content.startswith(b"\x89PNG") and icon.content[16:24] == (180).to_bytes(4, "big") * 2
-    assert app.get("/icon-64.png").status_code == 404
+    assert app.get("/icon-64.png").status_code == 404 and app.get("/icon-64-light.png").status_code == 404
+    # The mark on ember: granite at the top-left, brick at the bottom-right, the forehead in the
+    # mark's color and an eye see-through. The light one for light-mode phones, chosen as the page loads.
+    for path, top_left, bottom_right, ink in (("/icon-180.png", "4a4541", "8a3a2a", "ece8e1"), ("/icon-180-light.png", "f8f5f1", "d2876a", "2a2826")):
+        rows = _pixels(app.get(path).content)
+        assert _near(rows[0][0], top_left) and _near(rows[179][179], bottom_right)
+        assert _near(rows[41][90], ink) and not _near(rows[67][72], ink)
+    assert "/icon-180-light.png" in app.get("/").text
     sw = app.get("/sw.js")
     assert sw.headers["content-type"].startswith("text/javascript") and "showNotification" in sw.text
     assert "apple-touch-icon" in app.get("/").text and "serviceWorker.register" not in app.get("/").text  # signed out
@@ -736,12 +744,27 @@ def test_installable_with_its_own_icon_and_service_worker(app):
     assert "serviceWorker.register" in app.get("/").text and "Turn on for this device" in app.get("/settings").text
 
 
+def _pixels(png: bytes) -> list[list[bytes]]:
+    """An RGB PNG's pixels by row, as pwa.icon writes them (no filters)."""
+    size, data, i = int.from_bytes(png[16:20], "big"), b"", 8
+    while i < len(png):
+        n = int.from_bytes(png[i : i + 4], "big")
+        data += png[i + 8 : i + 8 + n] if png[i + 4 : i + 8] == b"IDAT" else b""
+        i += 12 + n
+    raw, stride = zlib.decompress(data), 1 + 3 * size
+    return [[raw[r * stride + 1 + 3 * x : r * stride + 4 + 3 * x] for x in range(size)] for r in range(size)]
+
+
+def _near(pixel: bytes, color: str, within: int = 6) -> bool:
+    return all(abs(p - c) <= within for p, c in zip(pixel, bytes.fromhex(color)))
+
+
 def test_wears_its_mark(app):
     html = app.get("/").text
     assert "<title>Golem</title>" in html and html.count("aria-label=Golem>") == 2  # the header's lockup and the sidebar's
     assert "<title>Settings · Golem</title>" in app.get("/settings").text
     icon = app.get("/favicon.svg")
-    assert icon.headers["content-type"].startswith("image/svg+xml") and "prefers-color-scheme: dark" in icon.text
+    assert icon.headers["content-type"].startswith("image/svg+xml") and "<linearGradient" in icon.text  # the app icon, small
     assert app.get("/manifest.webmanifest").json()["name"] == "Golem"
 
 

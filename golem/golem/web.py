@@ -439,7 +439,8 @@ def create_app(
         size = request.path_params["size"]
         if size not in pwa.ICON_SIZES:
             return Response("No such icon.", 404)
-        return Response(pwa.icon(size), media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
+        png = pwa.icon(size, light=request.url.path.endswith("-light.png"))
+        return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
     async def favicon(request: Request) -> Response:
         return Response(brand.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
@@ -585,6 +586,7 @@ def create_app(
             Route("/", index),
             Route("/manifest.webmanifest", manifest),
             Route("/icon-{size:int}.png", icon),
+            Route("/icon-{size:int}-light.png", icon),
             Route("/fonts/{name}", font),
             Route("/favicon.svg", favicon),
             Route("/sw.js", service_worker),
