@@ -751,6 +751,26 @@ def test_about_describes_a_repo_golem_did_not_make(checkout, monkeypatch):
     assert asyncio.run(local.repo_exists("mimic")) and asyncio.run(local.about("nothing")) is None
 
 
+def test_leftover_prs_on_golems_job_branches_are_closed(checkout, monkeypatch):
+    from golem import workspace
+
+    calls = []
+
+    async def fake_run(*args, cwd=None):
+        calls.append(args)
+        if args[:3] == ("gh", "pr", "list"):
+            return 0, json.dumps([
+                {"number": 3, "headRefName": "golem/job-3"}, {"number": 5, "headRefName": "riggy/tinkering"},
+                {"number": 9, "headRefName": "golem/job-12"},
+            ])  # fmt: skip
+        return 0, ""
+
+    monkeypatch.setattr(workspace, "run", fake_run)
+    assert asyncio.run(checkout.close_leftover_prs("mimic")) == [3, 9]  # golem's own branches only
+    closes = [c for c in calls if c[:3] == ("gh", "pr", "close")]
+    assert [c[3] for c in closes] == ["3", "9"] and all(c[-1] == workspace.LEFTOVER for c in closes)
+
+
 def test_deployer_client_deploys_and_says_what_to_fix():
     def handler(request):
         sha = json.loads(request.content)["sha"]

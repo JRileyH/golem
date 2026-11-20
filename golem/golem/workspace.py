@@ -25,6 +25,11 @@ ITEM = (
     "{number, title, body, state, state_reason, created_at, closed_at, html_url,"
     " pr: (.pull_request != null), merged_at: .pull_request.merged_at}"
 )
+JOB_BRANCHES = "golem/job-"  # each job's branch is golem/job-<its number> (scheduler.branch)
+LEFTOVER = (
+    "Closed by golem, which has adopted this repo again: this PR was left open by an earlier job of "
+    "golem's, and new jobs reuse branch names like its. Its commits stay here."
+)
 
 
 class WorkspaceError(Exception):
@@ -67,6 +72,7 @@ class Workspace(Protocol):
     async def repo_exists(self, slug: str) -> bool: ...
     async def about(self, slug: str) -> About | None: ...
     async def issues_and_prs(self, slug: str) -> list[dict]: ...
+    async def close_leftover_prs(self, slug: str) -> list[int]: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
     async def start_branch(self, slug: str, branch: str) -> None: ...
@@ -133,6 +139,23 @@ class GitHubWorkspace:
         if code != 0:
             raise WorkspaceError(f"reading {slug}'s issues: {out[-300:]}")
         return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    async def close_leftover_prs(self, slug: str) -> list[int]:
+        """Close the open PRs on golem's job branches, left by jobs from before golem adopted the
+        repo (again): a new job with the same number would take one for its own. Returns their numbers."""
+        repo = f"{self.org}/{slug}"
+        code, out = await run("gh", "pr", "list", "--repo", repo, "--state", "open", "--json", "number,headRefName", "--limit", "200")
+        if code != 0:
+            raise WorkspaceError(f"listing PRs on {slug}: {out[-300:]}")
+        closed = []
+        for pr in json.loads(out or "[]"):
+            if not pr["headRefName"].startswith(JOB_BRANCHES):
+                continue
+            code, said = await run("gh", "pr", "close", str(pr["number"]), "--repo", repo, "--comment", LEFTOVER)
+            if code != 0:
+                raise WorkspaceError(f"closing PR #{pr['number']} on {slug}: {said[-300:]}")
+            closed.append(pr["number"])
+        return closed
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         repo = f"{self.org}/{slug}"
@@ -381,6 +404,7 @@ class LocalWorkspace:
         self.repos: set[str] = set()
         self.existing: dict[str, About] = {}  # repos golem didn't make, as GitHub would describe them
         self.items: dict[str, list[dict] | Exception] = {}  # their issues and PRs (ITEM), or why they can't be read
+        self.leftover: dict[str, list[int]] = {}  # open PRs on golem's job branches, from before
         self.issues: list[tuple[str, str]] = []
         self.comments: list[tuple[str, int, str, bool]] = []  # (slug, issue, body, closed it)
         self.closed: list[tuple[str, int, str]] = []  # (slug, issue, body): closed as done
@@ -413,6 +437,11 @@ class LocalWorkspace:
         if isinstance(found, Exception):
             raise found
         return found
+
+    async def close_leftover_prs(self, slug: str) -> list[int]:
+        closed = self.leftover.pop(slug, [])
+        self.actions += [f"close leftover PR #{n}" for n in closed]
+        return closed
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         self.repos.add(slug)

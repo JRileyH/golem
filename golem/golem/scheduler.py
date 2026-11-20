@@ -45,7 +45,7 @@ from .upgrade import Upgrades
 from .prompts import Prompts
 from .store import ACTIVE, LOOKS, Job, Project, Proposal, Step, Store, later, now
 from .watch import Steps, Tail, span
-from .workspace import Workspace, WorkspaceError
+from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
 
@@ -571,6 +571,13 @@ class Scheduler:
         await self.workspace.sync_main(slug)
         if job.kind == "adopt" and job.issue is None:  # before its own issue, which would look like one of them
             await self.bring_back_history(job, project)
+            if closed := await self.workspace.close_leftover_prs(slug):  # or a new job could take one for its own
+                await self.say(
+                    project,
+                    f"Closed {len(closed)} PR(s) an earlier golem left open on it ({', '.join(f'#{n}' for n in closed)}): "
+                    "new jobs reuse its branch names. Their work stays on GitHub.",
+                    notice=True,
+                )
         if job.issue is None:
             title = project.name if job.kind in ("new", "adopt") else _first_line(job.request)
             body = f"Requested:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
@@ -811,7 +818,7 @@ class Scheduler:
 
     def branch(self, job: Job) -> str:
         """Where a job's work goes between merges."""
-        return f"golem/job-{job.id}"
+        return f"{JOB_BRANCHES}{job.id}"
 
     def commit_url(self, project: Project, sha: str) -> str:
         return f"{self.settings.repo_url(project.slug)}/commit/{sha}"

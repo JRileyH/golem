@@ -235,6 +235,7 @@ def test_adopting_a_repo_golem_worked_on_brings_back_its_jobs(tmp_path):
         golem_shaped(golem.workspace.path("mimic"))
         golem.workspace.has_work = False
         golem.workspace.items["mimic"] = BUGZ  # an earlier golem's five jobs on it
+        golem.workspace.leftover["mimic"] = [3, 9]  # and two PRs it left open on its job branches
         await adopt(golem, then=[PASSED])
         await golem.finish()
         adoption, *past = golem.store.jobs(limit=50)  # the latest first, by when each began
@@ -244,6 +245,12 @@ def test_adopting_a_repo_golem_worked_on_brings_back_its_jobs(tmp_path):
         assert [s.kind for s in golem.store.steps(past[-1].id)] == ["setup", "pr", "merge"]
         assert "Brought back its history: 5 earlier job(s), from golem's issues and PRs on it." in golem.chat.texts("mimic")
         assert golem.workspace.issues == [("mimic", "Mimic")]  # its own issue opened after: not taken for one of them
+        # A new job could take a leftover PR on golem/job-3 for its own: they're closed first.
+        assert [a for a in golem.workspace.actions if a.startswith("close")] == ["close leftover PR #3", "close leftover PR #9"]
+        assert (
+            "Closed 2 PR(s) an earlier golem left open on it (#3, #9): new jobs reuse its branch names. Their work stays on GitHub."
+            in golem.chat.texts("mimic")
+        )
 
         # A question about it sees the adoption first, then what came before.
         question = golem.store.add_job("mimic", "change", "what's it for?", "question")
