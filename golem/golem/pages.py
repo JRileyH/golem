@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import options, plan, progress, pwa
+from . import brand, options, plan, progress, pwa
 from .control import SKIPPED
 from .insights import Eta, Report, Tally, estimate
 from .live import Line, view
@@ -123,10 +123,11 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <meta name=viewport content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name=theme-color content="#283035" media="(prefers-color-scheme: light)">
 <meta name=theme-color content="#0d1012" media="(prefers-color-scheme: dark)">
-{FONT_PRELOADS}<title>{escape(title if title == "golem" else f"{title} · golem")}</title><style>{STYLE}</style>
+{FONT_PRELOADS}<title>{escape("Golem" if title == "golem" else f"{title} · Golem")}</title><style>{STYLE}</style>
+<link rel=icon href=/favicon.svg type="image/svg+xml">
 <link rel=manifest href=/manifest.webmanifest><link rel=apple-touch-icon href=/icon-180.png>
-<meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=golem>
-<div class=bar><header class=top>{left}<h1>{escape(title)}</h1></header>{subnav}</div>
+<meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
+<div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1></header>{subnav}</div>
 {banner}{flash_html}<main id=lanes>{body}</main><div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
@@ -156,7 +157,7 @@ def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, 
             f"<span class=name>{escape(p.name)}</span>{state}</a>{gear}</li>"
         )
     return (
-        f"<nav class=side aria-label=golem><a class=brand href='/'>golem</a>{top}"
+        f"<nav class=side aria-label=golem><a class=brand href='/'>{brand.LOCKUP}</a>{top}"
         f"<h2>Conversations</h2><ul class=side-projects>{''.join(rows)}</ul></nav>"
     )
 
@@ -917,6 +918,7 @@ h1, h2, h3 { margin:0; }
   padding:max(.55rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) calc(.55rem + 3px) max(1rem, env(safe-area-inset-left));
   background:var(--nav); color:var(--nav-ink); box-shadow:inset 0 -3px 0 var(--accent); }
 .top h1 { grid-column:2; font:700 1.2rem/1.25 var(--display); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60vw; }
+.top h1 .lockup { display:block; height:1.4rem; width:auto; margin:.05rem 0 -.05rem; }
 .top .up { grid-column:1; color:var(--nav-muted); font-size:.95rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .top .up:hover { color:var(--nav-ink); }
 .subnav { display:flex; justify-content:center; gap:.25rem; overflow-x:auto; background:var(--card); box-shadow:0 2px 0 var(--edge);
@@ -932,7 +934,8 @@ h1, h2, h3 { margin:0; }
   .flash { left:calc(50% + 8rem); }
   .side { display:flex; flex-direction:column; position:fixed; z-index:6; inset:0 auto 0 0; width:16rem; overflow-y:auto;
     padding:.6rem .6rem 1.5rem; background:var(--nav); color:var(--nav-muted); }
-  .side .brand { color:var(--nav-ink); font:700 1.2rem var(--display); padding:.45rem .7rem .9rem; }
+  .side .brand { color:var(--nav-ink); padding:.6rem .7rem 1rem; }
+  .side .brand .lockup { display:block; height:1.35rem; width:auto; }
   .side .item, .side-projects a { position:relative; display:flex; align-items:center; gap:.6rem; padding:.45rem .7rem; border-radius:var(--radius); color:var(--nav-muted); }
   .side .item svg { width:20px; height:20px; fill:currentColor; flex:none; }
   .side .item:hover, .side-projects a:hover { background:rgb(255 255 255 / .06); color:var(--nav-ink); }
@@ -1051,7 +1054,7 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .threads a.thread { flex:1; min-width:0; display:grid; grid-template-columns:auto 1fr auto; gap:.1rem .7rem; padding:.7rem 1rem; color:var(--ink); }
 .threads .avatar { grid-row:1 / 3; width:2.4rem; height:2.4rem; border-radius:var(--radius); background:var(--pc, var(--nav)); color:var(--mark-ink);
   display:grid; place-items:center; font:700 1.2rem var(--display); align-self:center; box-shadow:inset 0 -3px 0 var(--lip-strong); }
-.threads li.c0 .avatar { color:var(--nav-ink); }
+.threads li.c0 .avatar { color:var(--nav-ink); } .threads .avatar .mark { width:1.55rem; height:1.55rem; }
 .threads b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:700 1.02rem/1.35 var(--display); }
 .threads .when { color:var(--muted); font-size:.78rem; justify-self:end; }
 .threads .last { grid-column:2 / 4; color:var(--muted); font-size:.88rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

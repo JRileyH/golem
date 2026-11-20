@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 
-from . import plan, pwa
+from . import brand, plan, pwa
 from .insights import Report
 from .pages import (ICONS_SVG, LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots,
                     headline, signin_card, when)  # fmt: skip
@@ -127,8 +127,9 @@ def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
             if signed_in and t.settings
             else ""
         )
+        face = brand.mark(small=True) if t.color == 0 else escape(t.name[:1].upper())  # golem's own wears its mark
         rows.append(
-            f"<li class=c{t.color}><a class=thread href='{escape(t.href)}'><span class=avatar>{escape(t.name[:1].upper())}</span>"
+            f"<li class=c{t.color}><a class=thread href='{escape(t.href)}'><span class=avatar>{face}</span>"
             f"<b>{escape(t.name)}</b><span class=when>{ago}</span>"
             f"<span class=last>{t.status}{escape(who + _short(text, 120))}</span></a>{gear}</li>"
         )

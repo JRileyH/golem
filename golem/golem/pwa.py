@@ -17,8 +17,8 @@ BACKGROUND = (15, 23, 42)  # the header's navy
 DOTS = ((42, 120, 214), (27, 175, 122), (237, 161, 0))  # the first three project colors
 
 MANIFEST = {
-    "name": "golem",
-    "short_name": "golem",
+    "name": "Golem",
+    "short_name": "Golem",
     "description": "Your projects, what golem is doing, and what it needs from you.",
     "start_url": "/",
     "scope": "/",

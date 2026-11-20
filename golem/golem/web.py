@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import conversation, gallery, home, insights, options, pages, plan, pwa
+from . import brand, conversation, gallery, home, insights, options, pages, plan, pwa
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -441,6 +441,9 @@ def create_app(
             return Response("No such icon.", 404)
         return Response(pwa.icon(size), media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
+    async def favicon(request: Request) -> Response:
+        return Response(brand.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+
     async def font(request: Request) -> Response:
         name = request.path_params["name"]
         if name not in pages.FONT_FILES:
@@ -568,6 +571,7 @@ def create_app(
             Route("/", projects_page),
             Route("/cards/{name}", card_image),
             Route("/fonts/{name}", font),
+            Route("/favicon.svg", favicon),
             Route("/healthz", healthz),
         ]
     )
@@ -582,6 +586,7 @@ def create_app(
             Route("/manifest.webmanifest", manifest),
             Route("/icon-{size:int}.png", icon),
             Route("/fonts/{name}", font),
+            Route("/favicon.svg", favicon),
             Route("/sw.js", service_worker),
             Route("/push/key", push_key),
             Route("/push/{what}", push_change, methods=["POST"]),

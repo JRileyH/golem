@@ -736,6 +736,15 @@ def test_installable_with_its_own_icon_and_service_worker(app):
     assert "serviceWorker.register" in app.get("/").text and "Turn on for this device" in app.get("/settings").text
 
 
+def test_wears_its_mark(app):
+    html = app.get("/").text
+    assert "<title>Golem</title>" in html and html.count("aria-label=Golem>") == 2  # the header's lockup and the sidebar's
+    assert "<title>Settings · Golem</title>" in app.get("/settings").text
+    icon = app.get("/favicon.svg")
+    assert icon.headers["content-type"].startswith("image/svg+xml") and "prefers-color-scheme: dark" in icon.text
+    assert app.get("/manifest.webmanifest").json()["name"] == "Golem"
+
+
 def test_serves_its_own_fonts_and_nothing_else_from_there(app):
     for name in ("plex-sans.woff2", "zilla-slab-700.woff2"):
         r = app.get(f"/fonts/{name}")
