@@ -881,7 +881,9 @@ FONTS = Path(__file__).parent / "fonts"
 FONT_FILES = ("plex-sans.woff2", "zilla-slab-700.woff2")
 FONT_PRELOADS = "".join(f"<link rel=preload href=/fonts/{name} as=font type=font/woff2 crossorigin>" for name in FONT_FILES)
 
-STYLE = """
+# Masonry: slate and brick. The fonts, the colors (light and dark) and the project colors, shared
+# with the projects page (gallery.py). Every text color passes WCAG AA on the surface it's used on.
+TOKENS = """
 @font-face { font-family:"Zilla Slab"; font-weight:700; font-display:swap; src:url(/fonts/zilla-slab-700.woff2) format("woff2");
   unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 @font-face { font-family:"IBM Plex Sans"; font-weight:100 700; font-display:swap; src:url(/fonts/plex-sans.woff2) format("woff2");
@@ -908,6 +910,9 @@ STYLE = """
 .c1 { --pc:var(--c1); } .c2 { --pc:var(--c2); } .c3 { --pc:var(--c3); } .c4 { --pc:var(--c4); }
 .c5 { --pc:var(--c5); } .c6 { --pc:var(--c6); } .c7 { --pc:var(--c7); } .c8 { --pc:var(--c8); }
 * { box-sizing:border-box; }
+"""
+
+STYLE = TOKENS + """
 body { margin:0; font:15px/1.45 var(--body); background:var(--bg); color:var(--ink); min-height:100vh; display:flex; flex-direction:column;
   -webkit-font-smoothing:antialiased; }
 a { color:var(--accent); text-decoration:none; }
