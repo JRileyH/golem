@@ -441,6 +441,12 @@ def create_app(
             return Response("No such icon.", 404)
         return Response(pwa.icon(size), media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
 
+    async def font(request: Request) -> Response:
+        name = request.path_params["name"]
+        if name not in pages.FONT_FILES:
+            return Response("No such font.", 404)
+        return FileResponse(pages.FONTS / name, media_type="font/woff2", headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
     async def service_worker(request: Request) -> Response:
         return Response(pwa.SERVICE_WORKER, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
@@ -561,6 +567,7 @@ def create_app(
         routes=[
             Route("/", projects_page),
             Route("/cards/{name}", card_image),
+            Route("/fonts/{name}", font),
             Route("/healthz", healthz),
         ]
     )
@@ -574,6 +581,7 @@ def create_app(
             Route("/", index),
             Route("/manifest.webmanifest", manifest),
             Route("/icon-{size:int}.png", icon),
+            Route("/fonts/{name}", font),
             Route("/sw.js", service_worker),
             Route("/push/key", push_key),
             Route("/push/{what}", push_change, methods=["POST"]),

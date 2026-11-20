@@ -736,6 +736,15 @@ def test_installable_with_its_own_icon_and_service_worker(app):
     assert "serviceWorker.register" in app.get("/").text and "Turn on for this device" in app.get("/settings").text
 
 
+def test_serves_its_own_fonts_and_nothing_else_from_there(app):
+    for name in ("plex-sans.woff2", "zilla-slab-700.woff2"):
+        r = app.get(f"/fonts/{name}")
+        assert r.status_code == 200 and r.content.startswith(b"wOF2") and r.headers["content-type"] == "font/woff2"
+        assert "immutable" in r.headers["cache-control"]
+    assert app.get("/fonts/OFL-Zilla-Slab.txt").status_code == 404
+    assert app.get("/fonts/..%2Fweb.py").status_code == 404
+
+
 def test_devices_turn_notifications_on_and_get_what_wants_riggy(golem, app):
     from golem.push import Push
     from pywebpush import WebPushException

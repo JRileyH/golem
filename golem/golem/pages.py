@@ -872,6 +872,12 @@ def _short(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+# The two typefaces, served from /fonts/ (web.py) and kept by browsers for a year, so a changed
+# file needs a new name: IBM Plex Sans (variable, 100-700) to read, Zilla Slab 700 for titles.
+# Latin only; anything else falls back to the system's. Both are OFL, licences alongside.
+FONTS = Path(__file__).parent / "fonts"
+FONT_FILES = ("plex-sans.woff2", "zilla-slab-700.woff2")
+
 STYLE = """
 :root { --bg:#f3f4f7; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --blue:#2563eb; --grey:#9ca3af;
   --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --radius:14px; --nav:#0f172a; color-scheme: light dark;
