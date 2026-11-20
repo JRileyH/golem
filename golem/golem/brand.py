@@ -3,8 +3,9 @@
 The mark is the golem's head: a domed head with sleepy half-moon eyes, and its chin below,
 the mouth the gap between them. It's one path, filled even-odd, so the eyes and mouth are see-through
 and it takes whatever color it's put in (currentColor). It was rebuilt from Riggy's drawing as
-straight edges and true arcs, measured off it. SMALL is the same head with the mouth and eyes
-opened up, for 16-32px, where the regular mouth closes up.
+straight edges and true arcs, measured off it, then opened up so it reads small too: the mouth
+nearly twice the drawing's, the eyes a fifth bigger, their lids tilted 7 degrees, inner ends up
+(sleepy; the other way looks cross). One cut at every size.
 
 The wordmark is "Golem" in Oxanium 700, as outlines (shaped with its kerning, 1% tracking), so
 no font is needed for it. In the lockup the mark stands on the word's baseline, a third of a
@@ -13,22 +14,15 @@ letter to its left, 0.94 of the type size tall.
 
 from __future__ import annotations
 
-BOX = "118 128 276 312"  # both cuts: x, y, width, height
+BOX = "118 128 276 312"  # x, y, width, height
 MARK = (
-    "M160.95 245.57L179.76 174.82A63 63 0 0 1 240.64 128L271.36 128A63 63 0 0 1 332.24 174.82L351.05 245.57A5 5 0 0 1 349.7 250.44"
-    "L312.59 286.45A4 4 0 0 1 308.85 287.47L263.2 276.18A30 30 0 0 0 248.8 276.18L203.15 287.47A4 4 0 0 1 199.41 286.45L162.3 250.44"
-    "A5 5 0 0 1 160.95 245.57ZM228 216A24 24 0 0 1 180 216ZM332 216A24 24 0 0 1 284 216ZM121.73 360.01L138.38 272.25"
-    "A16 16 0 0 1 165.24 263.75L194.18 291.84A11.5 11.5 0 0 0 204.95 294.75L250.6 283.46A22.5 22.5 0 0 1 261.4 283.46L307.05 294.75"
-    "A11.5 11.5 0 0 0 317.82 291.84L346.76 263.75A16 16 0 0 1 373.62 272.25L390.27 360.01A16 16 0 0 1 384.79 375.28L307.58 439.65"
-    "A1.5 1.5 0 0 1 306.62 440L205.38 440A1.5 1.5 0 0 1 204.42 439.65L127.21 375.28A16 16 0 0 1 121.73 360.01Z"
-)
-SMALL = (
-    "M160.95 245.57L179.76 174.82A63 63 0 0 1 240.64 128L271.36 128A63 63 0 0 1 332.24 174.82L351.05 245.57A5 5 0 0 1 349.7 250.44"
-    "L312.59 286.45A4 4 0 0 1 308.85 287.47L263.2 276.18A30 30 0 0 0 248.8 276.18L203.15 287.47A4 4 0 0 1 199.41 286.45L162.3 250.44"
-    "A5 5 0 0 1 160.95 245.57ZM234 216A30 30 0 0 1 174 216ZM338 216A30 30 0 0 1 278 216ZM121.73 360.01L136.48 282.25"
-    "A16 16 0 0 1 163.35 273.75L188.26 297.94A20 20 0 0 0 206.99 303L252.64 291.71A14 14 0 0 1 259.36 291.71L305.01 303"
-    "A20 20 0 0 0 323.74 297.94L348.65 273.75A16 16 0 0 1 375.52 282.25L390.27 360.01A16 16 0 0 1 384.79 375.28L307.58 439.65"
-    "A1.5 1.5 0 0 1 306.62 440L205.38 440A1.5 1.5 0 0 1 204.42 439.65L127.21 375.28A16 16 0 0 1 121.73 360.01Z"
+    "M160.95 245.57L179.76 174.82A63 63 0 0 1 240.64 128L271.36 128A63 63 0 0 1 332.24 174.82L351.05 245.57"
+    "A5 5 0 0 1 349.7 250.44L312.59 286.45A4 4 0 0 1 308.85 287.47L263.2 276.18A30 30 0 0 0 248.8 276.18L203.15 287.47"
+    "A4 4 0 0 1 199.41 286.45L162.3 250.44A5 5 0 0 1 160.95 245.57ZM234.78 212.47A29 29 0 0 1 177.22 219.53ZM334.78 219.53"
+    "A29 29 0 0 1 277.22 212.47ZM121.73 360.01L136.93 279.9A16 16 0 0 1 163.79 271.4L189.66 296.5A18 18 0 0 0 206.51 301.06"
+    "L252.16 289.77A16 16 0 0 1 259.84 289.77L305.49 301.06A18 18 0 0 0 322.34 296.5L348.21 271.4A16 16 0 0 1 375.07 279.9"
+    "L390.27 360.01A16 16 0 0 1 384.79 375.28L307.58 439.65A1.5 1.5 0 0 1 306.62 440L205.38 440A1.5 1.5 0 0 1 204.42 439.65"
+    "L127.21 375.28A16 16 0 0 1 121.73 360.01Z"
 )
 # "Golem" in font units (1000 to the em), the baseline at y=0
 WORD = (
@@ -41,12 +35,9 @@ WORD = (
 )
 
 
-def mark(small: bool = False, cls: str = "mark") -> str:
+def mark(cls: str = "mark") -> str:
     """The mark alone, inline: decorative, so screen readers skip it."""
-    return (
-        f"<svg class={cls} viewBox='{BOX}' fill=currentColor aria-hidden=true>"
-        f"<path fill-rule=evenodd d='{SMALL if small else MARK}'/></svg>"
-    )
+    return f"<svg class={cls} viewBox='{BOX}' fill=currentColor aria-hidden=true><path fill-rule=evenodd d='{MARK}'/></svg>"
 
 
 # The mark (312 units tall) scaled to 0.94 em of the word's 1000 and stood on its baseline; the
@@ -77,11 +68,11 @@ def _tile(height: float) -> str:
     return f"matrix({s:.4f} 0 0 {s:.4f} {(512 - 276 * s) / 2 - 118 * s:.2f} {(512 - 312 * s) / 2 - 8 - 128 * s:.2f})"
 
 
-# The tab's icon: the app icon in small, a rounded ember tile with the small cut, bigger in it
-# than on the home screen so it reads at 16px.
+# The tab's icon: the app icon in small, a rounded ember tile with the mark filling most of it
+# (86% of its height, against the home screen's 60%), so at 16px the eyes still get pixels.
 FAVICON = (
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><linearGradient id='e' x2='1' y2='1'>"
     + "".join(f"<stop offset='{at}' stop-color='{color}'/>" for at, color in EMBER)
     + f"</linearGradient><rect width='512' height='512' rx='112' fill='url(#e)'/>"
-    f"<path fill='{EMBER_INK}' fill-rule='evenodd' transform='{_tile(0.72)}' d='{SMALL}'/></svg>"
+    f"<path fill='{EMBER_INK}' fill-rule='evenodd' transform='{_tile(0.86)}' d='{MARK}'/></svg>"
 )

@@ -128,7 +128,7 @@ def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
             if signed_in and t.settings
             else ""
         )
-        face = brand.mark(small=True) if t.color == 0 else escape(t.name[:1].upper())  # golem's own wears its mark
+        face = brand.mark() if t.color == 0 else escape(t.name[:1].upper())  # golem's own wears its mark
         rows.append(
             f"<li class=c{t.color}><a class=thread href='{escape(t.href)}'><span class=avatar>{face}</span>"
             f"<b>{escape(t.name)}</b><span class=when>{ago}</span>"

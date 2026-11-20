@@ -49,7 +49,7 @@ def page(entries: list[Entry], now: datetime, org: str, tags: list[Tag] = ()) ->
 <header class=hero><p class=eyebrow>{escape(org)}</p><h1>Projects</h1>
 <p class=lede>Games, apps and experiments, built and shipped by AI agents. Pick one and try it.</p>{filters}</header>
 <main class=grid>{cards}</main>
-<footer>{len(entries)} live · made with {brand.mark(small=True)} Golem</footer>
+<footer>{len(entries)} live · made with {brand.mark()} Golem</footer>
 <script>{SCRIPT}</script></html>"""
 
 
