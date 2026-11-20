@@ -40,9 +40,10 @@ RUN npm install -g playwright@1 \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # WeasyPrint (HTML to PDF, for projects that print): Chromium already brought Pango, HarfBuzz,
-# fontconfig and Liberation fonts; WeasyPrint also loads pangoft2 (178 kB).
+# fontconfig and Liberation fonts; WeasyPrint also loads pangoft2 (178 kB) and subsets embedded
+# fonts with harfbuzz-subset (its fontTools fallback is deprecated).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpangoft2-1.0-0 \
+    && apt-get install -y --no-install-recommends libpangoft2-1.0-0 libharfbuzz-subset0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code refuses to skip permission prompts as root, and workers need that.
