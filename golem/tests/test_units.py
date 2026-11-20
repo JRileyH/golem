@@ -89,6 +89,13 @@ def test_playbooks_that_only_look_load_in_every_mode(name, agent, last):
         assert [(s.kind, s.name) for s in book.for_mode(mode)] == [("refresh", "refresh"), ("agent", agent), (last, last)]
 
 
+def test_the_adopt_playbook_checks_first_and_ships_in_every_mode():
+    book = playbooks.load(REPO / "playbooks" / "adopt.md")
+    for mode in ("reckless", "standard", "rigorous"):
+        assert [s.name for s in book.for_mode(mode)] == ["vet", "setup", "adopt", "push", "pr", "checks", "merge", "deploy", "alert"]
+    assert "What golem's checks found" in book.intro and "skills/new-repo.md" in book.instructions("adopt")
+
+
 def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
     from golem.proposals import MAX_PER_RUN, collect, past
     from golem.store import Proposal
@@ -128,6 +135,9 @@ def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
         ("[setup, {agent: a, turns: 5}, ship-it, deploy, alert]", "## a\nx", "unknown step 'ship-it'"),
         ("[setup, {agent: a, turns: 5, modes: [yolo]}, deploy, alert]", "## a\nx", "not yolo"),
         ("[setup, {agent: a, turns: 5}, {do: merge, optional: true}, deploy, alert]", "## a\nx", "merge can't be optional"),
+        ("[setup, vet, {agent: a, turns: 5}, deploy, alert]", "## a\nx", "vet can only be the first step"),
+        ("[vet, refresh, {agent: a, turns: 5}, answer]", "## a\nx", "or start with vet, setup and end with deploy, alert"),
+        ("[vet, {agent: a, turns: 5}, deploy, alert]", "## a\nx", "must start with setup"),
     ],
 )
 def test_bad_playbooks_are_refused(tmp_path, steps, sections, error):

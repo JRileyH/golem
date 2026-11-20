@@ -70,13 +70,14 @@ class Control:
         return job.state in ACTIVE and step.kind == "agent" and step.state == "pending" and step.started_at is None
 
     def kinds(self) -> list[str]:
-        """The kinds of agent step, by name, in the order the playbooks use them; fix last."""
+        """The kinds of agent run, by name, in the order the playbooks use them; then those
+        golem starts itself: fix, and the survey an adoption's check runs (adopt.py)."""
         names: list[str] = []
-        for book in ("standard", "rigorous", "reckless", "feature", "options", "question", "proposals"):
+        for book in ("standard", "rigorous", "reckless", "feature", "options", "question", "proposals", "adopt"):
             for spec in plan.load(self.scheduler.settings, book).steps:
                 if spec.kind == "agent" and spec.name not in names:
                     names.append(spec.name)
-        return [*names, "fix"]
+        return [*names, "fix", "survey"]
 
     def skippable(self, job: Job, step_id: int) -> bool:
         """Whether an upcoming step can be skipped: optional, and not under way."""

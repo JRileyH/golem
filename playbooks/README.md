@@ -4,8 +4,8 @@ The steps of a job, read by the scheduler and written into its database when the
 job starts. Front matter lists the steps; each `## <name>` section is an agent
 step's instructions. Every other step is golem's own code: `setup`, `push`,
 `pr`, `checks`, `merge`, `push-main`, `deploy`, `checkin`, `choose`, `alert`,
-`refresh`, `answer`, `proposals`. A playbook either ships something, starting
-with `setup` and ending with `deploy, alert`, or only looks, starting with
+`refresh`, `answer`, `proposals`, `vet`. A playbook either ships something, starting
+with `setup` (or `vet, setup`) and ending with `deploy, alert`, or only looks, starting with
 `refresh` and ending with `answer` or `proposals` (the loader refuses anything
 else). The model and effort
 are chosen in the web app: for a kind of step (all `docs` steps, say), a project,
@@ -30,6 +30,15 @@ or one step. Baked read-only into the golem image.
   proposes for Riggy's thumbs up (a change job) or down, with an issue for each
   on the repo as a record. Its prompt is
   `prompts/proposals.md`, with every earlier proposal and what he said.
+
+- `adopt.md`: taking on a repo in the org that golem didn't make (`!adopt`,
+  `golem/golem/adopt.py`). Golem's `vet` checks it over first: its own checks of
+  the repo's shape, CI, and the deployer's rules (`/validate`), plus a survey (a
+  worker run that changes nothing, `prompts/survey.md`) that builds and tests it in
+  golem's container and says what it needs that golem can't give. Something
+  blocking and golem leaves it alone and says why; otherwise `setup` opens its
+  issue, golem writes `docs/brief.md` if it's missing, the `adopt` step fixes the
+  rest of the gaps (skipped when there are none), and golem deploys it.
 
 `optional: true` lets Riggy skip a step from the status page. Use it for reviews,
 docs, the check-in and the pick, never for the work itself; golem's push-to-deploy steps

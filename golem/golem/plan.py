@@ -27,6 +27,7 @@ LABELS = {
     "refresh": "catch up",
     "answer": "your answer",
     "proposals": "proposals for you",
+    "vet": "check it over",
 }
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
 ASKS = ("checkin", "choose")
@@ -80,6 +81,8 @@ SUGGESTED = {
     "docs": ("sonnet", "medium"),
     "examine": ("sonnet", "high"),  # a question: a quick look and an answer
     "propose": ("opus", "high"),  # finding what's worth doing, unprompted, takes judgment
+    "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
+    "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
 }
 SUGGESTED_KEY = "suggested_defaults_1"  # a new key fills in the whole set again, where unset
 
