@@ -39,6 +39,12 @@ RUN npm install -g playwright@1 \
     && ln -s /usr/local/lib/node_modules /node_modules \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
+# WeasyPrint (HTML to PDF, for projects that print): Chromium already brought Pango, HarfBuzz,
+# fontconfig and Liberation fonts; WeasyPrint also loads pangoft2 (178 kB).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpangoft2-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Claude Code refuses to skip permission prompts as root, and workers need that.
 RUN useradd --create-home --uid 1000 golem \
     && install -d -o golem -g golem /var/lib/golem /workspace /home/golem/.claude /home/golem/.cache
