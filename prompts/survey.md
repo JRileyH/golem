@@ -10,6 +10,10 @@ out, change nothing, and report.
 - Repo: $repo. Your working directory is its checkout, on `$branch`.
 - Once adopted, it will live at $url.
 
+What Riggy said when he asked golem to adopt it:
+
+$said
+
 # 1. Can a worker build and test it here?
 
 This container is where workers will build and test it: $platform, with Python
@@ -52,8 +56,10 @@ who use it, that golem can't give:
 
 How it's deployed today isn't a need: its own proxy, published ports, compose
 files for running it by hand, a domain setting. A worker changes those when
-golem takes it on. For each real need, say where you saw it and what would
-remove it.
+golem takes it on. Nor is anything Riggy has said he gives it himself, in what
+he said above or in the repo's docs (`docs/decisions.md`, `AGENTS.md`): "Riggy
+makes the API key on the box" is his choice, made already. For each real need,
+say where you saw it and what would remove it.
 
 # Change nothing
 

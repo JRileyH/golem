@@ -156,7 +156,10 @@ def test_gaps_go_to_a_worker_and_ship_like_any_change(golem):
         assert [label for label, state in states(golem, job.id) if state == "done"] == STEPS
         assert golem.deployer.validated == []  # no deploy/compose.yml to ask about
 
-        work = golem.harness.calls[-1]
+        survey, work = golem.harness.calls[1], golem.harness.calls[-1]
+        # What he said goes to the survey: something he's said he gives it himself isn't a need.
+        assert "What Riggy said when he asked golem to adopt it:\n\n> cards for my table\n" in survey.prompt
+        assert '"Riggy makes the API key on the box" is his choice' in " ".join(survey.prompt.split())
         assert "# Your step: adopt" in work.prompt and "Job: adopting a repo golem didn't make" in work.prompt
         found = work.prompt.split("## What golem's checks found\n\n", 1)[1]
         assert found.startswith("- build workflow: There's no GitHub Actions workflow")
@@ -219,6 +222,23 @@ def test_something_blocking_found_in_the_check_and_golem_forgets_it(tmp_path):
         await adopt(golem, then=[PASSED])
         await golem.finish()
         assert golem.store.project("mimic") and golem.store.jobs()[0].state == "done"
+
+    run(go())
+
+
+def test_with_the_fake_harness_golems_own_checks_still_run(tmp_path):
+    """HARNESS=fake has no worker to survey with, and says so; the rest of the check is real."""
+    golem = Golem(tmp_path, platform="linux/arm64", harness="fake")
+
+    async def go():
+        golem_shaped(golem.workspace.path("mimic"))
+        golem.workspace.existing["mimic"] = ABOUT
+        await golem.say(golem.inbox, "!adopt mimic")
+        assert golem.store.project("mimic").name == "Mimic"  # from the README, no model asked
+        await golem.step()
+        checked = golem.chat.texts("mimic")[-1]
+        assert "✓ build workflow: build.yml\n" in checked and "✓ tests in golem's container: not run (HARNESS=fake)\n" in checked
+        assert golem.harness.calls == []
 
     run(go())
 

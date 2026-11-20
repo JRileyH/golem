@@ -122,9 +122,9 @@ class Prompts:
             skills=s.process_dir / "skills",
         )
 
-    def survey(self, project: Project, branch: str) -> str:
+    def survey(self, project: Project, branch: str, said: str) -> str:
         """The survey an adoption's check runs (adopt.py): build and test it here, and say what it
-        needs that golem can't give."""
+        needs that golem can't give. `said`: Riggy's words after `!adopt <slug>`."""
         s = self.settings
         return self.render(
             "survey",
@@ -135,6 +135,7 @@ class Prompts:
             repo=s.repo_url(project.slug),
             branch=branch,
             platform=s.platform,
+            said=format_feedback([said]) if said.strip() else "(nothing more)",
         )
 
     def resume(self, feedback: list[str]) -> str:

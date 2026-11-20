@@ -52,7 +52,7 @@ WRAPUP_TURNS = 15
 FIX_TURNS = 150
 SURVEY_TURNS = 100  # install, run the tests, read for what it needs
 # With HARNESS=fake there's no worker to survey a repo golem adopts: its own checks still run.
-FAKE_SURVEY = {"tests": {"result": "none", "command": "", "detail": ""}, "missing": [], "needs": []}
+FAKE_SURVEY = {"tests": {"result": "passed", "command": "", "detail": "not run (HARNESS=fake)"}, "missing": [], "needs": []}
 MAX_ATTEMPTS = 3  # failed attempts at one step before asking Riggy for help
 MAX_FIXES = 4  # fix steps in one job before asking Riggy for a hint
 LIMIT_RETRY = timedelta(minutes=30)
@@ -549,7 +549,7 @@ class Scheduler:
             return FAKE_SURVEY
         branch = await self.workspace.current_branch(project.slug)
         was_clean = await self.workspace.clean(project.slug)
-        prompt = self.prompts.survey(project, branch)
+        prompt = self.prompts.survey(project, branch, _adopt_words(job))
         result = await self.execute(job, project, step, "survey", SURVEY_TURNS, prompt, None, adopt.SURVEY_SCHEMA, kind="survey")
         if was_clean:
             await self.workspace.discard(project.slug)
@@ -591,9 +591,8 @@ class Scheduler:
         path = self.workspace.path(project.slug) / adopt.BRIEF
         if path.exists():
             return
-        words = job.request.split(maxsplit=2)[2:]  # "!adopt mimic <his words>"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(adopt.brief(project.name, project.summary, words[0] if words else "", self.settings.repo_url(project.slug), now()[:10]))
+        path.write_text(adopt.brief(project.name, project.summary, _adopt_words(job), self.settings.repo_url(project.slug), now()[:10]))
         await self.workspace.commit_all(project.slug, "Brief: what golem was asked to adopt")
 
     async def do_refresh(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -846,6 +845,12 @@ def _since_last(steps: list[Step], step: Step, kind: str) -> list[Step]:
         elif s.kind == "agent" and s.state == "done":
             work.append(s)
     return work
+
+
+def _adopt_words(job: Job) -> str:
+    """What Riggy said after `!adopt <slug>`, from an adopt job's request."""
+    words = job.request.split(maxsplit=2)[2:]
+    return words[0] if words else ""
 
 
 def _first_line(text: str, limit: int = 80) -> str:
