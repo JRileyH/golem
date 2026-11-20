@@ -39,6 +39,7 @@ from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
+from .history import records
 from .talk import INBOX, STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
@@ -563,11 +564,13 @@ class Scheduler:
 
     async def do_setup(self, job: Job, project: Project, step: Step) -> Outcome:
         """The repo, with a first commit on main if it's new, the checkout up to date, and an issue.
-        An adopted repo with no docs/brief.md gets one from golem, on the job's branch."""
+        An adopted repo gets its past golem jobs back, and docs/brief.md from golem if it has none."""
         slug, url = project.slug, self.settings.project_url(project.slug)
         await self.workspace.ensure_repo(slug, project.summary)
         await self.workspace.ensure_main(slug, f"# {project.name}\n\nLive at {url}\n\n{project.summary}\n")
         await self.workspace.sync_main(slug)
+        if job.kind == "adopt" and job.issue is None:  # before its own issue, which would look like one of them
+            await self.bring_back_history(job, project)
         if job.issue is None:
             title = project.name if job.kind in ("new", "adopt") else _first_line(job.request)
             body = f"Requested:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
@@ -583,6 +586,24 @@ class Scheduler:
         if job.issue:
             links["issue"] = f"{self.settings.repo_url(slug)}/issues/{job.issue}"
         return Outcome("done", "Repo, checkout and issue ready.", links)
+
+    async def bring_back_history(self, job: Job, project: Project) -> None:
+        """An adopted repo's past golem jobs, from its issues and PRs (history.py), as finished jobs
+        under new numbers, once per adoption. Only a record: if GitHub can't be read, adopting it
+        goes on without."""
+        key = f"history_{job.id}"
+        if self.store.get(key):  # an earlier try at this step got this far
+            return
+        try:
+            found = records(self.settings, project.slug, await self.workspace.issues_and_prs(project.slug))
+        except WorkspaceError as e:
+            log.warning("history of %s: %s", project.slug, e)
+            found = []
+            await self.say(project, f"I couldn't read its earlier jobs from GitHub ({e}), so its history here starts now.", notice=True)
+        if found:
+            self.store.import_jobs(found)
+            await self.say(project, f"Brought back its history: {len(found)} earlier job(s), from golem's issues and PRs on it.", notice=True)
+        self.store.put(key, "1")
 
     async def write_brief(self, job: Job, project: Project) -> None:
         """docs/brief.md for an adopted repo without one, committed on the job's branch so it ships

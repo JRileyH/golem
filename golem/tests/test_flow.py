@@ -190,7 +190,7 @@ def test_reckless_goes_straight_to_main(tmp_path):
         assert golem.labels(job.id) == ["set up", "build", "push to main", "deploy", "done"]
         assert [a for a in golem.workspace.actions if not a.startswith("CI on")] == ["push main"]
         assert golem.chat.texts(room)[-1] == f"Done: Flip cards to learn twenty trees.\n{URL}"
-        # No PR closed its issue, so golem does: GitHub's record says it finished (recover.py reads it).
+        # No PR closed its issue, so golem does: GitHub's record says it finished (history.py reads it, if it's adopted again).
         assert golem.workspace.closed == [(room, job.issue, f"Done: Flip cards to learn twenty trees.\n\n{URL}")]
 
     run(go())

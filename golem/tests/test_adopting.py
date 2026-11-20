@@ -135,7 +135,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
             "✓ repo shape\n✓ docs/brief.md\n✓ deploy/compose.yml\n✓ tests in golem's container: uv run pytest: 559 passed\n\n"
             "Next I deploy main as it is.\n\nMode standard, each step's default model and effort (!mode, !model or !effort here to change them)."
         )
-        # Its issue says golem worked on it, so it comes back after a move (recover.py); with no PR, alert closes it.
+        # Its issue says golem worked on it: adopting it again brings it back as history (history.py). With no PR, alert closes it.
         assert golem.workspace.issues == [("mimic", "Mimic")]
         assert [(slug, n) for slug, n, _ in golem.workspace.closed] == [("mimic", 1)]
         assert golem.chat.texts("mimic")[-1].startswith("Done: ")
@@ -222,6 +222,72 @@ def test_something_blocking_found_in_the_check_and_golem_forgets_it(tmp_path):
         await adopt(golem, then=[PASSED])
         await golem.finish()
         assert golem.store.project("mimic") and golem.store.jobs()[0].state == "done"
+
+    run(go())
+
+
+def test_adopting_a_repo_golem_worked_on_brings_back_its_jobs(tmp_path):
+    from test_history import BUGZ
+
+    golem = arm(tmp_path)
+
+    async def go():
+        golem_shaped(golem.workspace.path("mimic"))
+        golem.workspace.has_work = False
+        golem.workspace.items["mimic"] = BUGZ  # an earlier golem's five jobs on it
+        await adopt(golem, then=[PASSED])
+        await golem.finish()
+        adoption, *past = golem.store.jobs(limit=50)  # the latest first, by when each began
+        assert adoption.kind == "adopt" and adoption.state == "done"
+        assert [j.issue for j in past] == [None, 14, 4, 11, 1] and past[-1].kind == "new"
+        assert all(j.id > adoption.id for j in past)  # numbered afresh: the numbers in their issues were the old golem's
+        assert [s.kind for s in golem.store.steps(past[-1].id)] == ["setup", "pr", "merge"]
+        assert "Brought back its history: 5 earlier job(s), from golem's issues and PRs on it." in golem.chat.texts("mimic")
+        assert golem.workspace.issues == [("mimic", "Mimic")]  # its own issue opened after: not taken for one of them
+
+        # A question about it sees the adoption first, then what came before.
+        question = golem.store.add_job("mimic", "change", "what's it for?", "question")
+        jobs, _ = golem.scheduler.history(golem.store.project("mimic"), question)
+        assert jobs[0].startswith(f"- #{adoption.id}, adopt, done") and "Looks great! Get started" in "\n".join(jobs)
+
+        # Once per adoption, even if setup ran again.
+        await golem.scheduler.bring_back_history(adoption, golem.store.project("mimic"))
+        assert len(golem.store.jobs(limit=50)) == 7  # the five, the adoption and the question
+
+    run(go())
+
+
+def test_a_repo_golem_never_worked_on_brings_back_nothing(tmp_path):
+    from test_history import issue, pr
+
+    golem = arm(tmp_path)
+
+    async def go():
+        golem_shaped(golem.workspace.path("mimic"))
+        golem.workspace.items["mimic"] = [pr(1, "Closes #2"), {**issue(2, 1, "x"), "body": "A bug report from someone"}]
+        await adopt(golem, then=[PASSED])
+        await golem.finish()
+        assert [j.kind for j in golem.store.jobs(limit=50)] == ["adopt"]
+        assert not any(t.startswith("Brought back") for t in golem.chat.texts("mimic"))
+
+    run(go())
+
+
+def test_history_that_cant_be_read_doesnt_stop_the_adoption(tmp_path):
+    from golem.workspace import WorkspaceError
+
+    golem = arm(tmp_path)
+
+    async def go():
+        golem_shaped(golem.workspace.path("mimic"))
+        golem.workspace.items["mimic"] = WorkspaceError("reading mimic's issues: HTTP 502")
+        await adopt(golem, then=[PASSED])
+        await golem.finish()
+        assert golem.store.jobs(limit=50)[0].state == "done"
+        assert (
+            "I couldn't read its earlier jobs from GitHub (reading mimic's issues: HTTP 502), so its history here starts now."
+            in golem.chat.texts("mimic")
+        )
 
     run(go())
 

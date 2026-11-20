@@ -1,10 +1,10 @@
-"""Golem's past jobs on a repo, read back from its issues and PRs (recover.py)."""
+"""A repo's past golem jobs, read back from its issues and PRs (history.py)."""
 
 from __future__ import annotations
 
 import pytest
 
-from golem import recover
+from golem import history
 
 
 def issue(number, job, request, state="closed", reason="completed", head="Requested in Matrix:"):
@@ -39,24 +39,28 @@ BUGZ = [
 ]  # fmt: skip
 
 
-def records(golem, items, title=""):
-    return recover.records(golem.settings, recover.Repo("bugz", "bugz, a game", "2026-10-01T00:00:00+00:00", title, items))
+def records(golem, items):
+    return history.records(golem.settings, "bugz", items)
 
 
-def test_jobs_come_back_from_their_issues_and_prs(golem):
-    project, found = records(golem, BUGZ, "bugz: the game")
-    assert (project.name, project.summary, project.mode) == ("bugz: the game", "bugz, a game", "standard")
-    jobs = {job.id: (job, steps) for job, steps in found}
-    assert sorted(jobs) == [1, 2, 7, 9, 21]
-    first, change = jobs[1][0], jobs[2][0]
-    assert (first.kind, first.playbook, first.state, first.issue) == ("new", "standard", "done", 1)
+def by_issue(found) -> dict:
+    return {job.issue: (job, steps) for job, steps in found}
+
+
+def test_jobs_come_back_from_their_issues_and_prs_oldest_first(golem):
+    found = records(golem, BUGZ)
+    assert [job.issue for job, _ in found] == [1, 11, 4, 14, None]  # by when each began
+    assert {job.id for job, _ in found} == {0}  # numbered when they're stored
+    jobs = by_issue(found)
+    first, change = jobs[1][0], jobs[4][0]
+    assert (first.kind, first.playbook, first.state, first.created_at) == ("new", "standard", "done", "2026-10-21T01:00:00+00:00")
     assert first.request == "A modern web based video game called bugz.\nWith five players."
     assert (change.kind, change.playbook, change.request) == ("change", "feature", "Looks great! Get started on the multiplayer now")
-    assert jobs[7][0].state == "failed"  # its issue is still open
-    assert jobs[9][0].state == "killed"
-    assert (jobs[21][0].state, jobs[21][0].issue, jobs[21][0].request) == ("done", None, "A change")
+    assert jobs[11][0].state == "failed"  # its issue is still open
+    assert jobs[14][0].state == "killed"
+    assert (jobs[None][0].state, jobs[None][0].request) == ("done", "A change")  # its issue never opened: its PR says it all
 
-    steps = jobs[2][1]
+    steps = jobs[4][1]
     assert [(s.kind, s.name, s.state) for s in steps] == [
         ("setup", "setup", "done"),
         ("pr", "pr", "done"),  # the stale PR golem's worker opened by hand: no steps listed
@@ -66,7 +70,6 @@ def test_jobs_come_back_from_their_issues_and_prs(golem):
     assert steps[2].summary == "The menu is now simpler.\nAnd trips have codes."
     assert steps[4].links == {"pr": "https://github.com/unlaunched/x/pull/12"}
     assert [s.kind for s in jobs[1][1]] == ["setup", "pr", "merge"]
-    assert records(golem, [issue(1, 12, "Typhoon Day")])[0].name == "Typhoon Day"  # no README heading: its first issue
 
 
 def test_an_adopted_repos_first_job_is_its_adoption(golem):
@@ -75,14 +78,22 @@ def test_an_adopted_repos_first_job_is_its_adoption(golem):
         pr(2, "Closes #1\n\n- **adopt:** It deploys through golem now.\n\nOpened by golem (job 4); it merges this once CI passes."),
         issue(3, 6, "Add a dark theme", head="Requested:"),
     ]
-    jobs = {job.id: (job, steps) for job, steps in records(golem, mimic)[1]}
-    assert (jobs[4][0].kind, jobs[4][0].playbook, jobs[4][0].request) == ("adopt", "adopt", "!adopt mimic cards for my D&D table")
-    assert [s.name for s in jobs[4][1]] == ["setup", "adopt", "pr", "merge"]
-    assert (jobs[6][0].kind, jobs[6][0].playbook) == ("change", "feature")
+    jobs = by_issue(records(golem, mimic))
+    assert (jobs[1][0].kind, jobs[1][0].playbook, jobs[1][0].request) == ("adopt", "adopt", "!adopt mimic cards for my D&D table")
+    assert [s.name for s in jobs[1][1]] == ["setup", "adopt", "pr", "merge"]
+    assert (jobs[3][0].kind, jobs[3][0].playbook) == ("change", "feature")
+
+
+def test_a_job_is_its_issue_whatever_number_an_earlier_golem_gave_it(golem):
+    """Two golems (or one, before and after a !delete) can both have had a job 7 on a repo."""
+    twice = [issue(1, 7, "First go"), issue(2, 7, "Second go"), pr(3, "Closes #2\n\nOpened by golem (job 7).")]
+    jobs = by_issue(records(golem, twice))
+    assert [j.request for j, _ in jobs.values()] == ["First go", "Second go"]
+    assert [s.kind for s in jobs[1][1]] == ["setup"] and [s.kind for s in jobs[2][1]] == ["setup", "pr", "merge"]
 
 
 def test_a_repo_golem_never_worked_on_has_no_jobs(golem):
-    assert records(golem, [pr(1, "Closes #2"), {**issue(2, 1, "x"), "body": "A bug report"}])[1] == []
+    assert records(golem, [pr(1, "Closes #2"), {**issue(2, 1, "x"), "body": "A bug report"}]) == []
 
 
 @pytest.mark.parametrize(
@@ -94,4 +105,4 @@ def test_a_repo_golem_never_worked_on_has_no_jobs(golem):
     ],
 )
 def test_request_from_issue(body, words):
-    assert recover._request(body) == words
+    assert history._request(body) == words

@@ -20,6 +20,11 @@ log = logging.getLogger(__name__)
 PASSING = frozenset({"success", "neutral", "skipped"})
 # Never committed on a worker's behalf, even when a project has no .gitignore yet.
 NEVER_COMMIT = (":(exclude,glob)**/node_modules/**", ":(exclude,glob)**/.venv/**", ":(exclude,glob)**/__pycache__/**")
+# An issue or PR as golem reads it back (history.py), from GitHub's issues API.
+ITEM = (
+    "{number, title, body, state, state_reason, created_at, closed_at, html_url,"
+    " pr: (.pull_request != null), merged_at: .pull_request.merged_at}"
+)
 
 
 class WorkspaceError(Exception):
@@ -61,6 +66,7 @@ class Workspace(Protocol):
     async def close_issue(self, slug: str, number: int, body: str) -> None: ...
     async def repo_exists(self, slug: str) -> bool: ...
     async def about(self, slug: str) -> About | None: ...
+    async def issues_and_prs(self, slug: str) -> list[dict]: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
     async def start_branch(self, slug: str, branch: str) -> None: ...
@@ -119,6 +125,14 @@ class GitHubWorkspace:
         main, _ = await run("gh", "api", "--silent", f"repos/{repo}/branches/main")
         code, readme = await run("gh", "api", f"repos/{repo}/readme", "-H", "Accept: application/vnd.github.raw")
         return About(info["name"], info.get("description") or "", bool(info.get("isArchived")), main == 0, readme if code == 0 else "")
+
+    async def issues_and_prs(self, slug: str) -> list[dict]:
+        """Every issue and PR on the repo, open or closed, as ITEM: for its past golem jobs."""
+        url = f"repos/{self.org}/{slug}/issues?state=all&per_page=100"
+        code, out = await run("gh", "api", "--paginate", url, "--jq", f".[] | {ITEM}")
+        if code != 0:
+            raise WorkspaceError(f"reading {slug}'s issues: {out[-300:]}")
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         repo = f"{self.org}/{slug}"
@@ -366,6 +380,7 @@ class LocalWorkspace:
         self.root = root
         self.repos: set[str] = set()
         self.existing: dict[str, About] = {}  # repos golem didn't make, as GitHub would describe them
+        self.items: dict[str, list[dict] | Exception] = {}  # their issues and PRs (ITEM), or why they can't be read
         self.issues: list[tuple[str, str]] = []
         self.comments: list[tuple[str, int, str, bool]] = []  # (slug, issue, body, closed it)
         self.closed: list[tuple[str, int, str]] = []  # (slug, issue, body): closed as done
@@ -392,6 +407,12 @@ class LocalWorkspace:
             return None
         readme = self.path(slug) / "README.md"
         return About(slug, "", False, True, readme.read_text(errors="replace") if readme.is_file() else "")
+
+    async def issues_and_prs(self, slug: str) -> list[dict]:
+        found = self.items.get(slug, [])
+        if isinstance(found, Exception):
+            raise found
+        return found
 
     async def ensure_repo(self, slug: str, description: str) -> Path:
         self.repos.add(slug)
