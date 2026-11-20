@@ -222,7 +222,10 @@ class Upgrader:
     # --- in the helper ----------------------------------------------------------
 
     def compose(self, *args: str, timeout: int = 3600) -> tuple[int, str]:
-        return self.docker("docker", "compose", "--project-directory", str(self.checkout), *args, timeout=timeout)
+        """Compose from inside the checkout: COMPOSE_FILE in its .env (compose.yml:compose.http.yml
+        when EDGE_PORT is set) is resolved against the working directory, not --project-directory."""
+        return self.docker("docker", "compose", "--project-directory", str(self.checkout), *args, cwd=self.checkout,
+                           timeout=timeout)  # fmt: skip
 
     def finish(self, old: str, new: str, sleep: Callable[[float], None] = time.sleep) -> None:
         """Rebuild and restart the stack on `new`; back to `old` if it won't build or come up healthy."""

@@ -37,11 +37,13 @@ class FakeDocker:
 
     def __init__(self):
         self.calls: list[tuple[str, ...]] = []
+        self.dirs: list[Path | None] = []  # each call's working directory
         self.builds = [(0, "built")]  # `compose up` results, in order; then it works
         self.healths: list[str] = ["healthy"]  # golem's and the deployer's health, each look; the last repeats
 
-    def __call__(self, *args: str, timeout: int = 0, **_) -> tuple[int, str]:
+    def __call__(self, *args: str, timeout: int = 0, cwd: Path | None = None, **_) -> tuple[int, str]:
         self.calls.append(args)
+        self.dirs.append(cwd)
         if args[1:3] == ("inspect", "--format"):
             return 0, "sha256:deployer-image\n"
         if args[1] == "ps":
@@ -167,6 +169,8 @@ def test_the_helper_rebuilds_and_waits_for_health(box, monkeypatch):
     assert up.status()["state"] == "done" and up.head() == new and docker.ups() == 1 and len(waits) == 2
     up_call = next(c for c in docker.calls if "up" in c)
     assert up_call[:4] == ("docker", "compose", "--project-directory", str(up.checkout)) and "--build" in up_call
+    # from inside the checkout, where a relative COMPOSE_FILE in its .env resolves (not the image's /app)
+    assert all(d == up.checkout for c, d in zip(docker.calls, docker.dirs) if c[1] == "compose")
 
 
 def test_a_failed_build_leaves_the_old_stack_and_commit(box):
