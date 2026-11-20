@@ -409,6 +409,7 @@ def test_insights_and_defaults(golem, page):
     assert "haiku/medium" in page.get(f"/steps/{docs.id}?part=sheet").text
     html = page.get("/settings").text
     assert "docs</b> <span class=muted>not run yet · suggested sonnet/medium" in html and "reset-defaults" in html
+    assert "GOLEM_MODEL" not in html and "GOLEM_EFFORT" not in html  # every row's unset reads "default: …"
 
     assert "back%20to%20golem" in act(page, action="reset-defaults")
     assert golem.store.defaults()["docs"] == ("sonnet", "medium") and "*" not in golem.store.defaults()

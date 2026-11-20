@@ -623,10 +623,10 @@ def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallb
         t = by_kind.get(kind)
         how = " · ".join(x for x in (_per(t), _per_cost(t)) if x) if t and t.steps else "not run yet"
         if kind == "*":
-            name, how = "Every step", "unless set below"
-            unset = (f"{fallback[0]} (GOLEM_MODEL)", f"{fallback[1]} (GOLEM_EFFORT)")
+            name, how, base = "Every step", "unless set below", fallback
         else:
-            name, unset = kind, (f"default: {every[0] or fallback[0]}", f"default: {every[1] or fallback[1]}")
+            name, base = kind, (every[0] or fallback[0], every[1] or fallback[1])
+        unset = (f"default: {base[0]}", f"default: {base[1]}")
         suggested = plan.SUGGESTED.get(kind)
         if suggested and suggested != (model, effort):
             how += f" · suggested {'/'.join(suggested)}"
