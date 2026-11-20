@@ -116,7 +116,7 @@ class Bot:
         )
         project, tagged = self.tag_project(project, brief)
         url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
-        job = self.store.add_job(slug, "new", text, mode)
+        job = self.store.add_job(slug, "new", text, mode, title=brief.title)
         self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
 
         await self.chat.send(
@@ -164,7 +164,7 @@ class Bot:
             slug, brief.name, brief.summary, mode=brief.mode or self.settings.default_mode, model=brief.model or "", effort=brief.effort or ""
         )  # fmt: skip
         project, tagged = self.tag_project(project, brief)
-        job = self.store.add_job(slug, "adopt", f"!adopt {slug} {words}".strip(), "adopt")
+        job = self.store.add_job(slug, "adopt", f"!adopt {slug} {words}".strip(), "adopt", title=brief.title)
         self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
         url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
         said = f"You said: “{words}”" if words else "From its README and description: you didn't say what it is."
@@ -220,17 +220,17 @@ class Bot:
             await self.chat.send(project.slug, f"Thanks, picking it back up. {self.queue_position(waiting)}", notice=True)
             self.scheduler.wake()
             return
-        kind = await options.kind_of(self.harness, self.settings, text)
-        if kind == "question":
-            said = self.start_question(project, text)
+        asked = await options.read_request(self.harness, self.settings, text)
+        if asked.kind == "question":
+            said = self.start_question(project, text, asked.title)
             if said:
                 await self.chat.send(project.slug, said, notice=True)
             return
         if job is None:
-            if kind == "options":
-                await self.chat.send(project.slug, self.start_options(project, text), notice=True)
+            if asked.kind == "options":
+                await self.chat.send(project.slug, self.start_options(project, text, asked.title), notice=True)
                 return
-            job = self.store.add_job(project.slug, "change", text, "feature")
+            job = self.store.add_job(project.slug, "change", text, "feature", title=asked.title)
             position = self.queue_position(job)
             if position != STARTING:  # otherwise "Working on it" follows straight away
                 await self.chat.send(project.slug, f"Got it. {position}", notice=True)
@@ -242,9 +242,9 @@ class Bot:
         else:
             await self.chat.send(project.slug, "Noted. I'll include that when the job starts.", notice=True)
 
-    def start_question(self, project: Project, question: str) -> str:
+    def start_question(self, project: Project, question: str, title: str = "") -> str:
         """A question: a quick look and an answer, ahead of other work. Says so only if it has to wait."""
-        job = self.store.add_job(project.slug, "change", question, "question", priority=QUESTION_PRIORITY)
+        job = self.store.add_job(project.slug, "change", question, "question", priority=QUESTION_PRIORITY, title=title)
         self.scheduler.wake()
         position = self.queue_position(job)
         if position == STARTING:  # "Looking into it" follows straight away
@@ -254,8 +254,8 @@ class Bot:
             return f"Good question. I'll look into it as soon as the step I'm on for {self.store.project(current.slug).name} finishes."
         return position
 
-    def start_options(self, project: Project, request: str) -> str:
-        job = self.store.add_job(project.slug, "change", request, "options")
+    def start_options(self, project: Project, request: str, title: str = "") -> str:
+        job = self.store.add_job(project.slug, "change", request, "options", title=title)
         self.scheduler.wake()
         position = self.queue_position(job)
         return (
@@ -381,7 +381,7 @@ class Bot:
                 state = "waiting for CI"
             else:
                 state = "retrying soon"
-        return f"#{job.id} {project.name}: {what}, {state}, {plan.where(steps)}{held}"
+        return f"#{job.id} {project.name}: {what} “{plan.title(job)}”, {state}, {plan.where(steps)}{held}"
 
     def status_text(self, project: Project) -> str:
         job = self.store.active_job(project.slug)
@@ -444,7 +444,7 @@ class Bot:
             self.store.add_note(job.id, request)
             follow = "The current job will update the references and redeploy."
         else:
-            self.store.add_job(new, "change", request, "feature")
+            self.store.add_job(new, "change", request, "feature", title=f"Move to {new}")
             self.scheduler.wake()
             follow = "A job is updating the references and will redeploy."
         return (

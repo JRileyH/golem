@@ -12,7 +12,7 @@ from test_adopt import golem_shaped
 from golem.workspace import CI, About
 
 ABOUT = About("mimic", "Tabletop data in, cards out", False, True, "# Mimic\n\nTabletop data in, visual outputs out.\n")
-BRIEF = {"name": "Mimic", "summary": "Printable cards for a D&D table.", "tag": "none", "mode": "unspecified",
+BRIEF = {"name": "Mimic", "summary": "Printable cards for a D&D table.", "title": "Tabletop Card Printer", "tag": "none", "mode": "unspecified",
          "model": "unspecified", "effort": "unspecified"}  # fmt: skip
 PAGE = "https://golem.unlaunched.dev/p/mimic"
 
@@ -85,7 +85,7 @@ def test_an_adopted_repo_becomes_a_project_with_his_words_and_the_usual_grace(go
         assert golem.chat.texts("mimic")[-1].endswith("Adopting it goes the same way in every mode; its changes after that follow standard rules.")
         assert golem.store.job(job.id).playbook == "adopt"  # not swapped for a new project's playbook
         await golem.say(golem.inbox, "!queue")
-        assert golem.chat.texts(golem.inbox)[-1] == "#1 Mimic: adoption, starting shortly, check it over (1/9)"
+        assert golem.chat.texts(golem.inbox)[-1] == "#1 Mimic: adoption “Tabletop Card Printer”, starting shortly, check it over (1/9)"
         await golem.say(golem.inbox, "!adopt mimic")
         assert golem.chat.texts(golem.inbox)[-1] == f"Mimic (mimic) is already one of my projects: {PAGE}"
 

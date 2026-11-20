@@ -12,6 +12,10 @@ the description.
 - summary: one to three sentences on what it is and who it's for, in plain words.
   Leave out how it's built, run or deployed, and instructions about how to work
   on it (mode, model, effort).
+- title: what it is, in 2 to 5 plain words of Title Case ("Tabletop Card
+  Printer"). It names the job of adopting it, so where the name is what it's
+  called, the title says what it is: not the name again. No quotes, no full
+  stop.
 - tag: what sort of project it is, at the broadest level. Tags sort the public
   projects page into a handful of big groups, so there are very few of them.
   - Pick one of the tags below if it fits: `Game` for anything you play.

@@ -29,6 +29,7 @@ LABELS = {
     "proposals": "proposals for you",
     "vet": "check it over",
 }
+TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
 ASKS = ("checkin", "choose")
 # Before steps were tracked, a job was a list of phases and an index into it. Jobs still
@@ -133,6 +134,25 @@ def what(job: Job) -> str:
     if job.kind in ("new", "adopt"):
         return "new project" if job.kind == "new" else "adoption"
     return job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+
+
+def title(job: Job) -> str:
+    """What the job is about in a few words ("Library View Redesign"): the one a model gave it
+    from Riggy's words, or else his request's first line, cut short (an adoption's: what he
+    said after `!adopt <slug>`, or the slug)."""
+    if job.title:
+        return job.title
+    request = job.request.strip()
+    if job.kind == "adopt" and request.startswith("!adopt "):
+        request = (request.split(maxsplit=2)[2:] or [job.slug])[0]
+    line = request.splitlines()[0] if request else ""
+    return line if len(line) <= TITLE_CHARS else line[: TITLE_CHARS - 1].rstrip() + "…"
+
+
+def clean_title(value: object) -> str:
+    """A model's title for a job, tidied: one line, no quotes or full stop, not too long; "" if none."""
+    text = " ".join(str(value or "").split()).strip("\"'“”‘’ ").removesuffix(".").strip()
+    return text if len(text) <= TITLE_CHARS else text[: TITLE_CHARS - 1].rstrip() + "…"
 
 
 def current(steps: list[Step]) -> Step | None:

@@ -21,6 +21,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import plan
 from .cards import DENY
 from .config import Settings
 from .harness import VERDICT_SCHEMA, Harness
@@ -61,8 +62,11 @@ SCHEMA = {
 }
 REQUEST_SCHEMA = {
     "type": "object",
-    "properties": {"kind": {"enum": ["change", "options", "question"]}},
-    "required": ["kind"],
+    "properties": {
+        "kind": {"enum": ["change", "options", "question"]},
+        "title": {"type": "string", "description": "What it's about in 2 to 5 words, Title Case: 'Library View Redesign'"},
+    },
+    "required": ["kind", "title"],
     "additionalProperties": False,
 }
 REPLY_SCHEMA = {
@@ -198,16 +202,24 @@ def asks_a_question(text: str) -> bool:
     return bool(QUESTION_RE.search(text)) and not REQUEST_RE.search(text)
 
 
-async def kind_of(harness: Harness, settings: Settings, text: str) -> str:
+@dataclass
+class Request:
+    """What a message in a project's conversation asks for, and the job's title if it becomes one."""
+
+    kind: str  # change | options | question
+    title: str  # "" without a model: plan.title falls back to his words
+
+
+async def read_request(harness: Harness, settings: Settings, text: str) -> Request:
     """What a message in a project's conversation asks for: a `change`, `options` to pick from first,
-    or only an answer to a `question`."""
+    or only an answer to a `question`. The same call names it, for the job it starts."""
     if settings.harness != "fake":
         v = await _ask(harness, settings, "request", {"$request": text.strip()}, REQUEST_SCHEMA)
         if v and v.get("kind") in ("change", "options", "question"):
-            return v["kind"]
+            return Request(v["kind"], plan.clean_title(v.get("title")))
     if asks_for_options(text):
-        return "options"
-    return "question" if asks_a_question(text) else "change"
+        return Request("options", "")
+    return Request("question" if asks_a_question(text) else "change", "")
 
 
 async def read_reply(harness: Harness, settings: Settings, text: str, found: list[Option]) -> Reply:

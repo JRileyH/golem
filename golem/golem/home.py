@@ -62,7 +62,7 @@ def _needs(lane: LaneData, signed_in: bool) -> str:
     return (
         f"<section class='card c{lane.color}' id='p-{escape(p.slug)}'><header class=card-head>"
         f"<h2><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a></h2>{badge(lane)}</header>"
-        f"<p class=sub>“{escape(_short(lane.job.request, 140))}”</p>"
+        f"<p class=sub>{escape(plan.title(lane.job))}</p>"
         + ask_card(lane, signed_in, back="/", reply=True)
         + "</section>"
     )
@@ -74,7 +74,7 @@ def _glance(lane: LaneData, now: datetime) -> str:
         f"<a class='card glance c{lane.color}' id='p-{escape(p.slug)}' href='/p/{escape(p.slug)}'><header class=card-head>"
         f"<h2><span class=swatch></span>{escape(p.name)}</h2>{badge(lane)}</header>"
         f"<div class=line><span>{headline(lane, now)}</span></div>"
-        f"<div class=line>{dots(lane)}<span>“{escape(_short(lane.job.request, 60))}”</span></div></a>"
+        f"<div class=line>{dots(lane)}<span>{escape(plan.title(lane.job))}</span></div></a>"
     )
 
 
@@ -86,7 +86,7 @@ def _later(lane: LaneData, now: datetime) -> str:
     what = plan.what(job)
     return (
         f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
-        f"<span class=muted>{what}: {escape(_short(job.request, 80))}</span><span class=when>{at}</span></li>"
+        f"<span class=muted>{what}: {escape(plan.title(job))}</span><span class=when>{at}</span></li>"
     )
 
 
@@ -95,7 +95,7 @@ def _recent(lane: LaneData, now: datetime) -> str:
     word = {"done": "live", "killed": "stopped", "failed": "failed"}.get(job.state, job.state)
     return (
         f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
-        f"<span class=muted>{word}: {escape(_short(job.request, 80))}</span>"
+        f"<span class=muted>{word}: {escape(plan.title(job))}</span>"
         f"<span class=when>{span(now - _dt(job.updated_at))} ago</span></li>"
     )
 

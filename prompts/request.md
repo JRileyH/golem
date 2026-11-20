@@ -1,6 +1,6 @@
 Riggy sent a message about one of his web projects. Decide how golem should
-handle it and return it as the structured output. Don't use any other tools or
-ask questions.
+handle it, give it a title, and return both as the structured output. Don't
+use any other tools or ask questions.
 
 - kind: `question` if he wants to know something and nothing built or changed:
   "why does the score reset?", "what model did the MVP use", "is it live yet",
@@ -21,6 +21,13 @@ ask questions.
 If he's both asking and requesting ("why is it slow? speed it up"), it's
 `change`. Otherwise, if it's not clear, `question` is the cheap mistake: a
 question costs a few minutes, a change can take an hour.
+
+- title: what it's about, in 2 to 5 words of Title Case, like the name of a
+  ticket. It's what golem calls the work everywhere, so it names the work
+  itself, never how he put it: "I'd like you to redo the library page so it's
+  a grid" is "Library View Redesign"; "the score is broken when you skip" is
+  "Fix Score on Skip"; "show me three art styles" is "New Art Style"; "why
+  does the score reset?" is "Why the Score Resets". No quotes, no full stop.
 
 His message (speech-to-text, so expect typos and missing punctuation):
 

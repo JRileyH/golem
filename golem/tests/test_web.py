@@ -107,6 +107,21 @@ def test_the_running_step_shows_its_live_tail_without_secrets(golem, page):
     assert SECRET not in html
 
 
+def test_a_job_goes_by_its_title_and_its_page_keeps_the_request(golem, page):
+    golem.store.update_job(page.job.id, state="done")
+    words = "I'd like you to redo the library page\nso it's a grid of covers"
+    job = golem.store.add_job("trees", "change", words, "feature", title="Library View Redesign")
+
+    home = page.get("/").text
+    assert "Library View Redesign" in home and "I&#x27;d like you to" not in home
+    html = page.get(f"/jobs/{job.id}").text
+    assert "Change:</span> <strong>Library View Redesign</strong>" in html
+    assert f"<h2>The request</h2><p class=asked>{escape(words)}</p>" in html  # in full, where it came from
+
+    untitled = golem.store.add_job("trees", "change", "make the cards flip faster please\nand bigger", "feature")
+    assert plan.title(untitled) == "make the cards flip faster please"  # no model: the request's first line
+
+
 def test_signing_in(golem, page):
     r = page.post("/login", data={"password": "nope"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/?msg=Wrong%20password." and COOKIE not in r.cookies

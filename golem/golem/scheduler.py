@@ -215,7 +215,7 @@ class Scheduler:
             project = self.store.project(p.slug)
             if project is None or self.store.active_job(p.slug, questions=False):
                 continue
-            job = self.store.add_job(p.slug, "change", proposals.request(p), "feature")
+            job = self.store.add_job(p.slug, "change", proposals.request(p), "feature", title=plan.clean_title(p.title))
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)
@@ -579,16 +579,16 @@ class Scheduler:
                     notice=True,
                 )
         if job.issue is None:
-            title = project.name if job.kind in ("new", "adopt") else _first_line(job.request)
+            title = project.name if job.kind in ("new", "adopt") else plan.title(job)
             body = f"Requested:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
             issue = await self.workspace.open_issue(slug, title, body)
             job = self.store.update_job(job.id, issue=issue)
         if job.kind == "adopt":
             await self.write_brief(job, project)
         if job.playbook == "options":
-            await self.say(project, f"Making options: {_first_line(job.request)}", notice=True)
+            await self.say(project, f"Making options: {plan.title(job)}", notice=True)
         elif job.kind == "change":
-            await self.say(project, f"Working on it: {_first_line(job.request)}", notice=True)
+            await self.say(project, f"Working on it: {plan.title(job)}", notice=True)
         links = {"repo": self.settings.repo_url(slug)}
         if job.issue:
             links["issue"] = f"{self.settings.repo_url(slug)}/issues/{job.issue}"
@@ -633,7 +633,7 @@ class Scheduler:
         if job.playbook == "proposals":
             await self.say(project, f"Nothing else on, so I'm looking at its {proposals.lens(self.store, job).name} for things to propose.", notice=True)
         else:
-            await self.say(project, f"Looking into it: {_first_line(job.request)}", notice=True)
+            await self.say(project, f"Looking into it: {plan.title(job)}", notice=True)
         return Outcome("done", "Looking at what's live." if busy is None else f"Looking at job {busy.id}'s work so far.")
 
     async def do_answer(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -677,7 +677,7 @@ class Scheduler:
         steps = self.store.steps(job.id)
         work = _since_last(steps, step, "merge")
         names = " + ".join(s.name for s in work) or ("brief" if job.kind == "adopt" else "changes")
-        title = project.name if job.kind in ("new", "adopt") else _first_line(job.request, 60)
+        title = project.name if job.kind in ("new", "adopt") else plan.title(job)
         last = not any(s.kind == "pr" for s in steps if s.position > step.position and s.state == "pending")
         issue = f"{'Closes' if last else 'Part of'} #{job.issue}" if job.issue else ""
         body = "\n\n".join(

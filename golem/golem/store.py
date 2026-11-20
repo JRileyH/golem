@@ -51,7 +51,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     retry_at TEXT,
     issue INTEGER,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT ''   -- what it's about in a few words ("Quiz Mode"); '' for none (plan.title)
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -158,6 +159,7 @@ MIGRATIONS = {
         "proposals_max": "INTEGER NOT NULL DEFAULT 5",
         "proposals_off": "TEXT NOT NULL DEFAULT ''",
     },
+    "jobs": {"title": "TEXT NOT NULL DEFAULT ''"},
     "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
@@ -278,6 +280,7 @@ class Job:
     issue: int | None
     created_at: str
     updated_at: str
+    title: str = ""  # what it's about in a few words ("Quiz Mode"); plan.title has one for every job
 
 
 @dataclass
@@ -534,11 +537,11 @@ class Store:
 
     # --- jobs -----------------------------------------------------------------
 
-    def add_job(self, slug: str, kind: str, request: str, playbook: str, priority: int = 0) -> Job:
+    def add_job(self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "") -> Job:
         cur = self.db.execute(
-            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (slug, kind, request, playbook, priority, now(), now()),
+            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (slug, kind, request, playbook, priority, now(), now(), title),
         )
         return self.job(cur.lastrowid)
 

@@ -1,4 +1,7 @@
-"""Intake: a cheap triage call turns dictation into a brief (name, slug, summary, tag).
+"""Intake: a cheap triage call turns dictation into a brief (name, slug, summary, title, tag).
+
+The title says what it is in a few plain words ("Tree Flashcard Game") where the name is what
+it's called ("Leaf Peeper"): it names the project's first job, rather than his words.
 
 The tag is one of the few big-picture sorts of project there are ("Game"), or none. Only
 rarely a new one: the prompt sets a high bar, and a new tag must look like a sort of
@@ -17,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .harness import Harness
+from .plan import clean_title
 from .store import EFFORTS, MODELS, MODES
 from .workspace import About
 
@@ -38,13 +42,14 @@ def schema(tags: list[str]) -> dict:
             "name": {"type": "string", "description": "Short product name, 1 to 4 words"},
             "slug": {"type": "string", "description": "Subdomain: lowercase letters, digits and hyphens, 2 to 31 chars"},
             "summary": {"type": "string", "description": "One to three sentences: what it is and who it's for"},
+            "title": {"type": "string", "description": "What it is in 2 to 5 plain words, Title Case: 'Tree Flashcard Game'"},
             "tag": {"enum": [*tags, "none", "new"]},
             "new_tag": {"type": "string", "description": "Only when tag is new: its name, one or two words"},
             "mode": {"enum": [*MODES, "unspecified"]},
             "model": {"enum": [*MODELS, "unspecified"]},
             "effort": {"enum": [*EFFORTS, "unspecified"]},
         },
-        "required": ["name", "slug", "summary", "tag", "mode", "model", "effort"],
+        "required": ["name", "slug", "summary", "title", "tag", "mode", "model", "effort"],
         "additionalProperties": False,
     }
 
@@ -60,6 +65,8 @@ class Brief:
     mode: str | None = None
     model: str | None = None
     effort: str | None = None
+    # What it is in a few plain words ("Tree Flashcard Game"), its first job's title; "" without a model.
+    title: str = ""
 
 
 def slugify(text: str) -> str:
@@ -153,6 +160,7 @@ def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str]) -> Brie
         mode=_pick(v.get("mode"), MODES),
         model=_pick(v.get("model"), MODELS),
         effort=_pick(v.get("effort"), EFFORTS),
+        title=clean_title(v.get("title")),
     )
 
 

@@ -15,7 +15,7 @@ from golem import nuke, plan, scheduler
 from golem.harness import WRAPUP_SCHEMA, RunResult
 from golem.workspace import CI
 
-TREES = {"name": "Tree Cards", "slug": "tree-cards", "summary": "A flashcard game for northeastern US trees."}
+TREES = {"name": "Tree Cards", "slug": "tree-cards", "summary": "A flashcard game for northeastern US trees.", "title": "Tree Flashcard Game"}
 URL = "https://tree-cards.unlaunched.dev/"
 CHECKIN = ["set up", "spec", "scaffold", "push", "PR", "CI", "merge", "deploy", "mvp", "push", "PR", "CI", "merge", "deploy"]
 
@@ -386,6 +386,27 @@ def test_a_message_in_an_idle_project_room_is_a_change_request(golem):
         assert golem.chat.texts(room)[-1] == f"Done: Scores now count streaks.\n{URL}"
         assert golem.workspace.issues[-1] == ("tree-cards", "i dont like how the score works, count streaks instead")
         assert golem.workspace.actions[-2:] == ["merge PR #1", "CI on " + golem.workspace.main["tree-cards"][-2:] + ": passed"]
+
+    run(go())
+
+
+def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
+    async def go():
+        room = await idle_project(golem)
+        words = "I'd like you to redo the library page so it's a grid of covers instead of a list"
+        golem.harness.script = by_label({"request": [{"kind": "change", "title": "“Library View Redesign.”"}]})
+        await golem.say(room, words)
+        job = golem.store.active_job("tree-cards")
+        assert (job.title, job.request) == ("Library View Redesign", words)  # tidied; his words kept as they were
+        ask = next(c for c in golem.harness.calls if c.label == "request")
+        assert ask.schema["required"] == ["kind", "title"] and words in ask.prompt
+
+        await golem.step()
+        assert golem.chat.texts(room)[-1] == "Working on it: Library View Redesign"
+        assert golem.workspace.issues[-1] == ("tree-cards", "Library View Redesign")  # its body still quotes his words
+        await golem.finish()
+        assert any(a.startswith("open PR #1: Library View Redesign: ") for a in golem.workspace.actions)
+        assert golem.bot.job_line(golem.store.job(job.id)).startswith(f"#{job.id} Tree Cards: change “Library View Redesign”, done")
 
     run(go())
 
@@ -1050,7 +1071,7 @@ def test_commands(golem):
 
         await golem.say(inbox, "!queue")
         job = golem.store.active_job("tree-cards")
-        assert golem.chat.sent[-1] == (inbox, f"#{job.id} Tree Cards: new project, starting shortly, set up (1/24)", True)
+        assert golem.chat.sent[-1] == (inbox, f"#{job.id} Tree Cards: new project “Tree Flashcard Game”, starting shortly, set up (1/24)", True)
 
         await golem.say(room, "!status")
         assert golem.chat.texts(room)[-1].startswith("Tree Cards (tree-cards)\nMode standard, each step's default model and effort\n#")

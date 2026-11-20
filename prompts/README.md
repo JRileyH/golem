@@ -5,7 +5,8 @@ Templates the golem service fills in (`$name` placeholders, Python
 the golem image.
 
 - `intake.md`: triage of a dictated idea into a brief, with its tag (one of the
-  few that exist, none, or rarely a new big-picture one).
+  few that exist, none, or rarely a new big-picture one) and its first job's
+  title.
 - `adopt.md`: the same brief for a repo golem adopts (`!adopt`), from what Riggy
   said about it, its README and its description; his words win.
 - `step.md`: the wrapper around every agent step of a playbook, except a
@@ -23,7 +24,8 @@ the golem image.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
 - `request.md`: whether a message in a project's conversation is a question to answer,
-  wants options to pick from first, or a change made straight away.
+  wants options to pick from first, or a change made straight away, and a title
+  for the job it starts ("Library View Redesign").
 - `pick.md`: what Riggy's reply to some options says: a pick, or other options.
 - `card.md`: a live project's card on the projects page (tagline, description,
   kind), from its README and brief.

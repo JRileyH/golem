@@ -222,7 +222,7 @@ def status_card(lane: LaneData, signed_in: bool, now: datetime) -> str:
     spent = _spent(lane)
     return (
         f"<section class='card status c{lane.color}' id='p-{escape(p.slug)}'>{head}"
-        f"<p class=request><span class=muted>{what}:</span> “{escape(_short(job.request, 220))}”</p>"
+        f"<p class=request><span class=muted>{what}:</span> <strong>{escape(plan.title(job))}</strong></p>"
         + (working(lane, signed_in, now) if active else "")
         + f"<details class=plan data-key=plan-{job.id}{' open' if active else ''}><summary>{summary}</summary>{checklist(lane, found, now)}</details>"
         + f"<p class=foot>{escape(p.mode)} · {escape(_engine_words(p))}{f' · {spent}' if spent else ''} · <a href='/jobs/{job.id}'>job #{job.id}</a></p>"
@@ -368,6 +368,12 @@ def tail(lines: list[Line], signed_in: bool, key: str, limit: int = 14, title: s
     return f"<details class=tail data-key={key}{' open' if opened else ''}><summary>{escape(title)}</summary><div class=log>{rows}</div></details>"
 
 
+def request_card(job: Job) -> str:
+    """Where the job came from: the words that started it, in full, as they were said. Its title
+    (plan.title) is what the rest of the app calls it."""
+    return f"<section class=card><h2>The request</h2><p class=asked>{escape(job.request.strip())}</p></section>"
+
+
 def job_controls(lane: LaneData) -> str:
     """Changes to the job under way: its place in the queue, and stopping it."""
     p, job = lane.project, lane.job
@@ -376,7 +382,7 @@ def job_controls(lane: LaneData) -> str:
     back = f"/p/{p.slug}/settings"
     first = "" if lane.position == 1 else action_form("move", "Run next", job=job.id, value="first", back=back)
     return (
-        f"<section class=card><h2>This job</h2><p class=sub>#{job.id}: “{escape(_short(job.request, 120))}”</p><div class=row-form>"
+        f"<section class=card><h2>This job</h2><p class=sub>#{job.id}: {escape(plan.title(job))}</p><div class=row-form>"
         + first
         + action_form("move", "Run last", job=job.id, value="last", back=back)
         + action_form("kill", "Stop job", job=job.id, back=back, confirm=f"Stop job {job.id} on {p.name} for good?", danger=True)
@@ -1000,6 +1006,7 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .headline time { font-weight:700; }
 .card.status { border-top:5px solid var(--pc, var(--grey)); }
 .request { margin:.5rem 0 .2rem; font-size:.92em; } .request .muted { font-size:1em; }
+.asked { white-space:pre-wrap; margin:.3rem 0 0; }
 .foot { color:var(--muted); font-size:.8rem; margin:.5rem 0 0; }
 .badge { display:inline-block; padding:.1rem .5rem; border-radius:1px; font-size:.75rem; font-weight:700; line-height:1.45; white-space:nowrap;
   background:var(--s-q); color:var(--s-q-on); }

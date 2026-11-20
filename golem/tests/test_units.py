@@ -12,7 +12,7 @@ import httpx
 import pytest
 from conftest import REPO
 
-from golem import config, deploy_cli, intake, options
+from golem import config, deploy_cli, intake, options, plan
 from golem import playbook as playbooks
 from golem.config import Settings
 from golem.deployer_client import DeployerClient, DeployerError
@@ -209,6 +209,27 @@ def test_an_adopted_repos_brief_without_a_model(tmp_path):
     assert brief.summary == "my card printer"  # his words win
     bare = intake.adopt_fallback("card-shop", "", About("card-shop", "", False, True, "Prints cards.\n"))
     assert (bare.name, bare.summary) == ("Card Shop", "Prints cards.")
+
+
+# --- job titles ----------------------------------------------------------------
+
+
+def test_a_models_title_is_tidied():
+    assert plan.clean_title(" “Library  View\nRedesign.” ") == "Library View Redesign"
+    assert plan.clean_title(None) == plan.clean_title("  ") == ""
+    long = plan.clean_title("Word " * 30)
+    assert len(long) == plan.TITLE_CHARS and long.endswith("…")
+
+
+def test_a_job_without_a_title_goes_by_its_request(tmp_path):
+    store = Store(tmp_path / "db")
+    store.add_project("mimic", "Mimic", "s")
+    titled = store.add_job("mimic", "change", "I'd like you to make it a grid", "feature", title="Grid Layout")
+    adopted = store.add_job("mimic", "adopt", "!adopt mimic cards for my table", "adopt")
+    rambling = store.add_job("mimic", "change", "so basically " * 10 + "\nand more", "feature")
+    assert plan.title(titled) == "Grid Layout"
+    assert plan.title(adopted) == "cards for my table"  # not the command
+    assert len(plan.title(rambling)) == plan.TITLE_CHARS and plan.title(rambling).endswith("…")
 
 
 # --- options ------------------------------------------------------------------
@@ -474,7 +495,7 @@ def test_triage_through_the_claude_harness(tmp_path):
     binary.write_text(
         f"#!{sys.executable}\nimport json, sys\nsys.stdin.read()\n"
         "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'structured_output':"
-        " {'name': 'Leaf Peeper', 'slug': 'leaf-peeper', 'summary': 'Guess the tree.', 'mode': 'rigorous',"
+        " {'name': 'Leaf Peeper', 'slug': 'leaf-peeper', 'summary': 'Guess the tree.', 'title': 'Tree Guessing Game', 'mode': 'rigorous',"
         " 'tag': 'Game', 'model': 'unspecified', 'effort': 'max'}}))\n"
     )
     binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
@@ -484,7 +505,7 @@ def test_triage_through_the_claude_harness(tmp_path):
             cwd=tmp_path / "triage", log_path=tmp_path / "triage.jsonl.gz", env={}, tags=["Game"],
         )
     )  # fmt: skip
-    assert brief == intake.Brief("Leaf Peeper", "leaf-peeper", "Guess the tree.", tag="Game", mode="rigorous", effort="max")
+    assert brief == intake.Brief("Leaf Peeper", "leaf-peeper", "Guess the tree.", tag="Game", mode="rigorous", effort="max", title="Tree Guessing Game")
 
 
 def test_older_databases_get_new_columns(tmp_path):
@@ -503,6 +524,13 @@ def test_older_databases_get_new_columns(tmp_path):
     )
     db.execute("CREATE INDEX messages_by_channel ON messages (channel, id)")
     db.execute("INSERT INTO messages (channel, who, text, at) VALUES ('hey', 'riggy', 'hi', 'now')")
+    db.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, kind TEXT NOT NULL, request TEXT NOT NULL,"
+        " playbook TEXT NOT NULL, phase INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'queued',"
+        " priority INTEGER NOT NULL DEFAULT 0, resume_session TEXT, attempts INTEGER NOT NULL DEFAULT 0, retry_at TEXT,"
+        " issue INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    db.execute("INSERT INTO jobs (slug, kind, request, playbook, created_at, updated_at) VALUES ('hey', 'change', 'add a quiz', 'feature', 'now', 'now')")
     db.commit()
     db.close()
     db = sqlite3.connect(tmp_path / "old.db")
@@ -521,6 +549,8 @@ def test_older_databases_get_new_columns(tmp_path):
     store.add_message("hey", "golem", "hello")
     assert [(m.who, m.text) for m in store.messages("hey")] == [("riggy", "hi"), ("golem", "hello")]
     assert "via" not in {r["name"] for r in store.db.execute("PRAGMA table_info(messages)")}
+    # Jobs from before titles have none: they go by their request's first line.
+    assert (store.job(1).title, plan.title(store.job(1))) == ("", "add a quiz")
 
 
 def test_of_the_tags_cards_had_only_game_stays(tmp_path):

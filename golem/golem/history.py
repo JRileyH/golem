@@ -1,10 +1,11 @@
 """A repo's past golem jobs, read back from GitHub when golem adopts it (adopt.py).
 
 Each job golem ran opened an issue ("Worked on by golem (job 7)") with Riggy's request in it,
-and its PRs list the steps that did the work ("- **change:** what it did"). From those come a
-finished job for each issue: its request, its steps, how it ended and when. They're a record,
-shown with the project's jobs and given as context to questions, proposals and its card, and
-golem numbers them afresh: the number in an issue ("job 7") was an earlier golem's.
+named for the job (a change's title), and its PRs list the steps that did the work ("- **change:**
+what it did"). From those come a finished job for each issue: its request, its title, its steps,
+how it ended and when. They're a record, shown with the project's jobs and given as context to
+questions, proposals and its card, and golem numbers them afresh: the number in an issue ("job 7")
+was an earlier golem's.
 
 A job is its issue, which GitHub numbers once per repo. A PR golem opened for a job whose issue
 never opened is a job of its own, with any other PRs that name the same job. Only golem's issues
@@ -51,6 +52,7 @@ def records(settings: Settings, slug: str, items: list[dict]) -> list[tuple[Job,
             phase=0, state=_state(issue, prs), priority=0, resume_session=None, attempts=0, retry_at=None,
             issue=issue["number"] if issue else None,
             created_at=_time(start["created_at"]), updated_at=_time(end["closed_at"] or end["created_at"]),
+            title=issue["title"] if issue and kind == "change" else "",  # a change's issue is named for it; the first's, the project
         )  # fmt: skip
         steps = []
         if issue:

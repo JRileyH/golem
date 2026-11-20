@@ -219,8 +219,7 @@ def _command(slug: str, command: str, placeholder: str, value: str, label: str, 
 def _job_words(job: Job) -> str:
     what = plan.what(job)
     state = {"done": "done", "killed": "stopped", "failed": "failed"}.get(job.state, job.state)
-    request = job.request if len(job.request) <= 90 else job.request[:89] + "…"
-    return f"{what}, {state}: “{request}”"
+    return f"{what}, {state}: {plan.title(job)}"
 
 
 def _linked(text: str) -> str:

@@ -203,7 +203,11 @@ def create_app(
         now = datetime.now(UTC)
         ctx = context(now)
         data = lane(job, project, ctx["order"].get(job.id), signed, ctx)
-        body = pages.status_card(data, signed, now) + f"<section class=card><h2>Every step</h2>{pages.steps_lists(data, signed, now)}</section>"
+        body = (
+            pages.status_card(data, signed, now)
+            + pages.request_card(job)
+            + f"<section class=card><h2>Every step</h2>{pages.steps_lists(data, signed, now)}</section>"
+        )
         runs = "".join(
             f"<tr><td>{escape(r['phase'])}</td><td>{escape(r['model'])}</td><td>{escape(str(r['outcome'] or 'running'))}</td>"
             f"<td>{r['num_turns'] or ''}</td><td>{_tokens(r)}</td><td>{_cost(r)}</td><td>{r['started_at'][:16].replace('T', ' ')}</td></tr>"
