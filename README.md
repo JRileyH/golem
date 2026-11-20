@@ -110,7 +110,9 @@ phone.
   says what it needs that golem can't give. Anything only you can change and it
   leaves the repo alone and says what; otherwise it fixes the gaps in a PR and
   deploys it, and from then on it's a project like any other ("Adopting a repo"
-  in `docs/runbook.md`).
+  in `docs/runbook.md`). It's also the only way a project comes back, after a
+  `!delete` or on a new box (which starts empty), with its past jobs read from
+  its issues and PRs.
 - **Deleting a project:** `!delete` in its conversation says what will go, then
   `!delete <slug>` takes it all: the site and its data, the checkout, the job
   history and logs, and the conversation. The repo stays on GitHub for you to delete
