@@ -225,6 +225,30 @@ docker compose logs --since 1h golem | grep -E 'WARNING|ERROR'    # failed attem
 
 `!kill` in the project's conversation (or Stop in its Settings) stops the job.
 
+## Adopting a repo golem didn't make
+
+Golem can take on a repo you made yourself: `!adopt <repo> [what it is]` in its
+own conversation, or "Adopt a repo golem didn't make" above it in the web app.
+From then on it's a project like any other, and workers own its code.
+
+- **Where it lives:** in `GITHUB_ORG`, named as its slug (lowercase letters,
+  digits and hyphens), with a `main` branch, not archived. The tokens above
+  reach all of the org's repos; if you limited golem's to selected repos, add
+  this one to it.
+- **What golem checks first** (`golem/golem/adopt.py`): CI on main; a
+  Dockerfile; a workflow that tests, then builds and pushes the image the way
+  `skills/new-repo.md` says; `deploy/compose.yml`, by the deployer's own rules;
+  the repo's shape (AGENTS.md, CLAUDE.md, a README with the live URL first,
+  `docs/`); and a worker run that installs and tests it in golem's container and
+  reads it for anything golem can't give: secrets, files on the host, other
+  ports, more memory than the caps, a step someone does by hand.
+- **What happens:** anything only you can change (those needs, a package golem's
+  image lacks, a GitHub setting) and golem leaves it alone and says what to
+  change. Gaps a worker can fix, it fixes in a PR, then deploys main, as with any
+  change. Its conversation says which, and shows its settings before work starts.
+- **It comes back on a new box** like the rest: its adoption opened an issue that
+  says golem worked on it.
+
 ## Moving to a new box
 
 Nothing needs copying but `.env`: golem rebuilds the rest from the org.
@@ -244,7 +268,7 @@ Nothing needs copying but `.env`: golem rebuilds the rest from the org.
    PRs, becomes a finished job with its old number, and new jobs are numbered
    after them. Then, before any new work starts, it deploys each project's
    `main` again and says in its own conversation which came back up. Repos golem
-   didn't make (`hello`, say) are left alone.
+   didn't make or adopt (`hello`, say) are left alone.
 5. **Check** its own conversation in the web app. A project that didn't come
    back up says why: ask for a fix in its conversation. Turn notifications on
    again on each device (step 6): sign-ups don't come along.

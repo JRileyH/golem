@@ -103,6 +103,14 @@ phone.
   in golem's own put its slug first): `!help`, `!queue`, `!status`, `!question`, `!options`, `!mode`,
   `!model`, `!effort`, `!rename <name>`, `!slug <new-slug>` (moves the repo and
   address; the old repo stays for you to delete), `!pause`, `!resume`, `!kill`.
+- **Adopting a repo golem didn't make:** `!adopt <repo> [what it is]` in golem's
+  own conversation (or the form above it). Golem checks it over first: its CI,
+  build workflow, `deploy/compose.yml` by the deployer's own rules, the shape every
+  project has, and a worker run that builds and tests it in golem's container and
+  says what it needs that golem can't give. Anything only you can change and it
+  leaves the repo alone and says what; otherwise it fixes the gaps in a PR and
+  deploys it, and from then on it's a project like any other ("Adopting a repo"
+  in `docs/runbook.md`).
 - **Deleting a project:** `!delete` in its conversation says what will go, then
   `!delete <slug>` takes it all: the site and its data, the checkout, the job
   history and logs, and the conversation. The repo stays on GitHub for you to delete
