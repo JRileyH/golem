@@ -181,7 +181,8 @@ def version_card(upgrades: Upgrades) -> str:
         return head + f"<p class=sub>Not checked for a new version yet.</p><div class=row-form>{check}</div></section>"
     if not v.get("enabled"):
         return head + f"<p class=sub>{escape(upgrades.blocked(v))}</p></section>"
-    running, behind = str(v.get("running") or v.get("checkout") or "")[:7], v.get("behind", 0)
+    on, behind = str(v.get("running") or v.get("checkout") or ""), v.get("behind", 0)
+    running = on[:7]
     when = f" Checked {escape(str(v.get('checked', ''))[:16].replace('T', ' '))} UTC." if v.get("checked") else ""
     if behind:
         said = f"Running <code>{escape(running)}</code>; GitHub's main has {behind} new commit{'s' if behind != 1 else ''}.{when}"
@@ -195,7 +196,7 @@ def version_card(upgrades: Upgrades) -> str:
     if blocked := upgrades.blocked(v):
         body += f"<p class=hint>{escape(blocked)}</p>"
     last = v.get("upgrade") or {}
-    if last.get("state") in ("failed", "rolled back"):
+    if last.get("state") in ("failed", "rolled back") and last.get("from") == on:  # once golem's moved on (by hand), it's history
         body += f"<p class=hint>Last upgrade, to {escape(str(last.get('to', ''))[:7])}: {escape(last['state'])}. {escape(last.get('detail', ''))}</p>"
     if state == "pending":
         body += "<p class=hint>Upgrading once the running step finishes.</p>"

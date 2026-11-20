@@ -150,3 +150,16 @@ def test_the_settings_tab_shows_whats_new_and_upgrades(golem):
     assert not golem.scheduler.upgrades.auto
     client.cookies.clear()
     assert "class=dot" not in client.get("/settings").text and "Upgrade now" not in client.get("/settings").text
+
+
+def test_the_settings_tab_drops_a_failed_upgrade_once_golem_has_moved_on(golem):
+    client = TestClient(create_app(golem.settings, golem.store, golem.scheduler), base_url="https://golem.unlaunched.dev")
+    sign_in(client)
+    failed = {"state": "failed", "from": OLD, "to": NEW, "started": "x", "detail": "the build failed, so nothing changed: oops"}
+    golem.deployer.versions = [behind(1, upgrade=failed)]
+    act(client, action="check-version")
+    assert f"Last upgrade, to {NEW[:7]}: failed. the build failed" in client.get("/settings").text  # still on OLD
+    golem.deployer.versions = [{**behind(0, latest=NEW), "running": NEW, "checkout": NEW, "upgrade": failed}]
+    act(client, action="check-version")  # upgraded by hand on the box since
+    html = client.get("/settings").text
+    assert f"Running <code>{NEW[:7]}</code>, up to date." in html and "Last upgrade" not in html
