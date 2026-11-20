@@ -1074,6 +1074,7 @@ button { white-space:nowrap; }
 .settings .row-form + .row-form { margin-top:.75rem; } .settings input { font:inherit; font-size:16px; padding:.4rem .6rem; border-radius:10px;
   border:1px solid var(--line); background:var(--card); color:var(--ink); min-width:0; flex:1 1 10rem; }
 .settings .hint { flex-basis:100%; margin:0; }
+.adopt > summary { cursor:pointer; color:var(--muted); font-size:.9rem; font-weight:600; }
 .lenses { list-style:none; padding:0; margin:.4rem 0 0; } .lenses li { padding:.45rem 0; border-top:1px solid var(--line); }
 .lenses li:first-child { border-top:0; } .lenses label { display:flex; gap:.45rem; align-items:center; }
 .lenses input[type=checkbox] { width:20px; height:20px; flex:none; margin:0; padding:0; } .lenses .sub { display:block; margin:.15rem 0 0 1.75rem; }

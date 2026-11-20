@@ -55,7 +55,7 @@ COOKIE = "golem_token"
 TOKEN_SECONDS = 24 * 3600
 KEEP_SECONDS = 90 * 24 * 3600  # on a device Riggy keeps signed in: his phone's home-screen app
 # What the project page's controls can ask the bot to do, as !commands.
-COMMANDS = {"options", "mode", "rename", "slug", "delete"}
+COMMANDS = {"options", "mode", "rename", "slug", "delete", "adopt"}
 MAX_FAILURES = 10  # wrong passwords in FAILURE_WINDOW before sign-in is refused for a while
 FAILURE_WINDOW = 15 * 60
 SHOWN = 40  # a conversation's latest messages on its page; "Show earlier messages" adds as many again
@@ -404,7 +404,7 @@ def create_app(
         shown = _shown(request) + 1
         said, earlier = _latest(request, sorted(store.messages(INBOX, shown) + store.messages(STATUS, shown), key=lambda m: m.id)) if signed else ([], "")
         bottom = conversation.composer(INBOX, "idle") if signed and bot else ""
-        return respond(request, "golem", conversation.inbox_page(said, signed, earlier), signed, bottom, here="inbox", up=("/p", "Projects"))
+        return respond(request, "golem", conversation.inbox_page(said, signed, earlier, settings.org), signed, bottom, here="inbox", up=("/p", "Projects"))
 
     async def say(request: Request) -> Response:
         """Something written in a conversation, handed to the bot."""

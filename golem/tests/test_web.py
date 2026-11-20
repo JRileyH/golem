@@ -615,6 +615,20 @@ def test_the_inbox_takes_new_ideas(golem, app):
     assert "Describe a new idea" in html  # the box to write more
 
 
+def test_the_inbox_adopts_a_repo(golem, app):
+    from test_adopting import ABOUT, BRIEF
+
+    sign_in(app)
+    html = app.get("/inbox").text
+    assert "Adopt a repo golem didn't make" in html and "A repo in github.com/unlaunched." in html
+    assert say(app, "inbox", "mimic", command="adopt") == "/inbox#end"  # golem can't see it: says so, makes nothing
+    assert golem.chat.texts("inbox")[-1].startswith("I didn't adopt mimic.") and golem.store.projects() == []
+    golem.workspace.existing["mimic"] = ABOUT
+    golem.harness.script = [BRIEF]
+    assert say(app, "inbox", "mimic cards for my table", command="adopt") == "/p/mimic#end"  # on to its page
+    assert golem.store.active_job("mimic").request == "!adopt mimic cards for my table"
+
+
 def test_a_project_page_is_its_conversation(golem, app):
     from test_flow import TREES, by_label
 

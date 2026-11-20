@@ -103,14 +103,26 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
     )
 
 
-def inbox_page(said: list[Said], signed_in: bool, earlier: str = "") -> str:
+def inbox_page(said: list[Said], signed_in: bool, earlier: str = "", org: str = "") -> str:
     head = (
         "<p class=sub>New ideas go here. golem names each one, gives it a page and its own conversation, "
         "and starts on it a minute later. Its news, like usage limits and finished jobs, shows here too.</p>"
     )
     if not signed_in:
         return head + "<p class=hint>Sign in (Settings) to see the inbox and write to golem.</p>"
-    return head + thread(said, "Nothing yet. Describe an idea below.", earlier)
+    return head + adopt_form(org) + thread(said, "Nothing yet. Describe an idea below.", earlier)
+
+
+def adopt_form(org: str) -> str:
+    """!adopt as a control: a repo's name, then what it is if he likes (bot.py, adopt.py)."""
+    return (
+        "<details class='card settings adopt'><summary>Adopt a repo golem didn't make</summary>"
+        f"<form method=post action=/say class=row-form>{_hidden(channel=INBOX, command='adopt', back='/inbox#end')}"
+        "<input name=text placeholder='repo-name, then what it is (optional)' required aria-label='The repo, and what it is'>"
+        "<button>Adopt</button>"
+        f"<p class=hint>A repo in github.com/{escape(org)}. golem checks it over first, takes it on if it can, "
+        "and says what's in the way if it can't.</p></form></details>"
+    )
 
 
 def thread(said: list[Said], empty: str, earlier: str = "") -> str:
