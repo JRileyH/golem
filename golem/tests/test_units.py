@@ -18,6 +18,7 @@ from golem.config import Settings
 from golem.deployer_client import DeployerClient, DeployerError
 from golem.harness import ClaudeHarness, interpret
 from golem.store import EFFORTS, MODELS, Step, Store
+from golem.workspace import About
 
 # --- settings -----------------------------------------------------------------
 
@@ -173,6 +174,41 @@ def test_unique_slug():
     assert asyncio.run(intake.unique_slug("oaks", is_taken)) == "oaks"
     assert asyncio.run(intake.unique_slug("trees", is_taken)) == "trees-3"
     assert asyncio.run(intake.unique_slug("golem", is_taken)) == "golem-app-3"
+
+
+MIMIC = About("mimic", "Tabletop data in, cards out", False, True, "# mimic\n\nTabletop data in, visual outputs out. $words stays.\n")
+
+
+def adopt_triage(tmp_path, script, words="cards for my D&D table, use sonnet"):
+    from golem.harness import FakeHarness
+
+    harness = FakeHarness(script)
+    brief = asyncio.run(intake.adopt_triage(
+        harness, REPO / "prompts" / "adopt.md", "mimic", words, MIMIC, tmp_path, tmp_path / "log.gz", {}, ["Game"]
+    ))  # fmt: skip
+    return brief, harness.calls
+
+
+def test_an_adopted_repos_brief_puts_his_words_first(tmp_path):
+    verdict = {"name": "Mimic", "summary": "Printable cards for a D&D table.", "tag": "none", "mode": "unspecified",
+               "model": "sonnet", "effort": "unspecified"}  # fmt: skip
+    brief, [call] = adopt_triage(tmp_path, [verdict])
+    assert brief == intake.Brief("Mimic", "mimic", "Printable cards for a D&D table.", model="sonnet")
+    assert (call.model, call.label) == ("haiku", "adopt")
+    assert "slug" not in call.schema["properties"] and "slug" not in call.schema["required"]
+    assert "cards for my D&D table, use sonnet" in call.prompt and "Tabletop data in, cards out" in call.prompt
+    assert "outputs out. $words stays." in call.prompt  # filled in one pass: the README's own text stays as it is
+
+
+def test_an_adopted_repos_brief_without_a_model(tmp_path):
+    from golem.harness import RunResult
+
+    brief, _ = adopt_triage(tmp_path, [RunResult("error", error="boom")], words="")
+    assert brief == intake.Brief("mimic", "mimic", "Tabletop data in, cards out")  # the README's heading, the description
+    brief, _ = adopt_triage(tmp_path, [RunResult("error", error="boom")], words="my card printer")
+    assert brief.summary == "my card printer"  # his words win
+    bare = intake.adopt_fallback("card-shop", "", About("card-shop", "", False, True, "Prints cards.\n"))
+    assert (bare.name, bare.summary) == ("Card Shop", "Prints cards.")
 
 
 # --- options ------------------------------------------------------------------

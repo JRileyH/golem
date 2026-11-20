@@ -6,6 +6,8 @@ the golem image.
 
 - `intake.md`: triage of a dictated idea into a brief, with its tag (one of the
   few that exist, none, or rarely a new big-picture one).
+- `adopt.md`: the same brief for a repo golem adopts (`!adopt`), from what Riggy
+  said about it, its README and its description; his words win.
 - `step.md`: the wrapper around every agent step of a playbook, except a
   question's.
 - `question.md`: the wrapper around a question's `examine` step: the project,
@@ -23,5 +25,5 @@ the golem image.
 - `card.md`: a live project's card on the projects page (tagline, description,
   kind), from its README and brief.
 
-`request.md`, `pick.md` and `card.md` are filled in by plain replacement, not
-`string.Template`.
+`request.md`, `pick.md` and `card.md` are filled in by plain replacement, and
+`intake.md` and `adopt.md` in one pass of it, not `string.Template`.
