@@ -25,7 +25,8 @@ from .watch import span
 
 RECENT = timedelta(days=7)  # finished jobs shown on Home
 RECENT_SHOWN = 5
-COLORS = ("blue", "orange", "green", "yellow", "pink", "dark green", "purple", "red")  # c1-c8
+# c1-c8, named for the mineral pigments they're the colors of: blue, orange, teal-green, yellow, pink, green, purple, red
+COLORS = ("lapis", "rust", "verdigris", "ochre", "madder", "moss", "amethyst", "cinnabar")
 
 
 def home(active: list[LaneData], idle: list[LaneData], signed_in: bool, now: datetime) -> str:
