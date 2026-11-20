@@ -88,6 +88,7 @@ def _days(days: int) -> str:
 
 STYLE = TOKENS + """
 body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 var(--body); -webkit-font-smoothing:antialiased; }
+body::before { content:""; display:block; height:6px; background:var(--ember); }
 a { color:inherit; text-decoration:none; }
 .hero { max-width:72rem; margin:0 auto; padding:clamp(2.5rem, 8vw, 5rem) max(1.25rem, env(safe-area-inset-left)) 1.5rem; }
 .eyebrow { display:flex; align-items:center; gap:.5rem; margin:0 0 .5rem; font-size:.8rem; font-weight:700; letter-spacing:.14em;
@@ -120,7 +121,7 @@ h2 { margin:0; font:700 1.45rem/1.2 var(--display); }
 .tagline { margin:.2rem 0 0; font-weight:500; }
 .desc { margin:.6rem 0 1.1rem; color:var(--muted); font-size:.95rem; }
 .foot { margin-top:auto; display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
-.cta { display:inline-flex; align-items:center; gap:.45rem; padding:.6rem 1.15rem .7rem; border-radius:var(--radius); background:var(--accent);
+.cta { display:inline-flex; align-items:center; gap:.45rem; padding:.6rem 1.15rem .7rem; border-radius:var(--radius); background:var(--accent) var(--rust);
   color:var(--accent-ink); font-weight:600; font-size:.95rem; box-shadow:inset 0 -3px 0 var(--lip-strong); transition:gap .2s ease; }
 .cta:hover { gap:.7rem; } .cta:active { padding-top:.7rem; padding-bottom:.6rem; box-shadow:inset 0 -1px 0 var(--lip-strong); }
 .cta:focus-visible, h2 a:focus-visible, .filters button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
