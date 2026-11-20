@@ -769,11 +769,11 @@ def test_wears_its_mark(app):
 
 
 def test_serves_its_own_fonts_and_nothing_else_from_there(app):
-    for name in ("plex-sans.woff2", "zilla-slab-700.woff2"):
+    for name in ("plex-sans.woff2", "oxanium.woff2"):
         r = app.get(f"/fonts/{name}")
         assert r.status_code == 200 and r.content.startswith(b"wOF2") and r.headers["content-type"] == "font/woff2"
         assert "immutable" in r.headers["cache-control"]
-    assert app.get("/fonts/OFL-Zilla-Slab.txt").status_code == 404
+    assert app.get("/fonts/OFL-Oxanium.txt").status_code == 404
     assert app.get("/fonts/..%2Fweb.py").status_code == 404
 
 

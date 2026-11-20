@@ -875,20 +875,21 @@ def _short(text: str, limit: int) -> str:
 
 
 # The two typefaces, served from /fonts/ (web.py) and kept by browsers for a year, so a changed
-# file needs a new name: IBM Plex Sans (variable, 100-700) to read, Zilla Slab 700 for titles.
-# Latin only; anything else falls back to the system's. Both are OFL, licences alongside.
+# file needs a new name: IBM Plex Sans (variable, 100-700) to read, and Oxanium (variable,
+# 200-800), the wordmark's face, for titles. Latin only; anything else falls back to the
+# system's. Both are OFL, licences alongside.
 FONTS = Path(__file__).parent / "fonts"
-FONT_FILES = ("plex-sans.woff2", "zilla-slab-700.woff2")
+FONT_FILES = ("plex-sans.woff2", "oxanium.woff2")
 FONT_PRELOADS = "".join(f"<link rel=preload href=/fonts/{name} as=font type=font/woff2 crossorigin>" for name in FONT_FILES)
 
 # Masonry: slate and brick. The fonts, the colors (light and dark) and the project colors, shared
 # with the projects page (gallery.py). Every text color passes WCAG AA on the surface it's used on.
 TOKENS = """
-@font-face { font-family:"Zilla Slab"; font-weight:700; font-display:swap; src:url(/fonts/zilla-slab-700.woff2) format("woff2");
+@font-face { font-family:"Oxanium"; font-weight:200 800; font-display:swap; src:url(/fonts/oxanium.woff2) format("woff2");
   unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
 @font-face { font-family:"IBM Plex Sans"; font-weight:100 700; font-display:swap; src:url(/fonts/plex-sans.woff2) format("woff2");
   unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
-:root { color-scheme: light dark; --radius:2px; --display:"Zilla Slab", Rockwell, "Roboto Slab", Georgia, serif;
+:root { color-scheme: light dark; --radius:2px; --display:Oxanium, "DIN Alternate", Bahnschrift, system-ui, sans-serif;
   --body:"IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; --mono:ui-monospace, SFMono-Regular, Menlo, monospace;
   --bg:#dde0df; --card:#f2f3f2; --ink:#1c2023; --muted:#596166; --line:#c6cbca; --edge:#aab0af; --stone:#e0e3e2;
   --nav:#283035; --nav-ink:#eef1f1; --nav-muted:#9aa4aa; --accent:#9a3925; --accent-ink:#fff6f2; --ask-bg:#efe3c8;
