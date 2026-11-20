@@ -433,14 +433,16 @@ def create_app(
     # --- the installable app and its notifications (pwa.py, push.py) ---------
 
     async def manifest(request: Request) -> Response:
-        return JSONResponse(pwa.MANIFEST, media_type="application/manifest+json")
+        return JSONResponse(pwa.manifest(), media_type="application/manifest+json")
 
     async def icon(request: Request) -> Response:
         size = request.path_params["size"]
         if size not in pwa.ICON_SIZES:
             return Response("No such icon.", 404)
         png = pwa.icon(size, light=request.url.path.endswith("-light.png"))
-        return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
+        # Kept for good at its versioned URL (pwa.version); an hour at any other.
+        keep = "public, max-age=31536000, immutable" if request.query_params.get("v") == pwa.version() else "public, max-age=3600"
+        return Response(png, media_type="image/png", headers={"Cache-Control": keep})
 
     async def favicon(request: Request) -> Response:
         return Response(brand.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
@@ -452,7 +454,7 @@ def create_app(
         return FileResponse(pages.FONTS / name, media_type="font/woff2", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
     async def service_worker(request: Request) -> Response:
-        return Response(pwa.SERVICE_WORKER, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+        return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     async def push_key(request: Request) -> Response:
         return JSONResponse({"key": push.public_key()})

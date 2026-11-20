@@ -13,7 +13,7 @@ from urllib.parse import unquote
 import pytest
 from starlette.testclient import TestClient
 
-from golem import plan, web
+from golem import plan, pwa, web
 from golem.control import Control
 from golem.live import LiveRuns, view
 from golem.web import COOKIE, Auth, create_app
@@ -742,6 +742,18 @@ def test_installable_with_its_own_icon_and_service_worker(app):
     assert "apple-touch-icon" in app.get("/").text and "serviceWorker.register" not in app.get("/").text  # signed out
     sign_in(app)
     assert "serviceWorker.register" in app.get("/").text and "Turn on for this device" in app.get("/settings").text
+
+
+def test_a_changed_icon_gets_a_new_url_so_no_cache_hands_out_the_old_one(app):
+    # Cloudflare, in front of golem, kept serving the old icon at /icon-180.png for a week.
+    v = pwa.version()
+    page = app.get("/").text
+    assert f"href='/icon-180.png?v={v}'" in page and f"'/icon-180-light.png?v={v}'" in page
+    assert [i["src"] for i in app.get("/manifest.webmanifest").json()["icons"]] == [f"/icon-192.png?v={v}", f"/icon-512.png?v={v}"]
+    assert f"icon: '/icon-192.png?v={v}'" in app.get("/sw.js").text
+    assert "immutable" in app.get(f"/icon-180-light.png?v={v}").headers["cache-control"]
+    for elsewhere in ("/icon-180.png", "/icon-180.png?v=0ld"):
+        assert app.get(elsewhere).headers["cache-control"] == "public, max-age=3600"
 
 
 def _pixels(png: bytes) -> list[list[bytes]]:

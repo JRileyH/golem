@@ -5,11 +5,12 @@ messages and opens them, and the panel that turns notifications on for a device.
 iPhones only allow notifications for web apps added to the Home Screen (Share, then Add
 to Home Screen), and opened from there. The icon is the mark on ember, dark or light: iOS
 can't switch a web app's icon with the phone's appearance, so the page hands it the one that
-matches the phone at the moment it's added (TOUCH_ICON).
+matches the phone at the moment it's added (touch_icon).
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import struct
@@ -18,27 +19,52 @@ from functools import cache
 
 from . import brand
 
-MANIFEST = {
-    "name": "Golem",
-    "short_name": "Golem",
-    "description": "Your projects, what golem is doing, and what it needs from you.",
-    "start_url": "/",
-    "scope": "/",
-    "display": "standalone",
-    "background_color": "#302b28",  # ember's granite, behind the icon while it opens
-    "theme_color": "#283035",  # the header's slate
-    "icons": [
-        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
-        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
-    ],
-}
 ICON_SIZES = (180, 192, 512)
-# The home-screen icon, swapped for the light one on a phone in light mode as the page loads.
-TOUCH_ICON = (
-    "<link rel=apple-touch-icon href=/icon-180.png id=touch-icon><script>"
-    "if (matchMedia('(prefers-color-scheme: light)').matches) document.getElementById('touch-icon').href = '/icon-180-light.png';"
-    "</script>"
-)
+
+
+@cache
+def version() -> str:
+    """A hash of the icons, put in their URLs: a changed icon gets a URL no cache has seen. At a
+    fixed URL, Safari, and Cloudflare in front of golem, kept handing out the old one."""
+    return hashlib.sha256(b"".join(icon(s, light) for s in ICON_SIZES for light in (False, True))).hexdigest()[:10]
+
+
+def icon_url(size: int, light: bool = False) -> str:
+    return f"/icon-{size}{'-light' if light else ''}.png?v={version()}"
+
+
+@cache
+def manifest() -> dict:
+    return {
+        "name": "Golem",
+        "short_name": "Golem",
+        "description": "Your projects, what golem is doing, and what it needs from you.",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#302b28",  # ember's granite, behind the icon while it opens
+        "theme_color": "#283035",  # the header's slate
+        "icons": [
+            {"src": icon_url(192), "sizes": "192x192", "type": "image/png"},
+            {"src": icon_url(512), "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+        ],
+    }
+
+
+@cache
+def touch_icon() -> str:
+    """The home-screen icon, swapped for the light one on a phone in light mode as the page loads."""
+    return (
+        f"<link rel=apple-touch-icon href='{icon_url(180)}' id=touch-icon><script>"
+        f"if (matchMedia('(prefers-color-scheme: light)').matches) document.getElementById('touch-icon').href = '{icon_url(180, True)}';"
+        "</script>"
+    )
+
+
+@cache
+def service_worker() -> str:
+    return SERVICE_WORKER.replace("ICON", f"'{icon_url(192)}'")
+
 
 SERVICE_WORKER = """
 self.addEventListener('install', () => self.skipWaiting());
@@ -47,7 +73,7 @@ self.addEventListener('push', e => {
   let m = {};
   try { m = e.data.json(); } catch (err) { m = {title: 'golem', body: e.data ? e.data.text() : ''}; }
   e.waitUntil(self.registration.showNotification(m.title || 'golem', {
-    body: m.body || '', tag: m.tag, renotify: true, icon: '/icon-192.png', badge: '/icon-192.png', data: {url: m.url || '/'},
+    body: m.body || '', tag: m.tag, renotify: true, icon: ICON, badge: ICON, data: {url: m.url || '/'},
   }));
 });
 self.addEventListener('notificationclick', e => {
