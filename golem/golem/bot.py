@@ -124,12 +124,12 @@ class Bot:
             f"{brief.name}\n\n{brief.summary}\n\nYou said: “{text}”\n\n"
             f"It'll live at {url} (code: {repo}). I'll post progress here and check in when there's "
             "an MVP worth looking at. Reply here any time with feedback or changes.\n\n"
-            f"{settings_line(project)}. Starting in a minute: to change that first, say "
+            f"{plan.settings_line(project)}. Starting in a minute: to change that first, say "
             "!mode, !model or !effort here (!help for the options).",
         )
         await self.chat.send(
             INBOX,
-            f"New project: {brief.name} ({slug}), {settings_line(project).lower()}. "
+            f"New project: {brief.name} ({slug}), {plan.settings_line(project).lower()}. "
             f"Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}",
         )
         self.scheduler.wake()
@@ -175,11 +175,11 @@ class Bot:
             "here, its CI, the deployer's rules, and the shape every project of mine has. If something's in the way "
             "I'll say what in golem's conversation and leave it alone. If it only needs tidying I'll do that, then "
             "deploy it, and it's mine from then on, like any project I built.\n\n"
-            f"{settings_line(project)}. Starting in a minute: to change that first, say !mode, !model or !effort "
+            f"{plan.settings_line(project)}. Starting in a minute: to change that first, say !mode, !model or !effort "
             "here (!help for the options).",
         )
         self.scheduler.wake()
-        return f"Adopting {brief.name} ({slug}), {settings_line(project).lower()}. Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}"
+        return f"Adopting {brief.name} ({slug}), {plan.settings_line(project).lower()}. Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}"
 
     async def adopt_brief(self, slug: str, words: str, about: About) -> intake.Brief:
         if self.settings.harness == "fake":
@@ -387,7 +387,7 @@ class Bot:
         job = self.store.active_job(project.slug)
         state = self.job_line(job) if job else "Idle."
         return (
-            f"{project.name} ({project.slug})\n{settings_line(project)}\n{state}\n"
+            f"{project.name} ({project.slug})\n{plan.settings_line(project)}\n{state}\n"
             f"{self.settings.project_url(project.slug)}\n{self.settings.repo_url(project.slug)}"
         )
 
@@ -401,7 +401,7 @@ class Bot:
             return f"Usage: !{setting}{where} {'|'.join(allowed)}"
         value = rest[0].lower()
         project = self.store.update_project(project.slug, **{setting: "" if value == "default" else value})
-        reply = f"{project.name}: {settings_line(project).lower()}."
+        reply = f"{project.name}: {plan.settings_line(project).lower()}."
         job = self.store.active_job(project.slug, questions=False)
         if setting == "mode" and job and self.store.steps(job.id):
             reply += f" The job already under way keeps its steps; later jobs follow {value} rules."
@@ -478,11 +478,3 @@ class Bot:
             f"Deleted {project.name}: its site and data, checkout, jobs, logs and conversation are gone. "
             f"Delete the repo yourself on GitHub (Settings, at the bottom): {self.settings.repo_url(project.slug)}/settings"
         )
-
-
-def settings_line(project: Project) -> str:
-    if not project.model and not project.effort:
-        return f"Mode {project.mode}, each step's default model and effort"
-    model = f"model {project.model}" if project.model else "each step's default model"
-    effort = f"{project.effort} effort" if project.effort else "default effort"
-    return f"Mode {project.mode}, {model}, {effort}"

@@ -19,6 +19,10 @@ until it's done (upgrade.py).
 When CI fails or the deployer refuses a commit, a `fix` agent step is inserted after the
 failed one, followed by the steps from the last push again. Each step's outcome is
 saved, so a crash or a usage limit costs at most the step that was running.
+
+Adopting a repo golem didn't make starts with `vet` (adopt.py): golem's own checks and a
+survey that changes nothing. Something blocking and golem forgets the project and says why;
+otherwise the job goes on like any other that ships.
 """
 
 from __future__ import annotations
@@ -26,16 +30,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import options, plan, proposals
+from . import adopt, options, plan, proposals, teardown
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
-from .talk import STATUS, Talk
+from .talk import INBOX, STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
 from .store import ACTIVE, LOOKS, Job, Project, Proposal, Step, Store, later, now
@@ -46,6 +50,9 @@ log = logging.getLogger(__name__)
 
 WRAPUP_TURNS = 15
 FIX_TURNS = 150
+SURVEY_TURNS = 100  # install, run the tests, read for what it needs
+# With HARNESS=fake there's no worker to survey a repo golem adopts: its own checks still run.
+FAKE_SURVEY = {"tests": {"result": "none", "command": "", "detail": ""}, "missing": [], "needs": []}
 MAX_ATTEMPTS = 3  # failed attempts at one step before asking Riggy for help
 MAX_FIXES = 4  # fix steps in one job before asking Riggy for a hint
 LIMIT_RETRY = timedelta(minutes=30)
@@ -76,7 +83,8 @@ class Outcome:
     fix: something the project's code has to fix; a fix step and a retry follow.
     error: try the step again later, then ask Riggy.  limit: out of Claude usage.
     blocked: the worker asked Riggy a question.  checkin: the step waits for his reply (a
-    check-in, or his pick of some options).
+    check-in, or his pick of some options).  refused: golem won't adopt the repo; `problem`
+    says why, and the project goes.
     """
 
     state: str
@@ -296,6 +304,11 @@ class Scheduler:
             case "error":
                 self.store.update_step(step.id, state="pending", error=outcome.problem, started_at=None)
                 await self.retry_or_ask(job, outcome.problem)
+            case "refused":  # nothing was written to the repo: golem forgets it was ever asked
+                await self.chat.send(INBOX, outcome.problem)  # where he asked, as his conversation goes
+                await teardown.forget_project(project, self.settings, self.store, self.workspace)
+                log.info("didn't adopt %s: %s", project.slug, outcome.summary)
+                return
         self.store.put("limit_notice", "0")
 
     async def retry_or_ask(self, job: Job, error: str) -> None:
@@ -416,10 +429,13 @@ class Scheduler:
         prompt: str,
         resume: str | None,
         schema: dict | None = None,
+        kind: str | None = None,
     ) -> RunResult:
-        """One run of the step, with the model and effort chosen for it as it starts (plan.engine)."""
+        """One run of the step, with the model and effort chosen for it as it starts (plan.engine):
+        as a step of its own name, or of `kind` (a vet step's survey)."""
         project = self.store.project(project.slug)
-        engine = plan.engine(self.settings, self.store, project, self.store.step(step.id) or step)
+        current = self.store.step(step.id) or step
+        engine = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current)
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{label}.jsonl.gz"
         run_id = self.store.start_run(job.id, label, str(engine), str(log_path), step.id)
         notes = self.progress_path(job)
@@ -485,17 +501,80 @@ class Scheduler:
 
     # --- golem's own steps ---------------------------------------------------
 
+    async def do_vet(self, job: Job, project: Project, step: Step) -> Outcome:
+        """An adoption's first step: golem's checklist (adopt.py), before anything is written to
+        the repo. Waits while CI on main is running; the survey runs once golem's own checks have."""
+        slug, s = project.slug, self.settings
+        await self.workspace.ensure_repo(slug, project.summary)  # a clone: preflight saw the repo
+        await self.workspace.sync_main(slug)
+        sha = await self.workspace.main_sha(slug)
+        result = await self.workspace.ci(slug, sha)
+        links = {"repo": s.repo_url(slug), **({"ci": result.url} if result.url else {})}
+        if result.state == "pending":
+            waited = datetime.now(UTC) - datetime.fromisoformat(step.started_at)
+            if waited >= CI_TIMEOUT:
+                return Outcome("error", problem=f"CI on main still hasn't finished after {span(waited)}: {result.detail}")
+            return Outcome("wait", f"Waiting for CI on main to finish before checking it over: {result.detail}", links)
+        path = self.workspace.path(slug)
+        checks = [adopt.ci(result), *adopt.files(path, s.org, slug, s.platform, s.project_url(slug))]
+        present = (path / "deploy" / "compose.yml").is_file()
+        checks.append(adopt.compose(present, await self.deployer.validate(slug, sha) if present else None))
+        found = await self.survey(job, project, step)
+        if isinstance(found, Outcome):  # out of usage, or the run failed: the step goes again
+            return found
+        checks += adopt.survey(found)
+
+        if adopt.decide(checks) == "refuse":
+            return Outcome("refused", "Something's in the way: not adopted.", problem=adopt.refusal(slug, checks))
+        work = next((x for x in self.store.steps(job.id) if x.kind == "agent" and x.name == "adopt" and x.state == "pending"), None)
+        if work and adopt.needs_worker(checks):
+            self.store.update_step(work.id, problem=adopt.task(checks))
+            fixing, nxt = sum(c.state == adopt.FIXABLE for c in checks), "I'll fix what's marked →, then PR, CI, merge and deploy it."
+        else:
+            if work:
+                self.store.update_step(work.id, state="skipped", summary="Nothing for a worker to fix.", ended_at=now())
+            fixing = 0
+            nxt = "I'll write its brief, then deploy it." if any(c.state == adopt.FIXABLE for c in checks) else "Next I deploy main as it is."
+        await self.say(
+            project,
+            f"I checked it over, and I'm adopting it.\n\n{adopt.report(checks)}\n\n{nxt}\n\n"
+            f"{plan.settings_line(self.store.project(slug))} (!mode, !model or !effort here to change them).",
+        )
+        return Outcome("done", f"Adopting it: {fixing} thing(s) to fix." if fixing else "Adopting it as it is.", links)
+
+    async def survey(self, job: Job, project: Project, step: Step) -> dict | Outcome:
+        """The survey: a worker run that builds and tests the repo here and reads it for what it needs
+        (prompts/survey.md), and changes nothing. Its report, or how the run went wrong."""
+        if self.settings.harness == "fake":
+            return FAKE_SURVEY
+        branch = await self.workspace.current_branch(project.slug)
+        was_clean = await self.workspace.clean(project.slug)
+        prompt = self.prompts.survey(project, branch)
+        result = await self.execute(job, project, step, "survey", SURVEY_TURNS, prompt, None, adopt.SURVEY_SCHEMA, kind="survey")
+        if was_clean:
+            await self.workspace.discard(project.slug)
+        if result.outcome == "limit":
+            return Outcome("limit")
+        if result.outcome == "max_turns":
+            return Outcome("error", problem=f"the survey ran out of turns ({SURVEY_TURNS})")
+        if result.outcome != "verdict" or not isinstance(result.verdict, dict):
+            return Outcome("error", problem=f"the survey failed: {result.error or result.outcome}")
+        return result.verdict
+
     async def do_setup(self, job: Job, project: Project, step: Step) -> Outcome:
-        """The repo, with a first commit on main if it's new, the checkout up to date, and an issue."""
+        """The repo, with a first commit on main if it's new, the checkout up to date, and an issue.
+        An adopted repo with no docs/brief.md gets one from golem, on the job's branch."""
         slug, url = project.slug, self.settings.project_url(project.slug)
         await self.workspace.ensure_repo(slug, project.summary)
         await self.workspace.ensure_main(slug, f"# {project.name}\n\nLive at {url}\n\n{project.summary}\n")
         await self.workspace.sync_main(slug)
         if job.issue is None:
-            title = project.name if job.kind == "new" else _first_line(job.request)
+            title = project.name if job.kind in ("new", "adopt") else _first_line(job.request)
             body = f"Requested:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
             issue = await self.workspace.open_issue(slug, title, body)
             job = self.store.update_job(job.id, issue=issue)
+        if job.kind == "adopt":
+            await self.write_brief(job, project)
         if job.playbook == "options":
             await self.say(project, f"Making options: {_first_line(job.request)}", notice=True)
         elif job.kind == "change":
@@ -504,6 +583,18 @@ class Scheduler:
         if job.issue:
             links["issue"] = f"{self.settings.repo_url(slug)}/issues/{job.issue}"
         return Outcome("done", "Repo, checkout and issue ready.", links)
+
+    async def write_brief(self, job: Job, project: Project) -> None:
+        """docs/brief.md for an adopted repo without one, committed on the job's branch so it ships
+        with the rest: the brief, and what Riggy said after `!adopt <slug>`."""
+        await self.workspace.start_branch(project.slug, self.branch(job))
+        path = self.workspace.path(project.slug) / adopt.BRIEF
+        if path.exists():
+            return
+        words = job.request.split(maxsplit=2)[2:]  # "!adopt mimic <his words>"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(adopt.brief(project.name, project.summary, words[0] if words else "", self.settings.repo_url(project.slug), now()[:10]))
+        await self.workspace.commit_all(project.slug, "Brief: what golem was asked to adopt")
 
     async def do_refresh(self, job: Job, project: Project, step: Step) -> Outcome:
         """The first step of a job that only looks: the checkout up to date with main, unless a
@@ -558,8 +649,8 @@ class Scheduler:
     async def do_pr(self, job: Job, project: Project, step: Step) -> Outcome:
         steps = self.store.steps(job.id)
         work = _since_last(steps, step, "merge")
-        names = " + ".join(s.name for s in work) or "changes"
-        title = project.name if job.kind == "new" else _first_line(job.request, 60)
+        names = " + ".join(s.name for s in work) or ("brief" if job.kind == "adopt" else "changes")
+        title = project.name if job.kind in ("new", "adopt") else _first_line(job.request, 60)
         last = not any(s.kind == "pr" for s in steps if s.position > step.position and s.state == "pending")
         issue = f"{'Closes' if last else 'Part of'} #{job.issue}" if job.issue else ""
         body = "\n\n".join(
@@ -656,7 +747,7 @@ class Scheduler:
         url = self.settings.project_url(project.slug)
         steps = self.store.steps(job.id)
         message = plan.last_said(steps) or f"{project.name} is live."
-        if job.issue and not any(s.kind == "pr" for s in steps):  # reckless: no PR closed its issue
+        if job.issue and not any(s.kind == "pr" and s.state == "done" for s in steps):  # no PR closed its issue (reckless, or nothing to merge)
             await self.workspace.close_issue(project.slug, job.issue, f"Done: {message}\n\n{url}")
         await self.say(project, _join(f"Done: {message}", url))
         await self.status(f"Finished job {job.id} on {project.name}: {url}", notice=True)

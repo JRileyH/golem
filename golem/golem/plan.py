@@ -119,6 +119,15 @@ def engine(settings: Settings, store: Store, project: Project, step: Step) -> En
     return Engine(model, effort, model_from, effort_from)
 
 
+def settings_line(project: Project) -> str:
+    """A project's settings in a line: "Mode standard, each step's default model and effort"."""
+    if not project.model and not project.effort:
+        return f"Mode {project.mode}, each step's default model and effort"
+    model = f"model {project.model}" if project.model else "each step's default model"
+    effort = f"{project.effort} effort" if project.effort else "default effort"
+    return f"Mode {project.mode}, {model}, {effort}"
+
+
 def what(job: Job) -> str:
     """What sort of job it is, in a word or two: "new project", "adoption", "question"…"""
     if job.kind in ("new", "adopt"):

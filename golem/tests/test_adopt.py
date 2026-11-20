@@ -28,6 +28,8 @@ def golem_shaped(path: Path) -> Path:
     files = {
         "Dockerfile": "FROM python:3.13-slim\n",
         ".github/workflows/build.yml": skill_workflow(),
+        "deploy/compose.yml": "services:\n  web:\n    image: ghcr.io/unlaunched/mimic\n    mem_limit: 256m\n"
+        "    labels:\n      golem.public: \"true\"\n      golem.port: \"8765\"\n",
         "AGENTS.md": "# mimic\n",
         "CLAUDE.md": "See AGENTS.md.\n",
         "README.md": f"# mimic\n\nLive at {URL}\n\nTabletop data in, cards out.\n",

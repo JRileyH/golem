@@ -15,6 +15,9 @@ the golem image.
 - `proposals.md`: the wrapper around a proposals job's `propose` step: the
   project, its latest jobs and conversation, this time's lens, and every earlier
   proposal with what Riggy decided and why.
+- `survey.md`: the run inside an adoption's `vet` step (`golem/golem/adopt.py`):
+  install and test the repo in golem's container, and say what it needs that
+  golem can't give. It changes nothing; its answer is structured output.
 - `fix.md`: the instructions of a `fix` step, which golem inserts when CI fails
   or the deployer refuses a commit.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.

@@ -40,6 +40,8 @@ class Prompts:
             instructions = self.render("fix", problem=step.problem)
         else:
             instructions = book.instructions(step.name)
+            if step.problem:  # what golem found for the step to do: an adoption's gaps
+                instructions += f"\n\n## What golem's checks found\n\n{step.problem}"
         earlier = ""
         if step.error:
             earlier = (
@@ -55,7 +57,7 @@ class Prompts:
             url=s.project_url(project.slug),
             repo=s.repo_url(project.slug),
             branch=branch,
-            kind="new project" if job.kind == "new" else "change to an existing project",
+            kind={"new": "new project", "adopt": "adopting a repo golem didn't make"}.get(job.kind, "change to an existing project"),
             request=job.request,
             issue=f"#{job.issue} ({s.repo_url(project.slug)}/issues/{job.issue})" if job.issue else "none",
             intro=book.intro,
@@ -118,6 +120,21 @@ class Prompts:
             intro=book.intro,
             instructions=book.instructions(step.name),
             skills=s.process_dir / "skills",
+        )
+
+    def survey(self, project: Project, branch: str) -> str:
+        """The survey an adoption's check runs (adopt.py): build and test it here, and say what it
+        needs that golem can't give."""
+        s = self.settings
+        return self.render(
+            "survey",
+            name=project.name,
+            slug=project.slug,
+            summary=project.summary,
+            url=s.project_url(project.slug),
+            repo=s.repo_url(project.slug),
+            branch=branch,
+            platform=s.platform,
         )
 
     def resume(self, feedback: list[str]) -> str:

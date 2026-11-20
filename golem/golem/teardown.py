@@ -1,5 +1,6 @@
 """Deleting a project: everything golem made for it (its card on the projects page too)
-but the GitHub repo, which golem's token can't delete. Used by !delete and by the nuke."""
+but the GitHub repo, which golem's token can't delete. Used by !delete and by the nuke, and
+(without the deployer) when golem checks over a repo and doesn't adopt it."""
 
 from __future__ import annotations
 
@@ -18,6 +19,12 @@ async def delete_project(
     """Stop the project's jobs first. If a step fails (DeployerError, WorkspaceError), the steps
     after it haven't happened and the project is still listed, so running this again finishes."""
     await deployer.delete(project.slug)  # the site, its data and its route
+    await forget_project(project, settings, store, workspace)
+
+
+async def forget_project(project: Project, settings: Settings, store: Store, workspace: Workspace) -> None:
+    """Everything golem keeps of a project on its own side: the checkout, the records and logs,
+    the card. All a repo golem checked over and didn't adopt ever had."""
     await workspace.remove(project.slug)
     card = store.card(project.slug)
     for job_id in store.delete_project(project.slug):
