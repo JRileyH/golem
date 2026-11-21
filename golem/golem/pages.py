@@ -343,9 +343,15 @@ def ask_card(lane: LaneData, signed_in: bool, back: str, reply: bool) -> str:
         hint, placeholder = "Or say what to change.", "Looks good, or what to change…"
     elif step.kind == "choose":
         made, shown = options.shown(lane.steps, step)
+        design = options.design_of(made)
         body = f"<p>{escape(made.summary if made and made.summary else 'Pick one.')}</p>" + options_html(job, shown, signed_in, back)
-        body += f"<div class=row-form>{skip_button(job, step, 'Let it pick', back=back)}</div>" if signed_in else ""
-        hint, placeholder = "Or pick with what you'd change (“B, but bigger”), or ask for other options.", "B, but bigger… or: other options"
+        body += design_html(job, design) if design else ""
+        skip = "Go with your pick" if design and design.recommendation else "Let it pick"
+        body += f"<div class=row-form>{skip_button(job, step, skip, back=back)}</div>" if signed_in else ""
+        if design:
+            hint, placeholder = "Or reply with a direction and your answers by number, or ask for another round.", "A, and your answers… or: another round"
+        else:
+            hint, placeholder = "Or pick with what you'd change (“B, but bigger”), or ask for other options.", "B, but bigger… or: other options"
     else:
         body = f"<p>{escape(step.summary or 'It needs your help.')}</p>"
         if step.error:
@@ -432,8 +438,9 @@ def sheet(d: SheetData, signed_in: bool, now: datetime) -> str:
     made, shown = options.shown(lane.steps, s)
     if shown:
         pick = signed_in and s.kind == "choose" and s.state == "waiting" and job.state in ACTIVE
-        title = "The options" if s.kind == "choose" else "Its options"
-        body += f"<h3>{title}</h3>" + options_html(job, shown, pick, back=f"/p/{job.slug}")
+        design = options.design_of(made)
+        title = ("The directions" if design else "The options") if s.kind == "choose" else ("Its directions" if design else "Its options")
+        body += f"<h3>{title}</h3>" + options_html(job, shown, pick, back=f"/p/{job.slug}") + (design_html(job, design) if design else "")
     if d.notes:
         body += "<h3>Your context for it</h3><ul class=notes>" + "".join(f"<li>{escape(n)}</li>" for n in d.notes) + "</ul>"
     if s.state in ("running", "waiting") and s.kind == "agent":
@@ -721,6 +728,27 @@ def options_html(job: Job, shown: list[options.Option], pick: bool, back: str) -
     return f"<ol class=options>{''.join(items)}</ol>"
 
 
+def design_html(job: Job, design: options.Design) -> str:
+    """The rest of a design round, under its directions: the doc, the pages they share, the
+    round's pick and what else it asks."""
+    doc = f"<a class=button href='{escape(option_image(job, design.doc))}' target=_blank rel=noopener>Open the doc ↗</a>" if design.doc else ""
+    pages = "".join(
+        f"<a href='{escape(option_image(job, name))}' target=_blank rel=noopener><img src='{escape(option_image(job, name))}' "
+        f"loading=lazy alt='Shared page {i}'></a>"
+        for i, name in enumerate(design.pages, start=1)
+    )
+    pick = f"<p><b>My pick:</b> {escape(design.recommendation)}</p>" if design.recommendation else ""
+    asks = "".join(f"<li>{escape(q)}</li>" for q in design.questions)
+    return (
+        "<div class=design>"
+        + (f"<div class=shared>{pages}</div>" if pages else "")
+        + (f"<div class=row-form>{doc}</div>" if doc else "")
+        + pick
+        + (f"<p class=muted>Also to decide:</p><ol class=questions>{asks}</ol>" if asks else "")
+        + "</div>"
+    )
+
+
 def option_image(job: Job, name: str) -> str:
     return f"/jobs/{job.id}/options/{name}"
 
@@ -1006,6 +1034,9 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .headline time { font-weight:700; }
 .card.status { border-top:5px solid var(--pc, var(--grey)); }
 .request { margin:.5rem 0 .2rem; font-size:.92em; } .request .muted { font-size:1em; }
+.design { margin:.4rem 0 .2rem; } .design p { margin:.4rem 0; } .questions { margin:.2rem 0 .4rem; padding-left:1.3rem; }
+.shared { display:flex; gap:.4rem; overflow-x:auto; padding-bottom:.3rem; }
+.shared img { height:9rem; width:auto; display:block; border-radius:var(--radius); border:1px solid var(--line); }
 .asked { white-space:pre-wrap; margin:.3rem 0 0; }
 .foot { color:var(--muted); font-size:.8rem; margin:.5rem 0 0; }
 .badge { display:inline-block; padding:.1rem .5rem; border-radius:1px; font-size:.75rem; font-weight:700; line-height:1.45; white-space:nowrap;

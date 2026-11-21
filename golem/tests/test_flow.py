@@ -673,6 +673,77 @@ def test_a_design_round_keeps_its_doc_pages_questions_and_pick(golem):
     run(go())
 
 
+async def design_up(golem: Golem, picks: list[dict]) -> tuple[str, object]:
+    """A design pass on the idle trees project, its first round up for Riggy to pick from."""
+    room = await idle_project(golem)
+    golem.harness.script = by_label({"design": [three_looks, three_looks], "pick": picks})
+    job = golem.store.add_job("tree-cards", "change", "make it feel like an old field guide", "design")
+    await golem.until("your pick")
+    await golem.step()
+    return room, job
+
+
+def test_a_design_pass_shows_its_doc_and_builds_the_pick(golem):
+    async def go():
+        room, job = await design_up(golem, [{"decision": "pick", "picked": ["A"]}])
+        made, choose = next(s for s in golem.store.steps(job.id) if s.name == "design"), current(golem, job.id)
+        assert golem.chat.images == [
+            *((room, f"{made.id}-{x.lower()}-1.png", f"{x}: {t}. Tree Cards as a {t.lower()}.") for x, t in zip("ABC", LOOKS)),
+            (room, f"{made.id}-p-1.png", "The pages they share"), (room, f"{made.id}-p-2.png", "Shared (2)"),
+        ]  # fmt: skip
+        assert golem.chat.texts(room)[-1] == (
+            f"The whole doc: https://golem.unlaunched.dev/jobs/{job.id}/options/{made.id}-doc.html\n\n"
+            "My pick: A, with the Fraunces wordmark and the Leaf icon.\n\n"
+            "Also to decide:\n1. Wordmark: Fraunces or Oxanium?\n2. Icon: Leaf or Acorn?\n\n"
+            "Which one? Reply A, B or C, and your answers by number, or ask for another round (“A, but show me more icons”). "
+            f"Side by side: https://golem.unlaunched.dev/steps/{choose.id}"
+        )
+        assert (golem.store.job(job.id).state, choose.state) == ("waiting", "waiting")
+
+        await golem.say(room, "a, 1 oxanium, leaf icon")
+        await golem.step()
+        ask = golem.harness.calls[-1]
+        assert ask.label == "pick" and "1. Wordmark: Fraunces or Oxanium?" in ask.prompt and "A: Field guide." in ask.prompt
+        assert golem.chat.texts(room)[-1] == (
+            f"✓ your pick: You picked A (Field guide). You said: “a, 1 oxanium, leaf icon”. "
+            f"Files: docs/design/rounds/job-{job.id}/round-1/a/.\nNext: guide."
+        )
+        await golem.step()
+        guide = golem.harness.calls[-1]
+        assert guide.label == "guide" and "Write the design guide, `docs/design.md`" in guide.prompt
+        assert "- your pick: You picked A (Field guide)." in guide.prompt and "> a, 1 oxanium, leaf icon" in guide.prompt
+        await golem.finish()
+        assert golem.labels(job.id) == [
+            "set up", "design", "your pick", "guide", "apply", "review", "docs", "push", "PR", "CI", "merge", "deploy", "done",
+        ]  # fmt: skip
+
+    run(go())
+
+
+def test_another_design_round_keeps_what_he_settled(golem):
+    async def go():
+        room, job = await design_up(golem, [{"decision": "more", "picked": ["A"]}, {"decision": "pick", "picked": ["B"]}])
+        await golem.say(room, "a but show me more icons")
+        await golem.step()
+        assert golem.chat.texts(room)[-1] == (
+            f"✓ your pick: You settled on A (Field guide) (docs/design/rounds/job-{job.id}/round-1/a/) "
+            "and asked for another round: “a but show me more icons”\nNext: design."
+        )
+        await golem.step()  # the second round, with what he said about the first
+        call = golem.harness.calls[-1]
+        assert call.label == "design" and "> a but show me more icons" in call.prompt and "options" in call.schema["properties"]
+        assert "You settled on A (Field guide)" in call.prompt
+        await golem.step()
+        second = [s for s in golem.store.steps(job.id) if s.name == "design"][1]
+        assert golem.chat.images[-1] == (room, f"{second.id}-p-2.png", "Shared (2)")
+        assert second.design["source"] == f"docs/design/rounds/job-{job.id}/round-2/doc.html"
+        await golem.say(room, "B")
+        await golem.finish()
+        assert golem.labels(job.id)[:6] == ["set up", "design", "your pick", "design", "your pick", "guide"]
+
+    run(go())
+
+
 def test_a_change_request_is_not_options(golem):
     async def go():
         room = await idle_project(golem)

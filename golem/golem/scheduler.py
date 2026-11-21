@@ -749,23 +749,28 @@ class Scheduler:
 
     async def do_choose(self, job: Job, project: Project, step: Step) -> Outcome:
         """Show Riggy the options the step before made and wait for his pick, which goes to the
-        next step with where its files are; or, if he wants other options, another round."""
+        next step with where its files are; or, if he wants other options, another round. A
+        design round comes with its doc, the pages its directions share, its pick and its questions."""
         made, shown = options.shown(self.store.steps(job.id), step)
         if not shown:
             return Outcome("skipped", "No options to pick from.")
+        design = options.design_of(made)
         if step.state == "waiting":  # he's replied (the bot queued the job again)
             said = "\n\n".join(text for _, text in self.store.pending_notes(job.id))
-            reply = await options.read_reply(self.harness, self.settings, said, shown)
+            reply = await options.read_reply(self.harness, self.settings, said, shown, design.questions if design else [])
             if reply.more:  # his reply goes to the new round's step, made like the last
                 again = [
                     Step(0, job.id, 0, "agent", made.name, made.max_turns),
                     Step(0, job.id, 0, "choose", "choose", optional=step.optional),
                 ]
                 self.store.add_steps(job.id, again, after=step.position)
-                return Outcome("done", f"You asked for other options: “{_first_line(said, 200)}”")
+                return Outcome("done", options.again(reply, shown, said, design is not None))
             return Outcome("done", options.picked(reply, shown, said))
         for o in shown:  # after "✓ options: <what they are>"
             await self.show_option(project, job, o)
+        if design:
+            await self.show_design(project, job, step, design, shown)
+            return Outcome("checkin", "Waiting for your pick.")
         letters = ", ".join(o.letter for o in shown[:-1]) + f" or {shown[-1].letter}"
         await self.say(
             project,
@@ -773,6 +778,26 @@ class Scheduler:
             f"other options. Side by side: {self.settings.url('golem')}/steps/{step.id}",
         )
         return Outcome("checkin", "Waiting for your pick.")
+
+    async def show_design(self, project: Project, job: Job, step: Step, design: options.Design, shown: list[options.Option]) -> None:
+        """The rest of a design round, after its directions: the pages they share, then the doc,
+        the round's pick and its questions, in the message that asks for his."""
+        folder = options.folder(self.settings, job.id)
+        for i, page in enumerate(design.pages):
+            await self.chat.send_image(project.slug, folder / page, "The pages they share" if i == 0 else f"Shared ({i + 1})")
+        golem = self.settings.url("golem")
+        letters = ", ".join(o.letter for o in shown[:-1]) + f" or {shown[-1].letter}"
+        lines = [f"The whole doc: {golem}/jobs/{job.id}/options/{design.doc}"] if design.doc else []
+        if design.recommendation:
+            lines.append(f"My pick: {design.recommendation}")
+        if design.questions:
+            lines.append("Also to decide:\n" + "\n".join(f"{n}. {q}" for n, q in enumerate(design.questions, start=1)))
+        answers = ", and your answers by number" if design.questions else ""
+        lines.append(
+            f"Which one? Reply {letters}{answers}, or ask for another round (“{shown[0].letter}, but show me more icons”). "
+            f"Side by side: {golem}/steps/{step.id}"
+        )
+        await self.say(project, "\n\n".join(lines))
 
     async def show_option(self, project: Project, job: Job, option: options.Option) -> None:
         """An option in the project's conversation: its pictures, the first captioned with what it is."""

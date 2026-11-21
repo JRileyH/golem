@@ -351,6 +351,17 @@ def test_what_a_pick_tells_the_next_step():
     )
 
 
+def test_what_another_round_tells_the_next_step():
+    found = [options.Option("A", "Field guide", "", ["docs/r/a/1.png"], []), options.Option("B", "Arcade", "", [], [])]
+    assert options.again(options.Reply(True, ["A"]), found, "a but more icons", True) == (
+        "You settled on A (Field guide) (docs/r/a/1.png) and asked for another round: “a but more icons”"
+    )
+    assert options.again(options.Reply(True, []), found, "warmer", True) == "You asked for another round: “warmer”"
+    assert options.again(options.Reply(True, []), found, "none of these", False) == "You asked for other options: “none of these”"
+    assert options.plain_reply("another round please", ["A", "B"]) == options.Reply(True, [])  # without a model
+    assert options.plain_reply("different directions", ["A", "B"]).more
+
+
 def test_a_pick_is_about_the_round_just_before_it():
     one = [{"letter": x, "title": x, "description": "", "files": [], "images": []} for x in "AB"]
     first = Step(1, 1, 2, "agent", "options", options=one)

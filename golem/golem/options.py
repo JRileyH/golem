@@ -121,7 +121,8 @@ QUESTION_RE = re.compile(
 REQUEST_RE = re.compile(r"^\s*((can|could|would|will) (you|u)|how about|what about)\b|\b(please|make|add|change|fix)\b", re.I)
 LETTER_RE = re.compile(r"^\W*(?:[Oo]ption\s+)?([a-fA-F])\W*$|^\s*(?:[Oo]ption\s+)?([A-F])[,.:;!)\-]")
 MORE_RE = re.compile(
-    r"\b(none of (these|them|those)|(other|more|different|new) (options|ones|takes|ideas)|try again|start over|something else)\b",
+    r"\b(none of (these|them|those)|(other|more|different|new) (options|ones|takes|ideas|directions)|another round|try again|start over"
+    r"|something else)\b",
     re.I,
 )
 
@@ -242,6 +243,11 @@ def _copy_image(path: Path, dest: Path, stem: str, into: list[str]) -> bool:
     return True
 
 
+def design_of(step: Step | None) -> Design | None:
+    """The design round a step that made options brought, if it's a design step's."""
+    return Design(**step.design) if step and step.design else None
+
+
 def makes(step: Step) -> bool:
     """Whether a step makes options for Riggy to pick from (MAKERS)."""
     return step.kind == "agent" and step.name in MAKERS
@@ -280,6 +286,23 @@ def picked(reply: Reply, found: list[Option], said: str) -> str:
     files = [f"{o.letter} in {o.where}" if len(chosen) > 1 else o.where for o in chosen if o.files]
     where = f" Files: {'; '.join(files)}." if files else ""
     return f"You picked {names}.{quote}{where}"
+
+
+def again(reply: Reply, found: list[Option], said: str, design: bool) -> str:
+    """What the pick step says when he wants another round: what he said, and what he settled
+    on if he did ("B, but more icons"), for the next round's step."""
+    quote = f"“{_first_line(said)}”"
+    chosen = [o for letter in reply.picked for o in found if o.letter == letter]
+    if chosen:
+        names = " and ".join(f"{o.letter} ({o.title})" for o in chosen)
+        files = "; ".join(o.where for o in chosen if o.where)
+        return f"You settled on {names}{f' ({files})' if files else ''} and asked for another round: {quote}"
+    return f"You asked for another round: {quote}" if design else f"You asked for other options: {quote}"
+
+
+def _first_line(text: str, limit: int = 200) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
 # --- reading Riggy --------------------------------------------------------------------
@@ -325,12 +348,14 @@ async def read_request(harness: Harness, settings: Settings, text: str) -> Reque
     return Request("question" if asks_a_question(text) else "change", "")
 
 
-async def read_reply(harness: Harness, settings: Settings, text: str, found: list[Option]) -> Reply:
-    """What Riggy's reply to some options says: a pick, or a wish for other options."""
+async def read_reply(harness: Harness, settings: Settings, text: str, found: list[Option], questions: list[str] = ()) -> Reply:
+    """What Riggy's reply to some options says: a pick, or a wish for other options (another
+    round). A design round's `questions` are what else it asked: his answers ride along."""
     letters = [o.letter for o in found]
     if settings.harness != "fake" and text.strip():
         listed = "\n".join(f"{o.letter}: {o.title}. {o.description}" for o in found)
-        v = await _ask(harness, settings, "pick", {"$options": listed, "$reply": text.strip()}, REPLY_SCHEMA)
+        asked = "\n".join(f"{n}. {q}" for n, q in enumerate(questions, start=1)) or "(none)"
+        v = await _ask(harness, settings, "pick", {"$options": listed, "$questions": asked, "$reply": text.strip()}, REPLY_SCHEMA)
         if v and v.get("decision") in ("pick", "more"):
             chosen = [str(x).upper() for x in v.get("picked") or []]
             return Reply(v["decision"] == "more", [x for x in dict.fromkeys(chosen) if x in letters])

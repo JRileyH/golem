@@ -308,6 +308,37 @@ def test_skipping_the_pick_leaves_it_to_the_next_step(golem):
     asyncio.run(go())
 
 
+def test_a_design_round_shows_its_doc_pick_and_questions_and_can_go_with_the_pick(golem):
+    from test_flow import design_up
+
+    room, job = asyncio.run(design_up(golem, []))
+    made, choose = by_name(golem, job, "design"), plan.current(golem.store.steps(job.id))
+    client = TestClient(create_app(golem.settings, golem.store, golem.scheduler), base_url="https://golem.unlaunched.dev")
+    html = client.get("/").text
+    assert "Three looks for Tree Cards." in html and "Field guide" in html
+    assert f"<a class=button href='/jobs/{job.id}/options/{made.id}-doc.html' target=_blank rel=noopener>Open the doc ↗</a>" in html
+    assert f"<img src='/jobs/{job.id}/options/{made.id}-p-1.png'" in html
+    assert "<b>My pick:</b> A, with the Fraunces wordmark and the Leaf icon." in html
+    assert "<ol class=questions><li>Wordmark: Fraunces or Oxanium?</li><li>Icon: Leaf or Acorn?</li></ol>" in html
+    sheet = client.get(f"/steps/{choose.id}?part=sheet").text
+    assert "The directions" in sheet and "Open the doc ↗" in sheet and "Its directions" in client.get(f"/steps/{made.id}?part=sheet").text
+
+    sign_in(client)
+    html = client.get("/").text
+    assert "Go with your pick" in html and "Pick C" in html and "ask for another round" in html
+
+    async def go():
+        await Control(golem.store, golem.scheduler).skip(job.id, choose.id)
+        assert golem.chat.texts(room)[-1] == (
+            "Skipped your pick (going with mine: A, with the Fraunces wordmark and the Leaf icon), from the status page."
+        )
+        await golem.step()
+        call = golem.harness.calls[-1]
+        assert call.label == "guide" and "go with the round's" in call.prompt
+
+    asyncio.run(go())
+
+
 def test_queue_order_settings_notes_pause_and_stop(golem, page):
     sign_in(page)
     golem.store.add_project("birds", "Birds", "s")

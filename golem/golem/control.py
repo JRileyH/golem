@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from . import plan
+from . import options, plan
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .store import ACTIVE, EFFORTS, EVERY, MODELS, Job, Project, Step, Store, Tag
@@ -104,9 +104,12 @@ class Control:
         if job.state == "waiting" and step.kind in plan.ASKS:
             self.store.update_job(job.id, state="queued", attempts=0)
         self.scheduler.wake()
+        design = options.design_of(options.shown(self.store.steps(job.id), step)[0]) if step.kind == "choose" else None
         what = {
             "checkin": "your check-in (carrying on as if you'd said it looks good)",
-            "choose": "your pick (the next step picks the strongest option)",
+            "choose": f"your pick (going with mine: {design.recommendation.rstrip('.')})"
+            if design and design.recommendation
+            else "your pick (the next step picks the strongest option)",
         }.get(step.kind, step.name)
         await self.scheduler.say(project, f"Skipped {what}, from the status page.", notice=True)
         return f"Skipped {plan.label(step)}."
