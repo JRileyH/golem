@@ -370,7 +370,7 @@ class Scheduler:
             steps = self.store.steps(job.id)
             prompt, resume = self.prompts.step(project, job, book, step, steps, branch, feedback, lessons), None
 
-        schema = {"options": options.SCHEMA, "propose": proposals.SCHEMA}.get(step.name)  # what it made comes with its verdict
+        schema = options.SCHEMA if options.makes(step) else {"propose": proposals.SCHEMA}.get(step.name)  # what it made comes with its verdict
         result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema)
         if result.outcome == "max_turns" and result.session_id:
             wrapped = wrapup_schema(schema)
@@ -395,10 +395,10 @@ class Scheduler:
         v = result.verdict
         if v.get("verdict") not in VERDICTS:
             return Outcome("error", problem=f"unknown verdict {v.get('verdict')!r}")
-        if step.name == "options" and v["verdict"] == "done":
+        if options.makes(step) and v["verdict"] == "done":
             made = options.collect(v.get("options"), self.workspace.path(project.slug), options.folder(self.settings, job.id), str(step.id))
             if len(made) < 2:
-                return Outcome("error", problem="The options step returned fewer than two options with their files.")
+                return Outcome("error", problem=f"The {step.name} step returned fewer than two options with their files.")
             self.store.update_step(step.id, options=[asdict(o) for o in made])
         self.store.consume_notes([i for i, _ in notes])
         message, link = str(v.get("message", "")).strip(), str(v.get("link") or "").strip()
@@ -743,9 +743,9 @@ class Scheduler:
         if step.state == "waiting":  # he's replied (the bot queued the job again)
             said = "\n\n".join(text for _, text in self.store.pending_notes(job.id))
             reply = await options.read_reply(self.harness, self.settings, said, shown)
-            if reply.more:  # his reply goes to the new round's options step
+            if reply.more:  # his reply goes to the new round's step, made like the last
                 again = [
-                    Step(0, job.id, 0, "agent", "options", made.max_turns),
+                    Step(0, job.id, 0, "agent", made.name, made.max_turns),
                     Step(0, job.id, 0, "choose", "choose", optional=step.optional),
                 ]
                 self.store.add_steps(job.id, again, after=step.position)

@@ -312,6 +312,17 @@ def test_what_a_pick_tells_the_next_step():
     )
 
 
+def test_a_pick_is_about_the_round_just_before_it():
+    one = [{"letter": x, "title": x, "description": "", "files": [], "images": []} for x in "AB"]
+    first = Step(1, 1, 2, "agent", "options", options=one)
+    second = Step(3, 1, 4, "agent", "options", state="skipped")  # another round, skipped from the status page
+    picks = [Step(2, 1, 3, "choose", "choose"), Step(4, 1, 5, "choose", "choose")]
+    steps = [first, picks[0], second, picks[1]]
+    assert options.shown(steps, picks[0]) == (first, [options.Option(**o) for o in one])
+    assert options.shown(steps, picks[1]) == (second, [])  # not round one's again
+    assert options.shown(steps, first)[0] is first and options.shown(steps, Step(5, 1, 6, "agent", "change")) == (None, [])
+
+
 # --- reading Claude Code's result ---------------------------------------------
 
 

@@ -30,6 +30,8 @@ from .store import Step
 log = logging.getLogger(__name__)
 
 LETTERS = "ABCDEF"
+# Agent steps that make options for a `choose` step to show: their verdict brings them (SCHEMA).
+MAKERS = ("options",)
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
 IMAGES_SHOWN = 3  # an option's first few pictures are shown; the rest are just files
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -150,14 +152,19 @@ def collect(raw: object, checkout: Path, dest: Path, prefix: str) -> list[Option
     return found
 
 
+def makes(step: Step) -> bool:
+    """Whether a step makes options for Riggy to pick from (MAKERS)."""
+    return step.kind == "agent" and step.name in MAKERS
+
+
 def shown(steps: list[Step], step: Step) -> tuple[Step | None, list[Option]]:
-    """The options step a step is about, and its options: itself, or for a `choose` step,
-    the latest options step before it."""
-    if step.kind == "agent" and step.name == "options":
+    """The step that made the options a step is about, and its options: itself, or for a
+    `choose` step, the latest maker before it (none of its own if that round was skipped)."""
+    if makes(step):
         return step, [Option(**o) for o in step.options]
     if step.kind != "choose":
         return None, []
-    made = next((s for s in reversed(steps) if s.position < step.position and s.kind == "agent" and s.name == "options"), None)
+    made = next((s for s in reversed(steps) if s.position < step.position and makes(s)), None)
     return made, [Option(**o) for o in made.options] if made else []
 
 
