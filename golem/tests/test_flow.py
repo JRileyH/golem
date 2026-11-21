@@ -744,6 +744,42 @@ def test_another_design_round_keeps_what_he_settled(golem):
     run(go())
 
 
+def test_a_design_pass_with_nothing_to_design_builds_nothing(golem):
+    async def go():
+        await idle_project(golem)
+        job = golem.store.add_job("tree-cards", "change", "keep the look, just tidy it", "design")
+        golem.harness.script = by_label({"design": [{**verdict("done", "He likes the look as it is."), "skip": "He said keep the look."}]})
+        await golem.finish()
+        steps = {s.name: s for s in golem.store.steps(job.id)}
+        assert (steps["choose"].state, steps["choose"].summary) == ("skipped", "No options to pick from.")
+        assert (steps["guide"].state, steps["guide"].summary) == ("skipped", "Nothing to design: He said keep the look.")
+        assert steps["apply"].state == "skipped" and golem.store.job(job.id).state == "done"
+        assert not any(c.label in ("guide", "apply") for c in golem.harness.calls)
+
+        # Skipped from the status page instead: the same.
+        job = golem.store.add_job("tree-cards", "change", "a design pass", "design")
+        await golem.until("design")
+        design = next(s for s in golem.store.steps(job.id) if s.name == "design")
+        golem.store.update_step(design.id, state="skipped", summary="Skipped from the status page.")
+        await golem.finish()
+        guide = next(s for s in golem.store.steps(job.id) if s.name == "guide")
+        assert (guide.state, guide.summary) == ("skipped", "No design round to build: it was skipped.")
+
+    run(go())
+
+
+def test_the_fake_harness_walks_a_design_pass(golem):
+    async def go():
+        await idle_project(golem)
+        job = golem.store.add_job("tree-cards", "change", "a design pass", "design")
+        golem.harness.script = None  # nothing scripted, as in local mode with HARNESS=fake
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"
+        assert next(s for s in golem.store.steps(job.id) if s.name == "guide").summary.startswith("Nothing to design: (fake)")
+
+    run(go())
+
+
 def test_a_change_request_is_not_options(golem):
     async def go():
         room = await idle_project(golem)

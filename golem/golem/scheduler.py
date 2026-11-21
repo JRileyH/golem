@@ -74,6 +74,7 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # reply was read). The rest (setup, push, CI, merge) show on the status page; failures are
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
+BUILDS_DESIGN = ("guide", "apply")  # agent steps that build a design pass's pick (playbooks/design.md)
 
 
 @dataclass
@@ -342,6 +343,8 @@ class Scheduler:
         """One headless run that does the step's work on the job's branch and commits it. A
         question's or a proposal's looks at the checkout as it is (main, or a job's work under
         way), and anything it changes there is put back."""
+        if step.name in BUILDS_DESIGN and (nothing := self.nothing_designed(job, step)):
+            return Outcome("skipped", nothing)
         looking = job.playbook in LOOKS
         if looking:
             branch = await self.workspace.current_branch(project.slug)
@@ -421,6 +424,17 @@ class Scheduler:
             jobs.append(f"- #{j.id}, {j.playbook}, {j.state} {when}: “{_first_line(j.request, 200)}”" + (f" → {said}" if said else ""))
         said = [f"- {m.who}: {_first_line(m.text, 300)}" for m in self.store.messages(project.slug, limit=20) if m.text]
         return jobs, said
+
+    def nothing_designed(self, job: Job, step: Step) -> str:
+        """Why a step that builds a design pass's pick has nothing to build, or "": its design
+        round was skipped, or found nothing to design."""
+        made = next((s for s in reversed(self.store.steps(job.id)) if s.position < step.position and s.name == "design"), None)
+        design = options.design_of(made)
+        if design and design.skip:
+            return f"Nothing to design: {design.skip}"
+        if made is None or made.state != "done" or not made.options:
+            return "No design round to build: it was skipped."
+        return ""
 
     def keep_options(self, job: Job, project: Project, step: Step, v: dict) -> str:
         """Keep what a step that makes options returned with them (options.collect; a design
