@@ -25,7 +25,7 @@ from . import plan
 from .cards import DENY
 from .config import Settings
 from .harness import VERDICT_SCHEMA, Harness
-from .store import Step
+from .store import Job, Step
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +97,8 @@ REQUEST_SCHEMA = {
     "required": ["kind", "title"],
     "additionalProperties": False,
 }
+# With changes under way on a project that has room for another: which one the message is about.
+TO = {"type": "integer", "description": "The number of the job under way the message belongs to, or 0 for a change of its own"}
 REPLY_SCHEMA = {
     "type": "object",
     "properties": {
@@ -336,21 +338,36 @@ class Request:
 
     kind: str  # change | options | design | question
     title: str  # "" without a model: plan.title falls back to his words
+    to: int = 0  # with jobs under way: the one it belongs to, or 0 for a change of its own
 
 
-async def read_request(harness: Harness, settings: Settings, text: str) -> Request:
+async def read_request(harness: Harness, settings: Settings, text: str, under_way: list[Job] = ()) -> Request:
     """What a message in a project's conversation asks for: a `change`, `options` to pick from first,
     a `design` pass (a look of its own, picked from a few directions), or only an answer to a
-    `question`. The same call names it, for the job it starts."""
+    `question`. The same call names it, for the job it starts. With changes `under_way` (on a
+    project with room for another), also which of them it belongs to, if any: without a model,
+    or if the call doesn't say, the first, as when a project has one change at a time."""
+    first = under_way[0].id if under_way else 0
     if settings.harness != "fake":
-        v = await _ask(harness, settings, "request", {"$request": text.strip()}, REQUEST_SCHEMA)
+        schema, jobs = REQUEST_SCHEMA, ""
+        if under_way:
+            schema = {**REQUEST_SCHEMA, "properties": {**REQUEST_SCHEMA["properties"], "to": TO}, "required": ["kind", "title", "to"]}
+            listed = "\n".join(f"- #{j.id} {plan.title(j)}: “{_line(j.request)}”" for j in under_way)
+            jobs = (settings.process_dir / "prompts" / "request-jobs.md").read_text().replace("$jobs", listed)
+        v = await _ask(harness, settings, "request", {"$under_way": jobs, "$request": text.strip()}, schema)
         if v and v.get("kind") in ("change", "options", "design", "question"):
-            return Request(v["kind"], plan.clean_title(v.get("title")))
+            to = v.get("to") if v.get("to") in (0, *(j.id for j in under_way)) else first
+            return Request(v["kind"], plan.clean_title(v.get("title")), 0 if v["kind"] == "question" else to)
     if DESIGN_RE.search(text):
-        return Request("design", "")
+        return Request("design", "", first)
     if asks_for_options(text):
-        return Request("options", "")
-    return Request("question" if asks_a_question(text) else "change", "")
+        return Request("options", "", first)
+    return Request("question", "") if asks_a_question(text) else Request("change", "", first)
+
+
+def _line(text: str, limit: int = 160) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
 async def read_reply(harness: Harness, settings: Settings, text: str, found: list[Option], questions: list[str] = ()) -> Reply:

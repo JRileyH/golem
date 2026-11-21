@@ -2074,3 +2074,118 @@ def test_one_change_at_a_time_never_catches_up_by_itself(golem):
         assert "catch up with main" not in golem.labels(job.id) and not any(a.startswith("sync") for a in golem.workspace.actions)
 
     run(go())
+
+
+async def two_at_once(golem: Golem) -> tuple[str, object]:
+    """Tree Cards, allowing two changes at once, with one under way (on its change step)."""
+    room = await idle_project(golem)
+    golem.store.update_project("tree-cards", parallel_jobs=2)
+    golem.harness.script = by_label({"request": [{"kind": "change", "title": "Bigger Cards"}]})
+    await golem.say(room, "make the cards bigger")
+    first = golem.store.active_job("tree-cards", questions=False)
+    await golem.until("change")
+    return room, first
+
+
+def test_a_change_of_its_own_starts_beside_the_one_under_way_and_a_follow_up_is_a_note(golem):
+    async def go():
+        room, first = await two_at_once(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change", "title": "Round Timer", "to": 0}]})
+        await golem.say(room, "add a timer to each round")
+        asked = golem.harness.calls[-1]
+        assert asked.schema["properties"]["to"]["type"] == "integer" and asked.schema["required"] == ["kind", "title", "to"]
+        assert f"- #{first.id} Bigger Cards: “make the cards bigger”" in asked.prompt
+        timer = newest_job(golem)
+        assert (timer.title, timer.playbook, timer.state) == ("Round Timer", "feature", "queued")
+        assert golem.chat.texts(room)[-1].startswith(
+            f"Started a change of its own as job {timer.id}, “Round Timer”, beside job {first.id}, “Bigger Cards”: they take turns"
+        )
+        assert golem.chat.texts(room)[-1].endswith(f"If it belongs with job {first.id}, say !switch.")
+
+        # Now there's no room for a third: what he says goes to the job it's about.
+        golem.harness.script = by_label({"request": [{"kind": "change", "title": "x", "to": timer.id}]})
+        await golem.say(room, "make the timer red when it's nearly up")
+        assert golem.store.pending_notes(timer.id) and not golem.store.pending_notes(first.id)
+        assert golem.chat.texts(room)[-1] == f"Noted for job {timer.id}, “Round Timer”: I'll include that when it starts."
+        assert golem.store.room_for_change("tree-cards") is False
+
+    run(go())
+
+
+def test_with_one_change_at_a_time_a_message_is_a_note_as_ever(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change"}, {"kind": "change", "to": 0}]})
+        await golem.say(room, "make the cards bigger")
+        await golem.until("change")
+        await golem.say(room, "and a timer")
+        asked = golem.harness.calls[-1]
+        assert "to" not in asked.schema["properties"] and "under way" not in asked.prompt and "$under_way" not in asked.prompt
+        assert golem.chat.texts(room)[-1] == "Noted. I'll work that in at the next step of the current job."
+        assert len(golem.store.change_jobs("tree-cards")) == 1
+
+    run(go())
+
+
+def test_switch_puts_the_last_message_the_other_way(golem):
+    async def go():
+        room, first = await two_at_once(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change", "title": "Round Timer", "to": first.id}]})
+        await golem.say(room, "add a timer to each round")
+        assert golem.chat.texts(room)[-1].endswith("Rather it was a change of its own? Say !switch.")
+        await golem.say(room, "!switch")  # the note becomes a change of its own
+        timer = newest_job(golem)
+        assert golem.chat.texts(room)[-1] == f"Started it as job {timer.id}, “Round Timer”, a change of its own beside job {first.id}."
+        assert timer.request == "add a timer to each round" and not golem.store.pending_notes(first.id)
+        await golem.say(room, "!switch")
+        assert golem.chat.texts(room)[-1].startswith("Nothing to switch")
+
+        golem.store.update_job(timer.id, state="killed")
+        golem.harness.script = by_label({"request": [{"kind": "change", "title": "Card Backs", "to": 0}]})
+        await golem.say(room, "and nicer card backs")
+        backs = newest_job(golem)
+        await golem.say(room, "!switch")  # the new change goes back to being a note
+        assert golem.store.job(backs.id).state == "killed"
+        assert golem.store.pending_notes(first.id)[-1][1] == "and nicer card backs"
+        assert golem.chat.texts(room)[-1] == f"Dropped job {backs.id}: what you said goes to job {first.id}, “Bigger Cards”, at its next step."
+
+    run(go())
+
+
+def test_an_accepted_proposal_starts_beside_a_change_when_there_is_room(golem):
+    from golem.control import Control
+
+    async def go():
+        room, first = await two_at_once(golem)
+        p = golem.store.add_proposals("tree-cards", first.id, "features", [("Offline mode", "Cache the deck.")])[0]
+        said = await Control(golem.store, golem.scheduler).decide(p.id, True, "")
+        built = golem.store.job(golem.store.proposal(p.id).built_by)
+        assert said == f"Accepted “Offline mode”: job {built.id} builds it."  # not once Bigger Cards is done
+        assert built.title == "Offline mode" and built.state == "queued" and golem.store.job(first.id).state != "done"
+
+    run(go())
+
+
+def test_a_new_project_allows_nothing_beside_it(golem):
+    async def go():
+        room = await new_project(golem, [])
+        golem.store.update_project("tree-cards", parallel_jobs=3)
+        assert not golem.store.room_for_change("tree-cards")
+        golem.harness.script = by_label({"request": [{"kind": "change", "to": 0}]})
+        await golem.say(room, "and a timer")
+        assert len(golem.store.change_jobs("tree-cards")) == 1 and golem.chat.texts(room)[-1].startswith("Noted.")
+
+    run(go())
+
+
+def test_with_two_changes_waiting_a_reply_goes_to_the_one_asked_first(golem):
+    async def go():
+        room, first = await two_at_once(golem)
+        second = golem.store.add_job("tree-cards", "change", "add a timer", "feature", title="Round Timer")
+        for job in (second, first):
+            golem.store.update_job(job.id, state="waiting")
+        await golem.say(room, "oaks and maples")
+        assert golem.store.job(first.id).state == "queued" and golem.store.job(second.id).state == "waiting"
+        assert golem.chat.texts(room)[-1].startswith(f"Thanks, picking it back up (job {first.id}, “Bigger Cards”).")
+
+    run(go())

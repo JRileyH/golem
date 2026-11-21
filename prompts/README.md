@@ -29,9 +29,12 @@ the golem image.
 - `request.md`: whether a message in a project's conversation is a question to answer,
   wants options to pick from first, or a change made straight away, and a title
   for the job it starts ("Library View Redesign").
+- `request-jobs.md`: added to `request.md` on a project that allows more than one
+  change at once, with changes under way: the changes, and which of them the
+  message is about, if any (otherwise golem starts it beside them).
 - `pick.md`: what Riggy's reply to some options says: a pick, or other options.
 - `card.md`: a live project's card on the projects page (tagline, description,
   kind), from its README and brief.
 
-`request.md`, `pick.md` and `card.md` are filled in by plain replacement, and
+`request.md`, `request-jobs.md`, `pick.md` and `card.md` are filled in by plain replacement, and
 `intake.md` and `adopt.md` in one pass of it, not `string.Template`.

@@ -283,10 +283,11 @@ class Scheduler:
         return job
 
     async def build_accepted(self) -> None:
-        """A change job for each proposal Riggy accepted, once its project has no other change under way."""
+        """A change job for each proposal Riggy accepted, once its project has room for another
+        change (one at a time, unless it allows more: turns.py)."""
         for p in self.store.unbuilt_proposals():
             project = self.store.project(p.slug)
-            if project is None or self.store.active_job(p.slug, questions=False):
+            if project is None or not self.store.room_for_change(p.slug):
                 continue
             job = self.store.add_job(p.slug, "change", proposals.request(p), "feature", title=plan.clean_title(p.title))
             if p.issue:  # the job works on the proposal's issue, and its PR closes it

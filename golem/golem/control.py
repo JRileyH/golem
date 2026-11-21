@@ -274,7 +274,7 @@ class Control:
 
     async def decide(self, proposal_id: int, accepted: bool, reason: str) -> str:
         """Riggy's thumbs up or down on a proposal, with why if he says. Up queues it as a change
-        once its project has no other change under way."""
+        once its project has room for one (one at a time, unless it allows more)."""
         p = self.store.proposal(proposal_id)
         if p is None or p.state != "open":
             raise ControlError("That proposal has been decided already.")

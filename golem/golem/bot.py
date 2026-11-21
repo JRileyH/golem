@@ -7,7 +7,10 @@
   waiting on him, a question (answered by a quick look, not a job that builds anything,
   even while a job is under way), a note for the job that's running, or else a new job:
   a change, or, if he asks to see options first, options to pick from and then his pick
-  (options.py), or, if he asks for a new look, a design pass (playbooks/design.md).
+  (options.py), or, if he asks for a new look, a design pass (playbooks/design.md). On a
+  project that allows more than one change at once, a message with changes under way is a
+  note for the one it's about or, if it's a change of its own, a new job beside them (the
+  request call decides; !switch puts it the other way). They take turns (turns.py).
 - `!commands` work anywhere; in a project's conversation they default to that project.
 
 One message is handled at a time, so two can't both start a job.
@@ -16,6 +19,7 @@ One message is handled at a time, so two can't both start a job.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import timedelta
@@ -45,6 +49,7 @@ HELP = """Commands (in a project's conversation they apply to that project; else
 !slug <new-slug> — move it to a new address and repo
 !pause / !resume — hold a project while you tinker; with no project, in golem's own conversation, all work
 !kill [job] — drop a job
+!switch — put your last message the other way: from a note for a change under way to a change of its own beside it, or back (projects that allow more than one change at once)
 !delete — delete a project for good: site, data, checkout and history (asks you to confirm)
 !adopt <repo> [what it is] — in golem's own conversation: take on a repo in the org that golem didn't make. It checks it over, fixes what's missing and deploys it, or says what's in the way
 
@@ -213,15 +218,21 @@ class Bot:
     # --- projects' conversations ----------------------------------------------
 
     async def project_message(self, project: Project, text: str) -> None:
-        job = self.store.active_job(project.slug, questions=False)
+        changes = self.store.change_jobs(project.slug)
+        job = changes[0] if changes else None
         asked = next((j for j in self.store.jobs(("waiting",)) if j.slug == project.slug and j.playbook == "question"), None)
-        for waiting in (j for j in (job, asked) if j and j.state == "waiting"):  # his reply to what golem asked
+        for waiting in (j for j in (*changes, asked) if j and j.state == "waiting"):  # his reply to what golem asked
             self.store.add_note(waiting.id, text)
             self.store.update_job(waiting.id, state="queued")
-            await self.chat.send(project.slug, f"Thanks, picking it back up. {self.queue_position(waiting)}", notice=True)
+            which = f" (job {waiting.id}, “{plan.title(waiting)}”)" if len(changes) > 1 else ""
+            await self.chat.send(project.slug, f"Thanks, picking it back up{which}. {self.queue_position(waiting)}", notice=True)
             self.scheduler.wake()
             return
-        asked = await options.read_request(self.harness, self.settings, text)
+        # With room for another change beside those under way, the call also says which one (if
+        # any) the message belongs to; without, it's a note for the change under way, as ever.
+        room = self.store.room_for_change(project.slug)
+        under_way = changes if changes and (room or len(changes) > 1) else []
+        asked = await options.read_request(self.harness, self.settings, text, under_way)
         if asked.kind == "question":
             said = self.start_question(project, text, asked.title)
             if said:
@@ -240,11 +251,68 @@ class Bot:
                 await self.chat.send(project.slug, f"Got it. {position}", notice=True)
             self.scheduler.wake()
             return
-        self.store.add_note(job.id, text)
-        if job.state == "running" or self.store.steps(job.id):  # under way, maybe waiting on CI
-            await self.chat.send(project.slug, "Noted. I'll work that in at the next step of the current job.", notice=True)
+        if asked.to == 0 and room:  # a change of its own, beside those under way
+            new = self.start_change(project, text, asked.kind, asked.title)
+            other = changes[-1]  # the one asked for last: the likeliest it was meant for
+            self.remember_switch(project, text, asked, new=new.id, other=other.id)
+            what = {"options": "options to pick from first", "design": "a design pass"}.get(asked.kind, "a change of its own")
+            beside = " and ".join(f"job {j.id}" for j in changes) if len(changes) > 1 else f"job {other.id}, “{plan.title(other)}”"
+            said = f"Started {what} as job {new.id}, “{plan.title(new)}”, beside {beside}: they take turns building and shipping."
+            position = self.queue_position(new)
+            said += ("" if position == STARTING else f" {position}") + f" If it belongs with job {other.id}, say !switch."
+            await self.chat.send(project.slug, said, notice=True)
+            return
+        target = next((j for j in changes if j.id == asked.to), job)
+        note = self.store.add_note(target.id, text)
+        under = target.state == "running" or self.store.steps(target.id)  # under way, maybe waiting on CI
+        if not under_way:
+            said = "Noted. I'll work that in at the next step of the current job." if under else "Noted. I'll include that when the job starts."
         else:
-            await self.chat.send(project.slug, "Noted. I'll include that when the job starts.", notice=True)
+            self.remember_switch(project, text, asked, note=note, other=target.id)
+            said = f"Noted for job {target.id}, “{plan.title(target)}”: " + ("I'll work that in at its next step." if under else "I'll include that when it starts.")
+            said += " Rather it was a change of its own? Say !switch." if room else ""
+        await self.chat.send(project.slug, said, notice=True)
+
+    def start_change(self, project: Project, text: str, kind: str, title: str) -> Job:
+        """A new change job for what he said: options to pick from first, a design pass, or the change itself."""
+        job = self.store.add_job(project.slug, "change", text, {"options": "options", "design": "design"}.get(kind, "feature"), title=title)
+        self.scheduler.wake()
+        return job
+
+    def remember_switch(self, project: Project, text: str, asked: options.Request, note: int = 0, new: int = 0, other: int = 0) -> None:
+        """Where the last message went, for !switch to put it the other way: a note for job
+        `other`, or a new job `new` beside it."""
+        self.store.put(f"switch_{project.slug}", json.dumps({"text": text, "kind": asked.kind, "title": asked.title, "note": note, "new": new, "other": other}))
+
+    def switch(self, project: Project) -> str:
+        """!switch: the last message the other way. A note for a change under way becomes a change
+        of its own, if it hasn't been passed on; a new change becomes a note, if it hasn't started building."""
+        key = f"switch_{project.slug}"
+        last = json.loads(self.store.get(key) or "{}")
+        if not last:
+            return "Nothing to switch: !switch puts your last message the other way, from a note for a change under way to a change of its own, or back."
+        self.store.put(key, "")
+        other = self.store.job(last["other"])
+        if last["note"]:
+            found = self.store.note(last["note"])
+            if found is None or found[2]:
+                return f"Job {last['other']} has already worked that in."
+            if not self.store.room_for_change(project.slug):
+                return f"{project.name} has as many changes under way as it allows ({project.parallel_jobs}): !kill one, or allow more in its settings."
+            self.store.drop_note(last["note"])
+            new = self.start_change(project, last["text"], last["kind"], last["title"])
+            return f"Started it as job {new.id}, “{plan.title(new)}”, a change of its own beside job {last['other']}."
+        new = self.store.job(last["new"])
+        if new is None or new.state not in ACTIVE:
+            return f"Job {last['new']} has finished already."
+        if other is None or other.state not in ACTIVE:
+            return f"Job {last['other']} has finished, so job {new.id} carries on as its own change."
+        steps = self.store.steps(new.id)
+        if any(s.started_at and plan.step_class(steps, s) == "build" for s in steps):
+            return f"Job {new.id} has started building: !kill {new.id} if you'd rather it went with job {other.id}."
+        self.scheduler.kill(new.id)
+        self.store.add_note(other.id, last["text"])
+        return f"Dropped job {new.id}: what you said goes to job {other.id}, “{plan.title(other)}”, at its next step."
 
     def start_question(self, project: Project, question: str, title: str = "") -> str:
         """A question: a quick look and an answer, ahead of other work. Says so only if it has to wait."""
@@ -337,6 +405,8 @@ class Bot:
                     return f"Paused {project.name}. A step already running finishes first; nothing new starts until !resume."
                 return f"Resumed {project.name}."
             case "kill":
+                if not args and here and len(changes := self.store.change_jobs(here.slug)) > 1:
+                    return "Which one? !kill <number>:\n" + "\n".join(self.job_line(j) for j in changes)
                 job = self.pick_job(args, here)
                 if job is None:
                     return "Which job? !kill <number> (see !queue)."
@@ -355,7 +425,7 @@ class Bot:
                 if not project or not words:
                     return "Usage: !options <what to pick between> in the project's conversation, or !options <slug> <what>."
                 job = self.store.active_job(project.slug, questions=False)
-                if job:
+                if job and not self.store.room_for_change(project.slug):
                     return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
                 return self.start_options(project, " ".join(words))
             case "design":
@@ -363,7 +433,7 @@ class Bot:
                 if not project:
                     return "Usage: !design [how it should feel] in the project's conversation, or !design <slug> [how it should feel]."
                 job = self.store.active_job(project.slug, questions=False)
-                if job:
+                if job and not self.store.room_for_change(project.slug):
                     return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
                 request = " ".join(words) or "A design pass: give it a look of its own."
                 return self.start_design(project, request, "" if words else "Design Pass")
@@ -379,6 +449,9 @@ class Bot:
                 if not project or len(rest) != 1:
                     return "Usage: !slug <new-slug> in the project's conversation, or !slug <old-slug> <new-slug>."
                 return await self.move(project, rest[0].lower())
+            case "switch":
+                project = self.pick_project(args, here)
+                return self.switch(project) if project else "Usage: !switch in the project's conversation, or !switch <slug>."
             case "delete":
                 return await self.delete(args, here)
             case "adopt":
@@ -417,8 +490,8 @@ class Bot:
         return f"#{job.id} {project.name}: {what} “{plan.title(job)}”, {state}, {plan.where(steps)}{held}"
 
     def status_text(self, project: Project) -> str:
-        job = self.store.active_job(project.slug)
-        state = self.job_line(job) if job else "Idle."
+        jobs = [j for j in self.store.jobs(ACTIVE, limit=1000) if j.slug == project.slug]
+        state = "\n".join(self.job_line(j) for j in sorted(jobs, key=lambda j: j.id)) or "Idle."
         return (
             f"{project.name} ({project.slug})\n{plan.settings_line(project)}\n{state}\n"
             f"{self.settings.project_url(project.slug)}\n{self.settings.repo_url(project.slug)}"

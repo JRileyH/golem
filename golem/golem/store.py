@@ -637,10 +637,19 @@ class Store:
 
     # --- notes ----------------------------------------------------------------
 
-    def add_note(self, job_id: int, text: str, step_id: int | None = None) -> None:
-        self.db.execute(
+    def add_note(self, job_id: int, text: str, step_id: int | None = None) -> int:
+        cur = self.db.execute(
             "INSERT INTO notes (job_id, text, created_at, step_id) VALUES (?, ?, ?, ?)", (job_id, text, now(), step_id)
         )
+        return cur.lastrowid
+
+    def note(self, note_id: int) -> tuple[int, str, bool] | None:
+        """A note's job, text and whether it's been passed on to a step."""
+        row = self.db.execute("SELECT job_id, text, consumed FROM notes WHERE id = ?", (note_id,)).fetchone()
+        return (row["job_id"], row["text"], bool(row["consumed"])) if row else None
+
+    def drop_note(self, note_id: int) -> None:
+        self.db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
     def pending_notes(self, job_id: int, step_id: int | None = None) -> list[tuple[int, str]]:
         """Notes not yet passed on: those for whichever step is next, and those for `step_id`."""
