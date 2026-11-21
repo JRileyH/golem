@@ -186,11 +186,11 @@ class Scheduler:
         for job in self.store.jobs(ACTIVE):
             if self.store.runs(job.id):  # under way from before steps were tracked
                 self.ensure_steps(job)
-        self.tidy()
         self.backfill = asyncio.create_task(self.missing_cards())
         self.versions = asyncio.create_task(self.upgrades.watch_forever())
         try:
             while True:
+                await self.tidy()  # what jobs that ended left
                 if self.upgrades.holding():  # nothing new starts; the upgrade goes once nothing's running
                     if self.upgrades.state == "pending" and not self.running:
                         await self.upgrades.start()
@@ -239,7 +239,6 @@ class Scheduler:
             await self.retry_or_ask(job, f"golem error: {e!r}")
         finally:
             self.running.pop(job.id, None)
-            self.tidy()
             self.wake()
 
     async def idle(self) -> None:
@@ -994,13 +993,18 @@ class Scheduler:
         )
         return env
 
-    def tidy(self) -> None:
-        """Remove the scratch directories of jobs that are over. Best effort."""
+    async def tidy(self) -> None:
+        """Remove the scratch directories and trees of jobs that are over. Best effort. What to keep
+        is read before anything is awaited, so a tree made meanwhile is never among what goes."""
         keep = self.store.active_job_ids() | set(self.running)
-        for path in self.settings.tmp_dir.glob("job-*"):
-            n = path.name.removeprefix("job-")
-            if n.isdigit() and int(n) not in keep:
-                shutil.rmtree(path, ignore_errors=True)
+        ids = {p: p.name.removeprefix("job-") for p in self.settings.tmp_dir.glob("job-*")}
+        scratch = [p for p, n in ids.items() if n.isdigit() and int(n) not in keep]
+        try:
+            await self.workspace.prune_trees(keep)  # lists the trees before it awaits anything
+        except WorkspaceError as e:
+            log.warning("tidying job trees: %s", e)
+        for path in scratch:
+            await asyncio.to_thread(shutil.rmtree, path, True)
 
     async def say(self, project: Project, text: str, notice: bool = False) -> None:
         await self.chat.send(project.slug, text, notice=notice)

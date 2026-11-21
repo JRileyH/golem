@@ -162,12 +162,12 @@ class GitHubWorkspace:
 
     async def drop_tree(self, slug: str, job: int) -> None:
         """The job's tree goes (its branch stays, with whatever it pushed)."""
-        path = self.tree_path(job)
+        path, repo = self.tree_path(job), (self.path(slug) / ".git").is_dir()
         if path.exists():
-            code, _ = await run("git", "worktree", "remove", "--force", str(path), cwd=self.path(slug))
-            if code != 0:
+            code = (await run("git", "worktree", "remove", "--force", str(path), cwd=self.path(slug)))[0] if repo else 1
+            if code != 0:  # no checkout any more (the project's going), or git couldn't
                 await remove_tree(path)
-        if (self.path(slug) / ".git").is_dir():
+        if repo:
             await run("git", "worktree", "prune", cwd=self.path(slug))
 
     async def prune_trees(self, keep: set[int]) -> None:

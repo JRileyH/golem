@@ -23,11 +23,13 @@ async def delete_project(
 
 
 async def forget_project(project: Project, settings: Settings, store: Store, workspace: Workspace) -> None:
-    """Everything golem keeps of a project on its own side: the checkout, the records and logs,
-    the card. All a repo golem checked over and didn't adopt ever had."""
+    """Everything golem keeps of a project on its own side: the checkout and its jobs' trees, the
+    records and logs, the card. All a repo golem checked over and didn't adopt ever had. A tree
+    left behind if this fails part-way goes with the next tidy (Scheduler.tidy)."""
     await workspace.remove(project.slug)
     card = store.card(project.slug)
     for job_id in store.delete_project(project.slug):
+        await workspace.drop_tree(project.slug, job_id)
         await asyncio.to_thread(shutil.rmtree, settings.job_logs(job_id), ignore_errors=True)
     if card and card.image:  # its screenshot on the projects page
         (settings.state_dir / "cards" / card.image).unlink(missing_ok=True)
