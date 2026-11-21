@@ -141,8 +141,15 @@ class Prompts:
     def resume(self, feedback: list[str]) -> str:
         return self.render("resume", feedback=format_feedback(feedback))
 
-    def wrapup(self) -> str:
-        return self.render("wrapup")
+    def wrapup(self, makes: bool = False) -> str:
+        """`makes`: the step returns what it made with its verdict (options, proposals…)."""
+        more = (
+            "If it's finished, also give what the step said to return with its verdict (its "
+            "options, or whatever else the step asked for), exactly as you would have.\n"
+            if makes
+            else ""
+        )
+        return self.render("wrapup", made=more)
 
     def intake_path(self) -> Path:
         return self.dir / "intake.md"

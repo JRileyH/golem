@@ -41,6 +41,17 @@ WRAPUP_SCHEMA = {
     "required": ["finished", "message"],
     "additionalProperties": False,
 }
+
+
+def wrapup_schema(step_schema: dict | None) -> dict:
+    """The wrapup's schema for a step whose verdict carries more (an options step's options):
+    those fields too, optional, so a step that finished as its turns ran out doesn't lose them."""
+    extra = {k: v for k, v in ((step_schema or {}).get("properties") or {}).items() if k not in VERDICT_SCHEMA["properties"]}
+    if not extra:
+        return WRAPUP_SCHEMA
+    return {**WRAPUP_SCHEMA, "properties": {**WRAPUP_SCHEMA["properties"], **extra}}
+
+
 # How Claude Code reports running out of subscription usage. Matched loosely on purpose:
 # a false positive only parks a job for a while; a miss burns retries.
 LIMIT_RE = re.compile(r"usage limit|limit reached|limit will reset|resets at|rate.?limit|out of (extra )?usage", re.I)

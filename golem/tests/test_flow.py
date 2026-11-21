@@ -939,6 +939,30 @@ def test_running_out_of_turns_gets_a_wrapup_in_the_same_session(golem):
     run(go())
 
 
+def test_an_options_step_that_finishes_as_its_turns_run_out_keeps_its_options(golem):
+    async def go():
+        room = await idle_project(golem)
+        await golem.say(room, "!options a new hero")
+        job = golem.store.active_job("tree-cards")
+        await golem.until("options")
+
+        def script(call):
+            if call.label == "options":  # makes them, then runs out of turns before its verdict
+                three_styles(call)
+                return RunResult("max_turns", session_id="s-1")
+            assert call.label == "options-wrapup" and "options" in call.schema["properties"]
+            assert "also give what the step said to return" in call.prompt
+            return RunResult("verdict", {**three_styles(call), "finished": True, "message": "Three heroes."}, session_id="s-1")
+
+        golem.harness.script = script
+        await golem.step()
+        made = next(s for s in golem.store.steps(job.id) if s.name == "options")
+        assert (made.state, made.summary, len(made.options)) == ("done", "Three heroes.", 3)
+        assert plan.label(current(golem, job.id)) == "your pick"
+
+    run(go())
+
+
 def test_interrupted_jobs_carry_on_from_their_step(golem):
     async def go():
         await new_project(golem, [])

@@ -38,7 +38,7 @@ from . import adopt, options, plan, proposals, teardown
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
-from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult
+from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult, wrapup_schema
 from .history import records
 from .talk import INBOX, STATUS, Talk
 from .upgrade import Upgrades
@@ -373,14 +373,16 @@ class Scheduler:
         schema = {"options": options.SCHEMA, "propose": proposals.SCHEMA}.get(step.name)  # what it made comes with its verdict
         result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema)
         if result.outcome == "max_turns" and result.session_id:
+            wrapped = wrapup_schema(schema)
             wrapup = await self.execute(
-                job, project, step, f"{step.name}-wrapup", WRAPUP_TURNS, self.prompts.wrapup(), result.session_id, WRAPUP_SCHEMA
+                job, project, step, f"{step.name}-wrapup", WRAPUP_TURNS, self.prompts.wrapup(bool(schema)), result.session_id, wrapped
             )
             said = str((wrapup.verdict or {}).get("message", "")).strip()
             if wrapup.outcome != "verdict":
                 result = wrapup
-            elif wrapup.verdict.get("finished") is True:
-                result = RunResult("verdict", {"verdict": "done", "message": said}, session_id=wrapup.session_id)
+            elif wrapup.verdict.get("finished") is True:  # with what the step made, if it says
+                made = {k: v for k, v in wrapup.verdict.items() if k not in WRAPUP_SCHEMA["properties"]}
+                result = RunResult("verdict", {**made, "verdict": "done", "message": said}, session_id=wrapup.session_id)
             else:
                 result = RunResult("error", error=f"ran out of turns: {said}")
         if looking and was_clean:
