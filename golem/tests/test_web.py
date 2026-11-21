@@ -539,6 +539,18 @@ def test_kinds_of_proposal_are_all_on_until_riggy_unticks_one(golem, page):
     assert golem.store.project("trees").proposals_off == ",".join(x.name for x in LENSES[:-1])
 
 
+def test_how_many_changes_at_once_is_a_project_setting(golem, page):
+    sign_in(page)
+    html = page.get("/p/trees/settings").text
+    assert "<h2>Changes at once</h2>" in html and "<option selected>1</option>" in html and "<option>4</option>" in html
+    assert "up%20to%202%20changes%20at%20once" in act(page, action="setting", slug="trees", name="parallel_jobs", value="2")
+    assert golem.store.project("trees").parallel_jobs == 2 and "<option selected>2</option>" in page.get("/p/trees/settings").text
+    assert "Up to 2 changes at once, taking turns building and shipping, from the status page." in golem.chat.texts("trees")
+    for bad in ("0", "5", "x", ""):
+        assert "Pick%201%20to%204%20changes%20at%20once." in act(page, action="setting", slug="trees", name="parallel_jobs", value=bad)
+    assert "one%20change%20at%20a%20time" in act(page, action="setting", slug="trees", name="parallel_jobs", value="1")
+
+
 def test_a_project_with_two_changes_shows_each_and_who_waits_for_whom(golem, page):
     sign_in(page)
     golem.store.update_job(page.job.id, state="done")

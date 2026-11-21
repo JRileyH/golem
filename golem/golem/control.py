@@ -28,7 +28,7 @@ import re
 from . import options, plan
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, EVERY, MAX_WORKERS, MODELS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
@@ -166,9 +166,19 @@ class Control:
 
     async def setting(self, slug: str, name: str, value: str) -> str:
         """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
-        none; how often golem looks for improvements to propose, "" for never; or how many proposals
-        may await Riggy before it stops."""
+        none; how often golem looks for improvements to propose, "" for never; how many proposals
+        may await Riggy before it stops; or how many changes may be under way at once (turns.py)."""
         project = self._project(slug)
+        if name == "parallel_jobs":
+            if not value.isdigit() or int(value) not in CHANGES_AT_ONCE:
+                raise ControlError(f"Pick {CHANGES_AT_ONCE[0]} to {CHANGES_AT_ONCE[-1]} changes at once.")
+            self.store.update_project(slug, parallel_jobs=int(value))
+            said = "One change at a time" if value == "1" else f"Up to {value} changes at once, taking turns building and shipping"
+            if len(under_way := self.store.change_jobs(slug)) > int(value):
+                said += f" (the {len(under_way)} under way carry on)"
+            await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
+            self.scheduler.wake()
+            return f"{project.name}: {said[0].lower()}{said[1:]}."
         if name == "proposals_max":
             if not value.isdigit() or int(value or 0) not in WAITING:
                 raise ControlError(f"Pick how many: {', '.join(map(str, WAITING))}.")

@@ -22,7 +22,7 @@ from html import escape
 from . import plan
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
 from .proposals import LENSES, WAITING, kinds
-from .store import ACTIVE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
@@ -183,10 +183,25 @@ def settings_html(project: Project, tags: list[str]) -> str:
         "<p class=sub>From the next job (mode) or the next step (model, effort).</p>"
         f"<div class=row-form><span>Mode</span>{mode}</div><div class=row-form>{engine}</div>"
         f"<div class=row-form>{_pause(project, back)}</div></section>"
-        "<section class='card settings'><h2>Tag</h2><p class=sub>What sort of project it is, on the projects page. "
+        + changes_card(project, back)
+        + "<section class='card settings'><h2>Tag</h2><p class=sub>What sort of project it is, on the projects page. "
         "<a href=/settings#tags>The tags</a></p><div class=row-form>"
         + select_form("tag", project.tag, tuple(tags), "none", action="setting", slug=slug, back=back)
         + "</div></section>"
+    )
+
+
+def changes_card(project: Project, back: str) -> str:
+    """How many changes golem works on here at once (turns.py)."""
+    options = "".join(f"<option{' selected' if n == project.parallel_jobs else ''}>{n}</option>" for n in CHANGES_AT_ONCE)
+    return (
+        "<section class='card settings' id=changes><h2>Changes at once</h2><p class=sub>How many changes golem works "
+        "on here at the same time. Each gets its own branch and checkout; they overlap at planning, review and docs, "
+        "take turns at building and shipping, and catch up with what shipped before they do. Parallel workers, in "
+        "Settings, caps the total across projects.</p>"
+        f"<form method=post action=/act class=row-form>{_hidden(action='setting', slug=project.slug, name='parallel_jobs', back=back)}"
+        f"<label for=changes-at-once>At once</label><select id=changes-at-once name=value onchange='this.form.submit()'>{options}</select>"
+        "</form></section>"
     )
 
 

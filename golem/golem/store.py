@@ -192,6 +192,7 @@ LOOKS = ("question", "proposals")
 EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
 MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
+CHANGES_AT_ONCE = (1, 2, 3, 4)  # what a project's parallel_jobs can be
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
