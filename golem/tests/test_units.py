@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import gzip
 import json
+import os
+import signal
 import stat
 import sys
+import time
 
 import httpx
 import pytest
@@ -468,6 +471,36 @@ def test_claude_harness_runs_the_cli(tmp_path):
     assert "--resume old" in message and message.endswith("prompt=build it")
     with gzip.open(log_path, "rt") as f:
         assert [json.loads(line)["type"] for line in f] == ["system", "assistant", "result"]
+
+
+LEAVES_SOMETHING_RUNNING = """#!{python}
+import json, subprocess, sys
+sys.stdin.read()
+left = subprocess.Popen(["sleep", "300"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(json.dumps({{"type": "result", "subtype": "success", "is_error": False, "num_turns": 1,
+                  "structured_output": {{"verdict": "done", "message": str(left.pid)}}}}))
+"""
+
+
+def test_what_a_run_leaves_running_is_stopped_when_it_ends(tmp_path):
+    binary = tmp_path / "claude"
+    binary.write_text(LEAVES_SOMETHING_RUNNING.format(python=sys.executable))
+    binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    r = asyncio.run(
+        ClaudeHarness(str(binary)).run(
+            cwd=tmp_path, prompt="serve it", model="sonnet", max_turns=5, log_path=tmp_path / "log.jsonl.gz",
+            env={"PATH": os.environ["PATH"], "GOLEM_TMP": str(tmp_path)},
+        )  # fmt: skip
+    )
+    left = int(r.verdict["message"])
+    for _ in range(200):  # a dev server it forgot would hold its port for the next worker
+        try:
+            os.kill(left, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.01)
+    os.kill(left, signal.SIGKILL)
+    raise AssertionError("the process the run left behind is still running")
 
 
 # --- deployer client ----------------------------------------------------------

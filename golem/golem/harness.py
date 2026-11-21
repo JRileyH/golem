@@ -10,7 +10,9 @@ import asyncio
 import gzip
 import json
 import logging
+import os
 import re
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -112,7 +114,14 @@ class ClaudeHarness:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=16 * 1024 * 1024,  # one stream-json line can carry a whole file
+            start_new_session=True,  # its own process group, so what it starts can be stopped with it
         )
+        try:
+            return await self._talk(proc, prompt, log_path, resume, schema)
+        finally:
+            stop_leftovers(proc.pid, env.get("GOLEM_TMP", ""))
+
+    async def _talk(self, proc, prompt: str, log_path: Path, resume: str | None, schema: dict | None) -> RunResult:
         result: dict | None = None
         session_id = resume
         try:
@@ -141,6 +150,25 @@ class ClaudeHarness:
                     proc.kill()
             raise
         return interpret(result, session_id, proc.returncode, stderr, verdict_expected=schema is None)
+
+
+def stop_leftovers(group: int, tmp: str) -> None:
+    """Stop what a run left running (a dev server it forgot, a watcher), so it holds no port or
+    memory once the step is over: its process group, and on Linux any process whose environment
+    has the run's GOLEM_TMP, for one that started a session of its own. Best effort."""
+    try:
+        os.killpg(group, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    if not tmp:
+        return
+    marker = f"GOLEM_TMP={tmp}".encode()
+    for proc in Path("/proc").glob("[0-9]*"):  # no /proc on a Mac: the process group has to do
+        try:
+            if int(proc.name) != os.getpid() and marker in (proc / "environ").read_bytes().split(b"\0"):
+                os.kill(int(proc.name), signal.SIGTERM)
+        except (OSError, ValueError):
+            continue
 
 
 def interpret(
