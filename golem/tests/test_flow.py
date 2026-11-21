@@ -1844,3 +1844,23 @@ def test_what_golem_says_about_the_queue_with_several_workers(golem):
         loop.cancel()
 
     run(go())
+
+
+def test_a_spare_worker_looks_for_proposals_while_another_project_is_worked_on(golem):
+    async def go():
+        await idle_project(golem)
+        golem.store.update_project("tree-cards", proposals="hourly")
+        gate = golem.scheduler.harness = Gate()
+        a_change(golem, "birds")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: gate.started)
+        await asyncio.sleep(0.05)
+        assert golem.store.proposal_jobs("tree-cards") == []  # the only worker is busy
+
+        golem.store.put("workers", "2")
+        golem.scheduler.wake()
+        await soon(lambda: ("tree-cards", "propose") in gate.started)
+        assert len(golem.store.proposal_jobs("tree-cards")) == 1
+        loop.cancel()
+
+    run(go())

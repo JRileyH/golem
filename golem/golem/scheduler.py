@@ -250,8 +250,8 @@ class Scheduler:
         self._wake.clear()
 
     def propose(self) -> Job | None:
-        """With nothing else to do, a proposals job for the project most overdue for one."""
-        project = proposals.due(self.store, datetime.now(UTC))
+        """With nothing else to do (a worker spare), a proposals job for the project most overdue for one."""
+        project = proposals.due(self.store, datetime.now(UTC), spare=len(self.running) < self.workers)
         if project is None:
             return None
         job = proposals.start(self.store, project)

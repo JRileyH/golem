@@ -110,11 +110,12 @@ def next_lens(store: Store, project: Project) -> Lens | None:
     return next((x for x in LENSES[after:] + LENSES[:after] if x in on), None)
 
 
-def due(store: Store, at: datetime) -> Project | None:
+def due(store: Store, at: datetime, spare: bool = False) -> Project | None:
     """The project most overdue for proposals, when golem has nothing else to do: nothing
-    queued, running or parked anywhere. Only live, unpaused projects with no job of their own
-    under way, a kind of proposal on and fewer proposals awaiting Riggy than its settings allow count."""
-    if store.jobs(("queued", "running", "parked"), limit=1):
+    queued or parked anywhere, and nothing running either unless a worker is `spare`. Only
+    live, unpaused projects with no job of their own under way, a kind of proposal on and fewer
+    proposals awaiting Riggy than its settings allow count."""
+    if store.jobs(("queued", "parked"), limit=1) or (not spare and store.jobs(("running",), limit=1)):
         return None
     found: list[tuple[datetime, Project]] = []
     for project, _ in store.live_projects():
