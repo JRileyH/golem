@@ -61,6 +61,7 @@ RUN uv sync --frozen --no-dev
 COPY golem/golem ./golem
 COPY --chmod=755 golem/tools/golem-screenshot.mjs /usr/local/bin/golem-screenshot
 COPY --chmod=755 golem/tools/golem-card-shot.mjs /usr/local/bin/golem-card-shot
+COPY --chmod=755 golem/tools/golem-render-doc.mjs /usr/local/bin/golem-render-doc
 # Workers deploy their own project through this (skills/deploy.md).
 RUN printf '#!/bin/sh\nexec /opt/golem/app/.venv/bin/python -m golem.deploy_cli "$@"\n' > /usr/local/bin/golem-deploy \
     && chmod 755 /usr/local/bin/golem-deploy

@@ -359,6 +359,20 @@ def test_a_pick_is_about_the_round_just_before_it():
     assert options.shown(steps, first)[0] is first and options.shown(steps, Step(5, 1, 6, "agent", "change")) == (None, [])
 
 
+def test_the_doc_renderer_renders_in_the_sandbox_golem_serves_docs_in():
+    from golem.web import DOC_POLICY
+
+    tool = (REPO / "golem/tools/golem-render-doc.mjs").read_text()
+    assert f'const POLICY = "{DOC_POLICY}";' in tool  # what a worker sees is what Riggy sees
+    assert f"MAX_BYTES = {options.MAX_IMAGE_BYTES // 2**20} * 1024 * 1024" in tool
+
+
+def test_every_worker_tool_is_installed():
+    dockerfile = (REPO / "golem/Dockerfile").read_text()
+    for tool in sorted((REPO / "golem/tools").glob("golem-*.mjs")):
+        assert f"golem/tools/{tool.name} /usr/local/bin/{tool.stem}" in dockerfile, tool.name
+
+
 # --- reading Claude Code's result ---------------------------------------------
 
 

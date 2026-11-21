@@ -15,6 +15,22 @@ network to settle, saves full-page screenshots to `/tmp/screens/`, and prints
 their paths plus any console errors, page errors and failed requests. Read both
 screenshots. Errors printed here are bugs.
 
+Add `--dark` to shoot each size again in dark mode (`prefers-color-scheme:
+dark`), for anything with a dark theme: four screenshots, `-dark` in the names.
+
+## A design doc: `golem-render-doc`
+
+```sh
+golem-render-doc docs/design/rounds/job-$GOLEM_JOB/round-1/doc.html docs/design/rounds/job-$GOLEM_JOB/round-1/pages
+```
+
+Renders a design round's doc the way golem shows it to Riggy, in the same
+sandbox, and saves a picture of each `<section class=page>` as `page-01.png`,
+`page-02.png`… It prints each picture's path with the page's heading, the fonts
+that loaded, and anything the doc tried to load or run (golem blocks those, so
+he wouldn't see them either). `--width` sets the page width in CSS pixels (820),
+`--scale` the pixel density (2). How to make the doc: `skills/design.md`.
+
 ## Driving a flow: write a Playwright script
 
 For anything interactive (playing a round, submitting a form), write a short
