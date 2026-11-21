@@ -4,9 +4,9 @@ A project's settings say how often golem looks (off, the default; hourly, daily 
 When nothing is queued, running or parked anywhere, the scheduler starts a proposals job on
 the live project most overdue for one (`due`). Like a question it only looks: `refresh`
 brings the checkout up to date, a `propose` agent step looks the project over and returns
-up to MAX_PER_RUN proposals with its verdict, and golem's `proposals` step posts them in
-the project's conversation, and opens an issue for each on its repo. Nothing is committed,
-pushed or deployed.
+the one proposal it thinks best (MAX_PER_RUN) with its verdict, and golem's `proposals`
+step posts it in the project's conversation, and opens an issue for it on its repo. Nothing
+is committed, pushed or deployed.
 
 Each job looks through one lens (features, security, polish…), the next in LENSES each time,
 so that over time every side of the project gets a fresh look rather than the same kind of
@@ -19,9 +19,12 @@ template.
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
 up becomes a change job on the feature playbook, as soon as the project has no other change
 under way, and that job's PR closes the proposal's issue; a thumbs down closes it with his
-reason. The issues are only a record: golem never reads anything back from GitHub. A project
-with as many proposals awaiting him as its settings allow (5 unless he says) gets no more until
-he decides.
+reason. The issues are only a record: golem never reads anything back from GitHub.
+
+One at a time, so he gets a steady trickle to decide on rather than a pile: a project's turn
+comes round every interval after its last proposals job (`turn`), and while as many proposals
+await him as its settings allow (5 unless he says), its turns pass. Deciding on one brings the
+next at the following turn, not straight away, and turns missed while he was away never pile up.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from .store import Job, Project, Proposal, Store
 REQUEST = "Look at its {} for things to propose"  # a proposals job's request, naming its lens
 INTERVALS = {"hourly": timedelta(hours=1), "daily": timedelta(days=1), "weekly": timedelta(days=7)}
 PRIORITY = -1000  # behind anything Riggy asks for, from the next step boundary
-MAX_PER_RUN = 3
+MAX_PER_RUN = 1  # a proposal a turn, the best the worker found
 WAITING = (1, 2, 3, 4, 5, 6, 8, 10, 15, 20)  # how many may await Riggy, to pick from in a project's settings
 PAST_SHOWN = 60  # earlier proposals in the worker's prompt, newest first
 SIZES = ("small", "medium", "large")
@@ -110,11 +113,20 @@ def next_lens(store: Store, project: Project) -> Lens | None:
     return next((x for x in LENSES[after:] + LENSES[:after] if x in on), None)
 
 
+def turn(last: datetime | None, every: timedelta, at: datetime) -> datetime | None:
+    """A project's latest turn for proposals by `at`: a whole number of intervals after its last
+    proposals job (`last`), or `at` itself if it never had one; None before the first comes round."""
+    if last is None:
+        return at
+    return last + (at - last) // every * every if at - last >= every else None
+
+
 def due(store: Store, at: datetime, spare: bool = False) -> Project | None:
     """The project most overdue for proposals, when golem has nothing else to do: nothing
     queued or parked anywhere, and nothing running either unless a worker is `spare`. Only
-    live, unpaused projects with no job of their own under way, a kind of proposal on and fewer
-    proposals awaiting Riggy than its settings allow count."""
+    live, unpaused projects with no job of their own under way, a kind of proposal on and their
+    turn come round count, and only if fewer proposals awaited Riggy at that turn than its
+    settings allow, and still do: a turn at the limit passes, and the next is one later."""
     if store.jobs(("queued", "parked"), limit=1) or (not spare and store.jobs(("running",), limit=1)):
         return None
     found: list[tuple[datetime, Project]] = []
@@ -122,12 +134,13 @@ def due(store: Store, at: datetime, spare: bool = False) -> Project | None:
         every = INTERVALS.get(project.proposals)
         if every is None or project.paused or store.active_job(project.slug) or not kinds(project):
             continue
-        if len(store.proposals(project.slug, ("open",))) >= project.proposals_max:
-            continue
         earlier = store.proposal_jobs(project.slug)
-        last = datetime.fromisoformat(earlier[-1].created_at) if earlier else datetime.min.replace(tzinfo=UTC)
-        if at - last >= every:
-            found.append((last, project))
+        last = datetime.fromisoformat(earlier[-1].created_at) if earlier else None
+        if (latest := turn(last, every, at)) is None:
+            continue
+        waiting = (store.proposals_waiting(project.slug, t.isoformat(timespec="seconds")) for t in (latest, at))
+        if max(waiting) < project.proposals_max:
+            found.append((last or datetime.min.replace(tzinfo=UTC), project))
     return min(found, key=lambda f: f[0])[1] if found else None
 
 
@@ -184,7 +197,10 @@ def decision(p: Proposal) -> str:
 
 
 def announcement(name: str, made: list[Proposal], page: str) -> str:
-    """The proposals in the project's conversation, with where to decide on them."""
-    items = "\n\n".join(f"{i}. {p.title}\n{p.body}" for i, p in enumerate(made, start=1))
-    some = "a proposal" if len(made) == 1 else f"{len(made)} proposals"
+    """The proposal in the project's conversation (several only from a job that ran before one a
+    turn), with where to decide on it."""
+    if len(made) == 1:
+        some, items = "a proposal", f"{made[0].title}\n{made[0].body}"
+    else:
+        some, items = f"{len(made)} proposals", "\n\n".join(f"{i}. {p.title}\n{p.body}" for i, p in enumerate(made, start=1))
     return f"I looked at its {name} and have {some} for you:\n\n{items}\n\nThumbs up or down (and why) on its page: {page}"

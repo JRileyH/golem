@@ -34,8 +34,8 @@ or one step. Baked read-only into the golem image.
   else to do and the project's settings ask for them (`golem/golem/proposals.py`).
   A `propose` step looks the project over through one lens (features, security,
   polish…, in turn, skipping any the project's settings turned off) and changes
-  nothing; golem's `proposals` step posts what it
-  proposes for Riggy's thumbs up (a change job) or down, with an issue for each
+  nothing; golem's `proposals` step posts the one improvement it
+  proposes for Riggy's thumbs up (a change job) or down, with an issue for it
   on the repo as a record. Its prompt is
   `prompts/proposals.md`, with every earlier proposal and what he said.
 

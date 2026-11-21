@@ -196,10 +196,9 @@ def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
         {"title": "Bigger cards", "what": "Fill the screen on phones.", "why": "", "size": "huge"},
         *[{"title": f"Extra {i}", "what": "x", "why": "y", "size": "small"} for i in range(5)],
     ]
-    found = collect(raw)
-    assert len(found) == MAX_PER_RUN and collect("nonsense") == []
-    assert found[0] == ("Offline mode", "Cache the deck in a service worker.\n\nWhy: Hikes have no signal.\n\nSize: medium.")
-    assert found[1] == ("Bigger cards", "Fill the screen on phones.")  # no why, and no size it can't use
+    assert MAX_PER_RUN == 1 and collect("nonsense") == []
+    assert collect(raw) == [("Offline mode", "Cache the deck in a service worker.\n\nWhy: Hikes have no signal.\n\nSize: medium.")]
+    assert collect(raw[1:]) == [("Bigger cards", "Fill the screen on phones.")]  # no why, and no size it can't use
 
     def made(title, state, reason=""):
         return Proposal(1, "t", 1, "polish", title, "body", state, reason, None, "2026-10-01T00:00:00+00:00", None)

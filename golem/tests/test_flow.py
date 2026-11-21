@@ -953,20 +953,26 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
         call = next(c for c in golem.harness.calls if c.label == "propose")
         assert call.schema == proposals.SCHEMA and "# This time's lens: features" in call.prompt
         assert "(none yet: these are the first)" in call.prompt and re.search(r"\$[a-z]", call.prompt) is None
-        offline, bigger = golem.store.job_proposals(job.id)
+        [offline] = golem.store.job_proposals(job.id)  # one a turn: a second is dropped
         assert (offline.title, offline.lens, offline.state) == ("Offline mode", "features", "open")
         assert golem.chat.texts(room)[-2] == "Nothing else on, so I'm looking at its features for things to propose."
-        assert golem.workspace.issues[-2:] == [("tree-cards", "Proposal: Offline mode"), ("tree-cards", "Proposal: Bigger cards")]
-        assert (offline.issue, bigger.issue) == (len(golem.workspace.issues) - 1, len(golem.workspace.issues))
+        assert golem.workspace.issues[-1] == ("tree-cards", "Proposal: Offline mode") and offline.issue == len(golem.workspace.issues)
         said = golem.chat.sent[-1]
         assert said[0] == room and not said[2]  # it notifies him
-        assert said[1].startswith("I looked at its features and have 2 proposals for you:\n\n1. Offline mode\nCache the deck")
+        assert said[1].startswith("I looked at its features and have a proposal for you:\n\nOffline mode\nCache the deck")
         assert said[1].endswith("Thumbs up or down (and why) on its page: https://golem.unlaunched.dev/p/tree-cards")
         assert golem.scheduler.propose() is None  # not due again for a day
 
+        long_ago(golem)
+        second = golem.scheduler.propose()
+        golem.harness.script = by_label({"propose": [proposing(BIGGER)]})
+        await golem.finish()
+        [bigger] = golem.store.job_proposals(second.id)
+        assert bigger.lens == "code health" and golem.chat.texts(room)[-1].startswith("I looked at its code health and have a proposal")
+
         control = Control(golem.store, golem.scheduler)
         assert "takes that into account" in await control.decide(offline.id, False, "  it's a web  app, always online ")
-        assert await control.decide(bigger.id, True, "") == f"Accepted “Bigger cards”: job {job.id + 1} builds it."
+        assert await control.decide(bigger.id, True, "") == f"Accepted “Bigger cards”: job {second.id + 1} builds it."
         built = golem.store.active_job("tree-cards")
         assert (built.playbook, built.request.splitlines()[0]) == ("feature", "Bigger cards")
         assert "Riggy accepted it." in built.request and "Fill the screen on phones." in built.request
@@ -989,9 +995,9 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
         golem.harness.script = by_label({"propose": [proposing()]})
         await golem.finish()
         call = [c for c in golem.harness.calls if c.label == "propose"][-1]
-        assert "# This time's lens: code health" in call.prompt  # the next lens in turn
-        assert "- [features] Bigger cards — accepted\n- [features] Offline mode — turned down: “it's a web app, always online”" in call.prompt
-        assert golem.chat.texts(room)[-1].startswith("I looked at its code health and found nothing worth proposing.")
+        assert "# This time's lens: user experience" in call.prompt  # the next lens in turn
+        assert "- [code health] Bigger cards — accepted\n- [features] Offline mode — turned down: “it's a web app, always online”" in call.prompt
+        assert golem.chat.texts(room)[-1].startswith("I looked at its user experience and found nothing worth proposing.")
         assert golem.store.job_proposals(again.id) == []
 
     run(go())
@@ -1042,16 +1048,17 @@ def test_proposals_wait_until_golem_and_the_project_are_free(golem):
 
         # Proposals are only made while fewer await him than the project allows: 5 unless he says.
         assert golem.store.project("tree-cards").proposals_max == 5
-        golem.harness.script = by_label({"propose": [proposing(OFFLINE, BIGGER, {**BIGGER, "title": "Sound"})] * 2})
+        golem.store.update_project("tree-cards", proposals_max=2)
+        golem.harness.script = by_label({"propose": [proposing(OFFLINE), proposing(BIGGER)]})
         await golem.finish()
         long_ago(golem)
         assert golem.scheduler.propose() is not None
         await golem.finish()
         open_ = golem.store.proposals("tree-cards", ("open",))
-        assert len(open_) == 6
+        assert len(open_) == 2
         long_ago(golem)
         assert golem.scheduler.propose() is None
-        golem.store.update_project("tree-cards", proposals_max=8)
+        golem.store.update_project("tree-cards", proposals_max=3)
         assert golem.scheduler.propose() is not None
         golem.harness.script = by_label({"propose": [proposing()]})
         await golem.finish()
@@ -1067,6 +1074,61 @@ def test_proposals_wait_until_golem_and_the_project_are_free(golem):
         await golem.scheduler.build_accepted()
         built = golem.store.active_job("tree-cards")
         assert built.id != change.id and built.request.endswith("Riggy accepted it: “yes please”)")
+
+    run(go())
+
+
+def time_passes(golem: Golem, by: timedelta) -> None:
+    """As if `by` went by since the proposals jobs started and their proposals were made and decided."""
+    db = golem.store.db
+
+    def back(at: str | None) -> str | None:
+        return at and (datetime.fromisoformat(at) - by).isoformat(timespec="seconds")
+
+    for row in db.execute("SELECT id, created_at FROM jobs WHERE playbook = 'proposals'").fetchall():
+        db.execute("UPDATE jobs SET created_at = ? WHERE id = ?", (back(row["created_at"]), row["id"]))
+    for row in db.execute("SELECT id, created_at, decided_at FROM proposals").fetchall():
+        db.execute("UPDATE proposals SET created_at = ?, decided_at = ? WHERE id = ?", (back(row["created_at"]), back(row["decided_at"]), row["id"]))
+
+
+def test_a_projects_turn_for_proposals_comes_round_every_interval_after_its_last():
+    from golem.proposals import turn
+
+    hour, last = timedelta(hours=1), datetime(2026, 11, 21, 9, 0, tzinfo=UTC)
+    assert turn(None, hour, last) == last  # never had one: now
+    assert turn(last, hour, last + timedelta(minutes=59)) is None
+    assert turn(last, hour, last + hour) == last + hour
+    assert turn(last, hour, last + timedelta(hours=3, minutes=20)) == last + timedelta(hours=3)
+
+
+def test_proposals_come_one_a_turn_and_a_turn_at_the_limit_passes(golem):
+    from golem.control import Control
+
+    async def go():
+        await idle_project(golem)
+        golem.store.update_project("tree-cards", proposals="hourly", proposals_max=3)
+        sound, dark = {**BIGGER, "title": "Sound"}, {**OFFLINE, "title": "Dark mode"}
+        golem.harness.script = by_label({"propose": [proposing(OFFLINE, BIGGER, sound), proposing(BIGGER), proposing(sound), proposing(dark)]})
+        def waiting():
+            return golem.store.proposals("tree-cards", ("open",))
+
+        for hour in range(3):  # one an hour, not all three at once
+            assert golem.scheduler.propose() is not None
+            await golem.finish()
+            assert len(waiting()) == hour + 1
+            assert golem.scheduler.propose() is None  # not its turn yet
+            time_passes(golem, timedelta(hours=1))
+        assert [p.title for p in waiting()] == ["Sound", "Bigger cards", "Offline mode"]
+        assert golem.scheduler.propose() is None  # three wait on him: this turn passes
+        time_passes(golem, timedelta(days=2, minutes=30))
+        assert golem.scheduler.propose() is None  # and so do the turns he missed while away
+
+        await Control(golem.store, golem.scheduler).decide(waiting()[-1].id, False, "")
+        assert golem.scheduler.propose() is None  # the next comes at the next turn, not at once
+        time_passes(golem, timedelta(minutes=30))
+        assert golem.scheduler.propose() is not None
+        await golem.finish()
+        assert [p.title for p in waiting()] == ["Dark mode", "Sound", "Bigger cards"] and golem.scheduler.propose() is None
 
     run(go())
 

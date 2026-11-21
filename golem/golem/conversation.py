@@ -98,8 +98,10 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
     )
     return (
         "<section class='card settings'><h2>Proposals</h2><p class=sub>When there's nothing else to do, golem looks "
-        "it over for one kind of improvement at a time (features, security, polish…) and proposes a few for you "
-        f"to thumbs up or down, each also an issue on its repo as a record.</p><div class=row-form><span>How often</span>{every}"
+        "it over for one kind of improvement at a time (features, security, polish…) and proposes the best it finds "
+        "for you to thumbs up or down, each also an issue on its repo as a record. One each time, so they come as a "
+        "steady trickle: while as many wait on you as you allow, golem skips its turn, and the next comes the turn "
+        f"after you decide on one.</p><div class=row-form><span>How often</span>{every}"
         f"<span>At most waiting on you</span>{most}</div>"
         "<p class=sub>What it looks for, one kind each time, in this order. Each kind's line is what golem "
         f"asks the worker to look at; untick the ones this project doesn't need.</p><ul class=lenses>{boxes}</ul>"

@@ -5,13 +5,15 @@ steps:
   - proposals
 ---
 Golem had nothing else to do, so it asked you to look over one of Riggy's
-projects and propose improvements: the engineering team bringing ideas to its
+projects and propose an improvement: the engineering team bringing ideas to its
 product manager. He gives each a thumbs up or down, often with why, and a thumbs
 up becomes a change job. Nothing is committed, pushed or deployed here.
 
 ## propose
 
-Propose up to three improvements to the project, through this run's lens.
+Propose the one improvement to the project most worth his time, through this
+run's lens. Golem asks for one a turn (hourly, daily or weekly) so that he gets
+a steady trickle to decide on, not a pile: of everything you find, pick the best.
 
 1. Get to know it as it is now: `README.md`, `AGENTS.md`, `docs/` (the brief,
    specs, decisions, lessons), `git log`, the code, and the live site (`curl`,
@@ -25,13 +27,14 @@ Propose up to three improvements to the project, through this run's lens.
    His reasons tell you what he values and what he doesn't want: use them to
    judge your ideas, not as a template. More of what he liked before isn't the
    goal; what nobody has thought of yet is.
-4. Make each worth his time: something he'd plausibly say yes to, sized for one
-   change job (an hour or two of work, not a rewrite). Fewer, better proposals
-   beat filler. If the lens turns up nothing worth doing, propose nothing.
+4. Make it worth his time: something he'd plausibly say yes to, sized for one
+   change job (an hour or two of work, not a rewrite). If the lens turns up
+   nothing worth doing, propose nothing rather than filler.
 5. Change nothing: no edits, commits, pushes or deploys, and leave the checkout
    as you found it.
 
-Return `done` with your proposals in `proposals`, each with:
+Return `done` with your proposal as the one item in `proposals` (empty if
+nothing is worth proposing), with:
 
 - `title`: a few words, as he'll see it in a list.
 - `what`: what to change, concretely enough that a worker could build it from

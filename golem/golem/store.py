@@ -767,6 +767,15 @@ class Store:
         )
         return [Proposal(**r) for r in rows]
 
+    def proposals_waiting(self, slug: str, at: str) -> int:
+        """How many of the project's proposals were awaiting Riggy at `at` (an ISO time): made by
+        then and not decided yet."""
+        row = self.db.execute(
+            "SELECT COUNT(*) FROM proposals WHERE slug = ? AND created_at <= ? AND (decided_at IS NULL OR decided_at > ?)",
+            (slug, at, at),
+        ).fetchone()
+        return row[0]
+
     def job_proposals(self, job_id: int) -> list[Proposal]:
         """What a proposals job proposed, in its order."""
         return [Proposal(**r) for r in self.db.execute("SELECT * FROM proposals WHERE job_id = ? ORDER BY id", (job_id,))]
