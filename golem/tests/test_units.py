@@ -902,7 +902,7 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
         await ws.ensure_main("trees", "# Trees\n")
         one = await ws.ensure_tree("trees", 1)
         assert one == ws.root / ".jobs" / "1" and in_tree(one, "rev-parse", "HEAD") == git(ws, "rev-parse", "origin/main")
-        assert await ws.current_branch("trees", job=1) == "HEAD"  # detached until its first step
+        assert await ws.current_branch("trees", job=1) == "main"  # detached at main until its first step
         assert git(ws, "branch", "--show-current") == "main"  # the project's checkout stays on main
         assert await ws.ensure_tree("trees", 1) == one  # there already: as it is
 
@@ -913,7 +913,7 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
 
         # A question about job 1's work looks in a tree of its own, and puts back only that.
         two = await ws.ensure_tree("trees", 2, at="golem/job-1")
-        assert (two / "app.js").read_text() == "hi\n" and await ws.current_branch("trees", job=2) == "HEAD"
+        assert (two / "app.js").read_text() == "hi\n" and await ws.current_branch("trees", job=2) == "golem/job-1"  # at its work
         (two / "app.js").write_text("changed\n")
         (two / "scratch.txt").write_text("notes\n")
         await ws.discard("trees", job=2)
@@ -923,7 +923,8 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
         sha = await ws.push_branch("trees", "golem/job-1", job=1)
         assert sha == git(ws, "rev-parse", "origin/golem/job-1")
         assert await ws.push_main("trees", "golem/job-1", job=1) == sha
-        assert await ws.current_branch("trees", job=1) == "HEAD" and in_tree(one, "rev-parse", "HEAD") == sha  # landed on main
+        assert in_tree(one, "branch", "--show-current") == "" and in_tree(one, "rev-parse", "HEAD") == sha  # landed on main, detached
+        assert await ws.current_branch("trees", job=1) == "main"
         assert "golem/job-1" not in git(ws, "branch") and git(ws, "branch", "--show-current") == "main"
 
         # A tree that's lost comes back on its job's branch, with its work.

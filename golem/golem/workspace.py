@@ -339,7 +339,14 @@ class GitHubWorkspace:
         await self.git(slug, "checkout", "--quiet", *(() if code == 0 else ("-b",)), branch, job=job)
 
     async def current_branch(self, slug: str, *, job: int | None = None) -> str:
-        return await self.git(slug, "branch", "--show-current", job=job) or "HEAD"
+        """The branch checked out; for a detached tree, the branch it's at: a job's (a question
+        about its work), or main. "HEAD" if neither."""
+        if name := await self.git(slug, "branch", "--show-current", job=job):
+            return name
+        at = await self.git(slug, "branch", "--all", "--points-at", "HEAD", "--format=%(refname:short)", job=job)
+        names = [n.strip() for n in at.splitlines() if n.strip() and not n.startswith("(")]
+        mine = [n for n in names if n.startswith(JOB_BRANCHES)]
+        return mine[0] if mine else "main" if "origin/main" in names else "HEAD"
 
     async def clean(self, slug: str, *, job: int | None = None) -> bool:
         """Whether the checkout has nothing uncommitted (ignored files and installed dependencies aside)."""
@@ -586,7 +593,7 @@ class LocalWorkspace:
 
     async def current_branch(self, slug: str, *, job: int | None = None) -> str:
         if job is not None:
-            return self.branches.get(job, "HEAD")
+            return self.branches.get(job, "main")  # a tree with no branch is at main
         return self.branch or "main"
 
     async def clean(self, slug: str, *, job: int | None = None) -> bool:
