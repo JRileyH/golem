@@ -148,14 +148,14 @@ class Golem:
 
     async def step(self) -> None:
         """One scheduler turn: the next job's current step."""
-        job = self.store.next_job(at="9999")  # CI waits and retries are due at once
+        job = self.scheduler.pick(at="9999")  # CI waits and retries are due at once
         assert job is not None, "nothing queued"
         await self.scheduler.step(job)
 
     async def until(self, name: str) -> None:
         """Turn the scheduler until the job's current step is `name` (and hasn't run yet)."""
         for _ in range(100):
-            job = self.store.next_job(at="9999")
+            job = self.scheduler.pick(at="9999")
             current = job and plan.current(self.scheduler.ensure_steps(job))
             if current and plan.label(current) == name and current.started_at is None:
                 return
@@ -165,7 +165,7 @@ class Golem:
     async def finish(self) -> None:
         """Turn the scheduler until nothing is queued."""
         for _ in range(100):
-            if self.store.next_job(at="9999") is None:
+            if self.scheduler.pick(at="9999") is None:
                 return
             await self.step()
         raise AssertionError("still going after 100 steps")

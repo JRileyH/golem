@@ -1242,7 +1242,7 @@ def test_kill_stops_the_running_step(golem):
         await golem.say("tree-cards", "!kill")
         assert golem.chat.sent[-1][1] == f"Killed job {job.id} (Tree Cards)."
         for _ in range(50):
-            if golem.scheduler.current is None:
+            if not golem.scheduler.running:
                 break
             await asyncio.sleep(0.01)
         assert golem.store.job(job.id).state == "killed"
@@ -1543,7 +1543,8 @@ def test_delete_stops_a_running_step_first(golem):
         golem.scheduler.harness = Hangs()
         loop = asyncio.create_task(golem.scheduler.run_forever())
         await asyncio.wait_for(started.wait(), 5)
-        task = golem.scheduler.current[1]
+        [running] = golem.scheduler.running.values()
+        task = running.task
         await golem.say(room, "!delete tree-cards")
         assert task.done()  # stopped before anything was deleted
         assert golem.store.project("tree-cards") is None and golem.store.runs() == []

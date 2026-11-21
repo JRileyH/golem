@@ -253,7 +253,7 @@ class Bot:
         position = self.queue_position(job)
         if position == STARTING:  # "Looking into it" follows straight away
             return ""
-        current = self.scheduler.busy_with()
+        current = next(iter(self.scheduler.running_jobs()), None)
         if current and not self.scheduler.paused and not project.paused:
             return f"Good question. I'll look into it as soon as the step I'm on for {self.store.project(current.slug).name} finishes."
         return position
@@ -282,7 +282,7 @@ class Bot:
             return "Work is paused (!resume to start again)."
         if self.store.project(job.slug).paused:
             return "This project is paused (!resume to start again)."
-        current = self.scheduler.busy_with()
+        current = next(iter(self.scheduler.running_jobs()), None)
         if current is None or current.id == job.id:
             return STARTING
         ahead = [j for j in self.store.jobs(("queued",)) if j.id != job.id and (j.priority, -j.id) >= (job.priority, -job.id)]

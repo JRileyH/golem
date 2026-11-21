@@ -1,4 +1,4 @@
-"""The scheduler: one worker slot, one step at a time.
+"""The scheduler: worker slots, each running one job's current step.
 
 A job is a list of steps, written into the database from its playbook when the job
 starts. golem works through them in order and nothing else decides what comes next.
@@ -13,7 +13,7 @@ pushed or deployed for those.
 With nothing else to do, golem looks for improvements to propose on projects that want
 them, and builds the ones Riggy accepts once their project is free (proposals.py).
 
-An upgrade of golem itself waits for the running step to finish, and holds new steps
+An upgrade of golem itself waits for the running steps to finish, and holds new steps
 until it's done (upgrade.py).
 
 When CI fails or the deployer refuses a commit, a `fix` agent step is inserted after the
@@ -79,6 +79,15 @@ DESIGN_PASS = ("design", *BUILDS_DESIGN)
 
 
 @dataclass
+class Running:
+    """A job whose current step is running: its project, the worker slot it has, its task."""
+
+    slug: str
+    slot: int
+    task: asyncio.Task
+
+
+@dataclass
 class Outcome:
     """How a step went.
 
@@ -117,7 +126,7 @@ class Scheduler:
         self.deployer = deployer
         self.cards = Cards(settings, store, harness)
         self.upgrades = Upgrades(store, deployer, chat)
-        self.current: tuple[int, asyncio.Task] | None = None
+        self.running: dict[int, Running] = {}  # by job id
         self._wake = asyncio.Event()
 
     # --- control --------------------------------------------------------------
@@ -133,8 +142,9 @@ class Scheduler:
     def wake(self) -> None:
         self._wake.set()
 
-    def busy_with(self) -> Job | None:
-        return self.store.job(self.current[0]) if self.current else None
+    def running_jobs(self) -> list[Job]:
+        """The jobs whose current step is running, in the order they started."""
+        return [job for job in map(self.store.job, self.running) if job is not None]
 
     def kill(self, job_id: int) -> bool:
         """Stop a job for good. Returns False if it had already finished."""
@@ -142,18 +152,18 @@ class Scheduler:
         if job is None or job.state in ("done", "failed", "killed"):
             return False
         self.store.update_job(job_id, state="killed")
-        if self.current and self.current[0] == job_id:
-            self.current[1].cancel()
+        if job_id in self.running:
+            self.running[job_id].task.cancel()
         return True
 
     async def drop_project(self, slug: str) -> None:
-        """Kill the project's unfinished jobs and wait for a running step to stop."""
-        current = self.current
-        for job in self.store.jobs(ACTIVE):
+        """Kill the project's unfinished jobs and wait for its running steps to stop."""
+        tasks = {r.task for r in self.running.values() if r.slug == slug}
+        for job in self.store.jobs(ACTIVE, limit=10_000):
             if job.slug == slug:
                 self.kill(job.id)
-        if current and self.store.job(current[0]).slug == slug:
-            await asyncio.wait({current[1]})
+        if tasks:
+            await asyncio.wait(tasks)
 
     # --- loop -----------------------------------------------------------------
 
@@ -165,34 +175,54 @@ class Scheduler:
                 self.ensure_steps(job)
         self.backfill = asyncio.create_task(self.missing_cards())
         self.versions = asyncio.create_task(self.upgrades.watch_forever())
-        while True:
-            if self.upgrades.holding():  # no step is running here: the upgrade can go
-                if self.upgrades.state == "pending":
-                    await self.upgrades.start()
+        try:
+            while True:
+                if self.upgrades.holding():  # nothing new starts; the upgrade goes once nothing's running
+                    if self.upgrades.state == "pending" and not self.running:
+                        await self.upgrades.start()
+                    await self.idle()
+                    continue
+                if not self.paused:
+                    await self.build_accepted()
+                    if not self.fill() and self.propose() is not None:
+                        continue
                 await self.idle()
-                continue
-            if not self.paused:
-                await self.build_accepted()
-            job = None if self.paused else self.store.next_job()
-            if job is None and not self.paused and self.propose() is not None:
-                continue
-            if job is None:
-                await self.idle()
-                continue
-            task = asyncio.create_task(self.step(job))
-            self.current = (job.id, task)
-            try:
-                await asyncio.wait({task})
-            except asyncio.CancelledError:  # golem is shutting down; the job carries on when it starts
-                task.cancel()
-                raise
-            finally:
-                self.current = None
-            if task.cancelled():
-                log.info("job %s killed", job.id)
-            elif task.exception():
-                log.error("job %s crashed", job.id, exc_info=task.exception())
-                await self.retry_or_ask(job, f"golem error: {task.exception()!r}")
+        except asyncio.CancelledError:  # golem is shutting down; the jobs carry on when it starts
+            for r in list(self.running.values()):
+                r.task.cancel()
+            raise
+
+    def pick(self, at: str | None = None) -> Job | None:
+        """The next job to start a step of: the highest priority queued one."""
+        return self.store.next_job(at)
+
+    def fill(self) -> bool:
+        """Start steps while there's a free worker slot and a job to give it. Whether any started."""
+        started = False
+        while not self.running and (job := self.pick()) is not None:
+            self.dispatch(job)
+            started = True
+        return started
+
+    def dispatch(self, job: Job) -> None:
+        """Start the job's current step in the lowest free worker slot."""
+        taken = {r.slot for r in self.running.values()}
+        slot = next(i for i in range(len(taken) + 1) if i not in taken)
+        self.running[job.id] = Running(job.slug, slot, asyncio.create_task(self.work(job)))
+
+    async def work(self, job: Job) -> None:
+        """A step in its slot, giving the slot back when it ends however it ends."""
+        try:
+            await self.step(job)
+        except asyncio.CancelledError:
+            log.info("job %s stopped", job.id)
+            raise
+        except Exception as e:
+            log.error("job %s crashed", job.id, exc_info=e)
+            await self.retry_or_ask(job, f"golem error: {e!r}")
+        finally:
+            self.running.pop(job.id, None)
+            self.wake()
 
     async def idle(self) -> None:
         """Wait to be woken, or IDLE_POLL_SECONDS."""
@@ -316,7 +346,7 @@ class Scheduler:
 
     async def retry_or_ask(self, job: Job, error: str) -> None:
         job = self.store.job(job.id)
-        if job.state == "killed":
+        if job is None or job.state == "killed":  # gone with its project, or stopped
             return
         attempts = job.attempts + 1
         project = self.store.project(job.slug)
