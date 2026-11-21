@@ -2189,3 +2189,20 @@ def test_with_two_changes_waiting_a_reply_goes_to_the_one_asked_first(golem):
         assert golem.chat.texts(room)[-1].startswith(f"Thanks, picking it back up (job {first.id}, “Bigger Cards”).")
 
     run(go())
+
+
+def test_beside_a_running_change_a_question_starts_now_and_a_change_says_what_it_waits_for(golem):
+    from golem.bot import STARTING
+
+    async def go():
+        a, b = side_by_side(golem)
+        gate = golem.scheduler.harness = JobGate((a.id, "change"))
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: (a.id, "change") in gate.started)
+        await soon(lambda: plan.label(current(golem, b.id)) == "change" and golem.store.job(b.id).state == "queued")
+        assert golem.bot.queue_position(golem.store.job(b.id)) == f"Queued: waiting for job {a.id} to finish building."
+        assert golem.bot.start_question(golem.store.project("trees"), "how big are the cards?") == ""  # starts beside it
+        assert golem.bot.queue_position(newest_job(golem)) == STARTING
+        loop.cancel()
+
+    run(go())

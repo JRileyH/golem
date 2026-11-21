@@ -357,8 +357,11 @@ class Bot:
         busy = {j.slug for j in running}
         if not running or job.id in {j.id for j in running}:
             return STARTING
-        if len(running) < self.scheduler.workers and job.slug not in busy:  # a worker is free for it
-            return STARTING
+        free = len(running) < self.scheduler.workers
+        if free and (job.slug not in busy or self.scheduler.side_by_side(job) and not turns.blocked_by(self.store, job)):
+            return STARTING  # a worker is free for it, and its project lets it go
+        if waiting := turns.waiting_for(self.store, job):
+            return f"Queued: {waiting}."
         ahead = [j for j in self.store.jobs(("queued",)) if j.id != job.id and (j.priority, -j.id) >= (job.priority, -job.id)]
         others = f" and {len(ahead)} more queued" if ahead else ""
         return f"Queued: I'm on {self.project_names(running)}{others} first."
