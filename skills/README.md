@@ -8,3 +8,5 @@ golem image at `/opt/golem/skills`.
 - `spec-writing.md`: specs and mini-specs.
 - `review.md`: the fresh-context review.
 - `browser.md`: screenshots and Playwright, to see what you built.
+- `design.md`: design passes: the doc with directions to pick from, follow-up
+  rounds, logos and icons, the design guide (`docs/design.md`), and applying it.

@@ -66,7 +66,8 @@ $lessons
   changed. Don't push, open or merge pull requests, or deploy: golem does those
   after your step, and anything you leave uncommitted it commits for you.
 - **Skills** are in `$skills/`: `new-repo.md`, `spec-writing.md`, `review.md`,
-  `browser.md`, `deploy.md`. Read the ones your step mentions before you start.
+  `browser.md`, `deploy.md`, `design.md`. Read the ones your step mentions before
+  you start.
 - **No Docker here:** images are built by GitHub Actions once golem pushes. You
   can run the app's own tooling (node, npm, python, uv) to build and test, and
   `golem-deploy status` or `golem-deploy logs` to see the live site's state.
