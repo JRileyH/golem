@@ -600,6 +600,19 @@ def test_options_on_command_and_never_beside_another_job(golem):
     run(go())
 
 
+def test_the_fake_harness_walks_an_options_job_with_placeholders(golem):
+    async def go():
+        room = await idle_project(golem)
+        await golem.say(room, "!options a new logo")
+        job = golem.store.active_job("tree-cards")
+        golem.harness.script = None  # nothing scripted, as in local mode with HARNESS=fake
+        await golem.until("your pick")
+        made = next(s for s in golem.store.steps(job.id) if s.name == "options")
+        assert [o["title"] for o in made.options] == ["(fake) A", "(fake) B"]
+
+    run(go())
+
+
 def test_a_change_request_is_not_options(golem):
     async def go():
         room = await idle_project(golem)
