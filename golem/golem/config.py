@@ -86,6 +86,24 @@ class Settings:
         return self.tmp_dir / f"job-{job_id}"
 
 
+# Where the container's memory cap (GOLEM_MEM_LIMIT, in compose.yml) shows inside it: cgroup v2, then v1.
+CGROUP_LIMITS = (Path("/sys/fs/cgroup/memory.max"), Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+
+
+def memory_cap(paths: tuple[Path, ...] = CGROUP_LIMITS) -> int | None:
+    """golem's memory cap in bytes, shared by golem and every worker it runs; None if it has
+    none (or isn't in a container). GOLEM_MEM_LIMIT itself never reaches the container."""
+    for path in paths:
+        try:
+            text = path.read_text().strip()
+        except OSError:
+            continue
+        if not text.isdigit():  # "max": no cap
+            return None
+        return int(text) if int(text) < 1 << 60 else None  # cgroup v1 says "none" with a huge number
+    return None
+
+
 def _platform() -> str:
     """The Docker platform of the machine golem runs on (a container shares the host's)."""
     return "linux/arm64" if platform.machine() in ("aarch64", "arm64") else "linux/amd64"

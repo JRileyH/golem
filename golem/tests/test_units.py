@@ -38,6 +38,19 @@ def test_settings_need_a_web_password():
             Settings.from_env({"BASE_DOMAIN": "example.com", "GITHUB_ORG": "me", **password})
 
 
+def test_the_memory_cap_is_read_from_the_container(tmp_path):
+    v2, v1 = tmp_path / "memory.max", tmp_path / "memory.limit_in_bytes"
+    assert config.memory_cap((v2, v1)) is None  # not in a container
+    v1.write_text(f"{1536 * 2**20}\n")
+    assert config.memory_cap((v2, v1)) == 1536 * 2**20  # cgroup v1
+    v1.write_text("9223372036854771712\n")
+    assert config.memory_cap((v2, v1)) is None  # v1's way of saying none
+    v2.write_text("max\n")
+    assert config.memory_cap((v2, v1)) is None
+    v2.write_text("1073741824\n")
+    assert config.memory_cap((v2, v1)) == 2**30  # v2 first
+
+
 @pytest.mark.parametrize(
     "domain, edge_port, url",
     [

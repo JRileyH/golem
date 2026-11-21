@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, conversation, gallery, home, insights, options, pages, plan, pwa
+from . import brand, config, conversation, gallery, home, insights, options, pages, plan, pwa
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -317,7 +317,7 @@ def create_app(
         since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
         body = home.settings(signed, scheduler.paused, control.kinds(), store.defaults(),
                              (settings.default_model, settings.default_effort), insights.report(store, since),
-                             store.tags(), store.tag_counts(), scheduler.upgrades)  # fmt: skip
+                             store.tags(), store.tag_counts(), scheduler.upgrades, scheduler.workers, config.memory_cap())  # fmt: skip
         return respond(request, "Settings", body, signed, here="settings")
 
     async def step_page(request: Request) -> Response:
@@ -550,6 +550,8 @@ def create_app(
                     message = await control.pause(slug, action == "pause")
                 case "pause-all" | "resume-all":
                     message = control.pause_all(action == "pause-all")
+                case "workers":
+                    message = control.workers(value)
                 case "kill":
                     message = await control.kill(job)
                 case "setting":

@@ -44,7 +44,7 @@ from .history import records
 from .talk import INBOX, STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
-from .store import ACTIVE, LOOKS, Job, Project, Proposal, Step, Store, later, now
+from .store import ACTIVE, LOOKS, MAX_WORKERS, Job, Project, Proposal, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
@@ -63,7 +63,6 @@ CI_POLL = timedelta(seconds=20)  # how often CI is checked while a step waits fo
 CI_START_TIMEOUT = timedelta(minutes=10)  # no workflow run on a commit by then: the repo has no CI
 CI_TIMEOUT = timedelta(minutes=60)  # CI started but still not finished: something's wrong at GitHub
 IDLE_POLL_SECONDS = 30
-MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting)
 # Each slot's localhost ports for dev servers: GOLEM_PORT to GOLEM_PORT+9 (worker_env), clear of
 # the usual defaults (3000, 4173, 5173, 8080) so a worker that forgets still can't take another's.
 PORTS = 20000

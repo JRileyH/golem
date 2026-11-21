@@ -28,7 +28,7 @@ import re
 from . import options, plan
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, EVERY, MODELS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, EFFORTS, EVERY, MAX_WORKERS, MODELS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
@@ -146,6 +146,17 @@ class Control:
     def pause_all(self, paused: bool) -> str:
         self.scheduler.set_paused(paused)
         return "Paused all work: a running step finishes first." if paused else "Resumed all work."
+
+    def workers(self, value: str) -> str:
+        """How many steps may run at once, across projects. Fewer than are running: those finish first."""
+        if not value.isdigit() or not 1 <= int(value) <= MAX_WORKERS:
+            raise ControlError(f"Pick 1 to {MAX_WORKERS} workers.")
+        self.store.put("workers", str(int(value)))
+        self.scheduler.wake()
+        running = len(self.scheduler.running)
+        if int(value) < running:
+            return f"Up to {value} at once: the {running} steps running now finish first."
+        return "One step at a time." if value == "1" else f"Up to {value} steps at once, across projects."
 
     async def kill(self, job_id: int) -> str:
         job, project = self._job(job_id)

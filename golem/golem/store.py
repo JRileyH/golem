@@ -187,6 +187,7 @@ MODES = ("reckless", "standard", "rigorous")
 LOOKS = ("question", "proposals")
 EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
 MODELS = ("fable", "opus", "sonnet", "haiku")
+MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 

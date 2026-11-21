@@ -5,7 +5,8 @@ say how it is, pick an option, answer a question), what's being worked on and wh
 next live, what's coming up, and what finished lately; and a box for a new idea. Projects
 is the conversations, like a messaging app's list: golem's own (new ideas and its news)
 first, then each project's, latest first, opening its page (conversation.py). Settings has
-signing in, notifications, pausing all work, the tags, and each kind of step's model and effort.
+signing in, notifications, pausing all work, how many workers run at once, the tags, and
+each kind of step's model and effort.
 """
 
 from __future__ import annotations
@@ -19,12 +20,13 @@ from . import brand, plan, pwa
 from .insights import Report
 from .pages import (ICONS_SVG, LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots,
                     headline, signin_card, when)  # fmt: skip
-from .store import Said, Tag
+from .store import MAX_WORKERS, Said, Tag
 from .upgrade import SHOWN, Upgrades
 from .watch import span
 
 RECENT = timedelta(days=7)  # finished jobs shown on Home
 RECENT_SHOWN = 5
+TIGHT = 700 * 2**20  # less memory than this each and a worker's build and browser may not fit
 # c1-c8, named for the mineral pigments they're the colors of: blue, orange, teal-green, yellow, pink, green, purple, red
 COLORS = ("lapis", "rust", "verdigris", "ochre", "madder", "moss", "amethyst", "cinnabar")
 
@@ -145,7 +147,7 @@ def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
 
 def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str, tuple[str, str]],
              fallback: tuple[str, str], report: Report, tags: list[Tag], counts: dict[str, int],
-             upgrades: Upgrades | None = None) -> str:  # fmt: skip
+             upgrades: Upgrades | None = None, workers: int = 1, memory: int | None = None) -> str:  # fmt: skip
     if signed_in:
         account = (
             "<section class=card><h2>Signed in</h2><p class=sub>On this device. Sign out to stop it changing things.</p>"
@@ -159,7 +161,7 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
             + action_form("resume-all" if paused else "pause-all", "Resume all" if paused else "Pause all", back="/settings")
             + "</div></section>"
         )
-        account += pwa.panel().replace("class=notify-panel", "class='card notify-panel'") + work
+        account += pwa.panel().replace("class=notify-panel", "class='card notify-panel'") + work + workers_card(workers, memory)
         account += version_card(upgrades) if upgrades else ""
     else:
         account = signin_card("/settings")
@@ -170,6 +172,38 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
         "</ul></section>"
     )
     return account + more + tags_card(tags, counts, signed_in) + defaults_table(kinds, defaults, fallback, report, signed_in)
+
+
+def workers_card(workers: int, memory: int | None) -> str:
+    """How many steps run at once across projects, and what that leaves each of golem's memory."""
+    options = "".join(f"<option{' selected' if n == workers else ''}>{n}</option>" for n in range(1, MAX_WORKERS + 1))
+    pick = (
+        f"<form method=post action=/act class=row-form>{_hidden(action='workers', back='/settings#workers')}"
+        f"<label for=workers>At once</label><select id=workers name=value onchange='this.form.submit()'>{options}</select></form>"
+    )
+    if memory is None:
+        room = "<p class=hint>golem has no memory cap here: its workers share all of this machine's memory.</p>"
+    else:
+        each = memory // workers
+        room = (
+            f"<p class=hint>golem's memory cap is {_size(memory)}, shared by golem and every worker"
+            + (f": about {_size(each)} each at {workers}." if workers > 1 else ".")
+            + "</p>"
+        )
+        if each < TIGHT:
+            room += (
+                "<p class=hint>That's tight for a build and a browser each: raise <code>GOLEM_MEM_LIMIT</code> in golem's "
+                "<code>.env</code> (then <code>docker compose up -d</code>), or run fewer.</p>"
+            )
+    return (
+        "<section class='card settings' id=workers><h2>Parallel workers</h2><p class=sub>How many agent steps run at once, "
+        "across projects; each project's own steps still go one at a time. Each is a Claude Code process with its builds, "
+        "dev servers and a browser, and more at once use your Claude plan faster.</p>" + pick + room + "</section>"
+    )
+
+
+def _size(n: int) -> str:
+    return f"{n / 2**30:.1f} GB".replace(".0 GB", " GB") if n >= 2**30 else f"{n // 2**20} MB"
 
 
 def version_card(upgrades: Upgrades) -> str:

@@ -539,6 +539,29 @@ def test_kinds_of_proposal_are_all_on_until_riggy_unticks_one(golem, page):
     assert golem.store.project("trees").proposals_off == ",".join(x.name for x in LENSES[:-1])
 
 
+def test_how_many_workers_and_what_memory_each_has(golem, page, monkeypatch):
+    monkeypatch.setattr(web.config, "memory_cap", lambda: 1536 * 2**20)
+    assert "id=workers" not in page.get("/settings").text  # signed out: nothing to change
+    sign_in(page)
+    html = page.get("/settings").text
+    assert "<h2>Parallel workers</h2>" in html and "<option selected>1</option>" in html and "<option>8</option>" in html
+    assert "golem's memory cap is 1.5 GB, shared by golem and every worker.</p>" in html and "tight" not in html
+
+    assert "Up%20to%202%20steps%20at%20once" in act(page, action="workers", value="2")
+    assert golem.scheduler.workers == 2 and golem.store.get("workers") == "2"
+    html = page.get("/settings").text
+    assert "<option selected>2</option>" in html and "about 768 MB each at 2." in html and "tight" not in html
+    act(page, action="workers", value="3")
+    assert "about 512 MB each at 3.</p><p class=hint>That's tight" in page.get("/settings").text
+    for bad in ("0", "9", "x", ""):
+        assert "Pick%201%20to%208%20workers." in act(page, action="workers", value=bad)
+    assert golem.scheduler.workers == 3
+    assert "One%20step%20at%20a%20time." in act(page, action="workers", value="1")
+
+    monkeypatch.setattr(web.config, "memory_cap", lambda: None)
+    assert "no memory cap here" in page.get("/settings").text
+
+
 def test_tags_in_settings_and_on_a_project(golem, page):
     html = page.get("/settings").text
     assert "id=tags" in html and "<b><span class=swatch></span>Game</b><span class=uses>0 projects</span>" in html and "tag-add" not in html  # signed out: a list
