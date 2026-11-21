@@ -225,9 +225,11 @@ class FakeHarness:
             return item
         verdict = {"verdict": "done", "message": f"(fake) {label} done"}
         if schema is not None and "options" in schema.get("properties", {}) and not resume:
-            # A step that makes options to pick from (options, design): two placeholders, so a job walks on.
+            # A step that makes options to pick from: two placeholders, so a job walks on. A design
+            # round has nothing to show without a model, so it says there's nothing to design.
             made = [{"title": f"(fake) {x}", "description": f"(fake) option {x}", "files": []} for x in "AB"]
-            return RunResult("verdict", verdict={**verdict, "options": made}, session_id=f"fake-{len(self.calls)}", usage={"num_turns": 1})
+            more = {"skip": "(fake) no design without a model"} if "doc" in schema["properties"] else {"options": made}
+            return RunResult("verdict", verdict={**verdict, **more}, session_id=f"fake-{len(self.calls)}", usage={"num_turns": 1})
         if schema is not None:
             raise RuntimeError("FakeHarness needs a script for structured calls")
         return RunResult("verdict", verdict=verdict, session_id=f"fake-{len(self.calls)}", usage={"num_turns": 1})

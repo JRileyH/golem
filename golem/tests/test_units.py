@@ -72,6 +72,9 @@ def test_project_images_are_built_for_this_box(monkeypatch, machine, platform):
         ("feature", "rigorous", ["change", "review", "second-pass", "docs"]),
         ("options", "reckless", ["options", "change", "docs"]),
         ("options", "standard", ["options", "change", "review", "docs"]),
+        ("design", "reckless", ["design", "guide", "apply", "docs"]),
+        ("design", "standard", ["design", "guide", "apply", "review", "docs"]),
+        ("design", "rigorous", ["design", "guide", "apply", "review", "second-pass", "docs"]),
     ],
 )
 def test_playbooks_load(name, mode, agents):

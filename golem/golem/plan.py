@@ -76,6 +76,9 @@ SUGGESTED = {
     "build": ("opus", "high"),
     "change": ("opus", "high"),
     "options": ("opus", "high"),
+    "design": ("opus", "high"),  # a design round: taste, and a doc with real screens in it
+    "guide": ("opus", "high"),  # the design guide every later step follows
+    "apply": ("opus", "high"),  # restyling the whole app from the guide
     "fix": ("opus", "high"),
     "review": ("opus", "xhigh"),
     "second-pass": ("sonnet", "high"),
@@ -133,7 +136,7 @@ def what(job: Job) -> str:
     """What sort of job it is, in a word or two: "new project", "adoption", "question"…"""
     if job.kind in ("new", "adopt"):
         return "new project" if job.kind == "new" else "adoption"
-    return job.playbook if job.playbook in ("options", "question", "proposals") else "change"
+    return job.playbook if job.playbook in ("options", "design", "question", "proposals") else "change"
 
 
 def title(job: Job) -> str:

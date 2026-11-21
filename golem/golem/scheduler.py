@@ -370,7 +370,8 @@ class Scheduler:
             steps = self.store.steps(job.id)
             prompt, resume = self.prompts.step(project, job, book, step, steps, branch, feedback, lessons), None
 
-        schema = options.SCHEMA if options.makes(step) else {"propose": proposals.SCHEMA}.get(step.name)  # what it made comes with its verdict
+        schema = options.MAKERS.get(step.name) if step.kind == "agent" else None  # what it made comes with its verdict
+        schema = schema or {"propose": proposals.SCHEMA}.get(step.name)
         result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema)
         if result.outcome == "max_turns" and result.session_id:
             wrapped = wrapup_schema(schema)
@@ -396,10 +397,9 @@ class Scheduler:
         if v.get("verdict") not in VERDICTS:
             return Outcome("error", problem=f"unknown verdict {v.get('verdict')!r}")
         if options.makes(step) and v["verdict"] == "done":
-            made = options.collect(v.get("options"), self.workspace.path(project.slug), options.folder(self.settings, job.id), str(step.id))
-            if len(made) < 2:
-                return Outcome("error", problem=f"The {step.name} step returned fewer than two options with their files.")
-            self.store.update_step(step.id, options=[asdict(o) for o in made])
+            problem = self.keep_options(job, project, step, v)
+            if problem:
+                return Outcome("error", problem=problem)
         self.store.consume_notes([i for i, _ in notes])
         message, link = str(v.get("message", "")).strip(), str(v.get("link") or "").strip()
         links = {"link": link} if link.startswith(("https://", "http://")) else {}
@@ -421,6 +421,19 @@ class Scheduler:
             jobs.append(f"- #{j.id}, {j.playbook}, {j.state} {when}: “{_first_line(j.request, 200)}”" + (f" → {said}" if said else ""))
         said = [f"- {m.who}: {_first_line(m.text, 300)}" for m in self.store.messages(project.slug, limit=20) if m.text]
         return jobs, said
+
+    def keep_options(self, job: Job, project: Project, step: Step, v: dict) -> str:
+        """Keep what a step that makes options returned with them (options.collect; a design
+        round's doc and pages too, collect_design), or say what's wrong with it."""
+        checkout, folder = self.workspace.path(project.slug), options.folder(self.settings, job.id)
+        design, problem = options.collect_design(v, checkout, folder, str(step.id)) if step.name == "design" else (None, "")
+        if problem:
+            return problem
+        made = [] if design and design.skip else options.collect(v.get("options"), checkout, folder, str(step.id))
+        if len(made) < 2 and not (design and design.skip):
+            return f"The {step.name} step returned fewer than two options with their files."
+        self.store.update_step(step.id, options=[asdict(o) for o in made], **({"design": asdict(design)} if design else {}))
+        return ""
 
     async def execute(
         self,

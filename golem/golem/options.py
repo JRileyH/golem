@@ -30,8 +30,6 @@ from .store import Step
 log = logging.getLogger(__name__)
 
 LETTERS = "ABCDEF"
-# Agent steps that make options for a `choose` step to show: their verdict brings them (SCHEMA).
-MAKERS = ("options",)
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
 IMAGES_SHOWN = 3  # an option's first few pictures are shown; the rest are just files
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -88,6 +86,8 @@ DESIGN_SCHEMA = {
         "skip": {"type": "string", "description": "Only if there's nothing to design: why, in a sentence, and no options"},
     },
 }
+# Agent steps that make options for a `choose` step to show, and the verdict each brings them in.
+MAKERS = {"options": SCHEMA, "design": DESIGN_SCHEMA}
 REQUEST_SCHEMA = {
     "type": "object",
     "properties": {

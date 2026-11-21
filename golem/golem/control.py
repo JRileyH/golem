@@ -73,7 +73,7 @@ class Control:
         """The kinds of agent run, by name, in the order the playbooks use them; then those
         golem starts itself: fix, and the survey an adoption's check runs (adopt.py)."""
         names: list[str] = []
-        for book in ("standard", "rigorous", "reckless", "feature", "options", "question", "proposals", "adopt"):
+        for book in ("standard", "rigorous", "reckless", "feature", "options", "design", "question", "proposals", "adopt"):
             for spec in plan.load(self.scheduler.settings, book).steps:
                 if spec.kind == "agent" and spec.name not in names:
                     names.append(spec.name)

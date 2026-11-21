@@ -494,6 +494,32 @@ def three_styles(call) -> dict:
     return {**verdict("done", "Three chibi takes on the hero."), "options": made}
 
 
+LOOKS = ("Field guide", "Arcade", "Museum label")
+
+
+def three_looks(call) -> dict:
+    """A design round (skills/design.md): a doc, its pages, and each direction's own pages and tokens."""
+    done = call.cwd / f"docs/design/rounds/job-{call.env['GOLEM_JOB']}"
+    base = f"docs/design/rounds/job-{call.env['GOLEM_JOB']}/round-{len(list(done.glob('round-*'))) + 1}"
+    (call.cwd / base / "pages").mkdir(parents=True, exist_ok=True)
+    (call.cwd / base / "doc.html").write_text("<!doctype html><section class=page><h1>Tree Cards: design pass</h1></section>")
+    for n in (1, 2):
+        (call.cwd / base / f"pages/page-0{n}.png").write_bytes(PNG)
+    made = []
+    for letter, title in zip("abc", LOOKS):
+        (call.cwd / base / letter).mkdir(exist_ok=True)
+        (call.cwd / base / letter / "page.png").write_bytes(PNG)
+        (call.cwd / base / letter / "tokens.css").write_text(":root { --ink: #1c2023; }")
+        made.append({"title": title, "description": f"Tree Cards as a {title.lower()}.",
+                     "files": [f"{base}/{letter}/page.png", f"{base}/{letter}/tokens.css"]})  # fmt: skip
+    return {
+        **verdict("done", "Three looks for Tree Cards."), "options": made, "doc": f"{base}/doc.html",
+        "pages": [f"{base}/pages/page-01.png", f"{base}/pages/page-02.png"],
+        "questions": ["Wordmark: Fraunces or Oxanium?", "Icon: Leaf or Acorn?"],
+        "recommendation": "A, with the Fraunces wordmark and the Leaf icon.",
+    }  # fmt: skip
+
+
 async def idle_project(golem: Golem) -> str:
     room = await new_project(golem, [])
     golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
@@ -609,6 +635,40 @@ def test_the_fake_harness_walks_an_options_job_with_placeholders(golem):
         await golem.until("your pick")
         made = next(s for s in golem.store.steps(job.id) if s.name == "options")
         assert [o["title"] for o in made.options] == ["(fake) A", "(fake) B"]
+
+    run(go())
+
+
+def test_a_design_round_keeps_its_doc_pages_questions_and_pick(golem):
+    async def go():
+        await idle_project(golem)
+        job = golem.store.add_job("tree-cards", "change", "make it feel like an old field guide", "design")
+        await golem.until("design")
+        golem.harness.script = by_label({"design": [three_looks]})
+        await golem.step()
+        made = next(s for s in golem.store.steps(job.id) if s.name == "design")
+        call = golem.harness.calls[-1]
+        assert "options" in call.schema["properties"] and "doc" in call.schema["properties"]
+        assert "skills/design.md" in call.prompt and "make it feel like an old field guide" in call.prompt
+        assert [o["title"] for o in made.options] == list(LOOKS)
+        assert [o["images"] for o in made.options] == [[f"{made.id}-{x}-1.png"] for x in "abc"]
+        assert made.design == {
+            "doc": f"{made.id}-doc.html", "source": f"docs/design/rounds/job-{job.id}/round-1/doc.html",
+            "pages": [f"{made.id}-p-1.png", f"{made.id}-p-2.png"],
+            "questions": ["Wordmark: Fraunces or Oxanium?", "Icon: Leaf or Acorn?"],
+            "recommendation": "A, with the Fraunces wordmark and the Leaf icon.", "skip": "",
+        }  # fmt: skip
+        folder = golem.settings.job_logs(job.id) / "options"
+        assert (folder / f"{made.id}-doc.html").read_text().startswith("<!doctype html>")
+        assert plan.label(current(golem, job.id)) == "your pick"
+
+        # A doc that would run something is sent back.
+        golem.store.update_step(made.id, state="pending", options=[], design={})
+        golem.harness.script = by_label({"design": [lambda c: {**three_looks(c), "doc": "evil.html"}]})
+        (golem.workspace.path("tree-cards") / "evil.html").write_text("<script>fetch('/act')</script>")
+        await golem.step()
+        made = golem.store.step(made.id)
+        assert (made.state, made.error) == ("pending", "The design doc evil.html has a <script> or http-equiv: it has to run nothing (skills/design.md).")
 
     run(go())
 

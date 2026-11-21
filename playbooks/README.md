@@ -17,6 +17,12 @@ or one step. Baked read-only into the golem image.
   builds his pick (`golem/golem/options.py`).
 - `feature.md`: changes Riggy asks for in a project's conversation (steps can be limited
   to some modes).
+- `design.md`: a design pass (`skills/design.md`). A `design` step makes a round:
+  a doc with directions to pick from, which golem's `choose` step shows him (with
+  the doc, the pages they share, its questions and its pick) and waits on; asking
+  for another round adds a `design` step and a `choose`. Then `guide` writes the
+  design guide, `docs/design.md`, and the assets, and `apply` restyles the app
+  from them. A design round that finds nothing to design (`skip`) skips the rest.
 - `question.md`: questions about a project. Golem's `refresh` brings the
   checkout up to date (unless a job's work is under way in it), an `examine` step
   looks into it as much as it needs and changes nothing (golem puts the checkout
