@@ -48,7 +48,9 @@ changed flows once more in the browser on a phone. Fix what you find.
 
 ## docs
 
-1. Update `README.md` and `AGENTS.md` if the change made them wrong.
+1. Update `README.md` and `AGENTS.md` if the change made them wrong, and
+   `docs/design.md` if it changed the look (a new component, color or screen
+   pattern later work should reuse).
 2. Add anything a future worker should know to `docs/lessons.md`, and lessons
    for every project to the golem lessons file.
 

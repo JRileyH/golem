@@ -38,9 +38,12 @@ feel good to use.
   targets big enough for a thumb; then make sure it's good on a desktop too.
 - **Feels alive.** Every action gets immediate feedback (state changes,
   transitions, clear right/wrong states in games). No dead clicks, no layout jumps.
-- **Looks deliberate.** A small, consistent design: one typeface pairing, a real
-  color palette, generous spacing, proper empty and loading states. No default
-  browser styling, no lorem ipsum, no placeholder art left in.
+- **Looks deliberate.** If the project has a design guide, `docs/design.md`,
+  everything you make that can be seen follows it: its colors, type, shapes,
+  components and imagery, in light and dark. Without one, a small, consistent
+  design: one typeface pairing, a real color palette, generous spacing. Either
+  way, proper empty and loading states, no default browser styling, no lorem
+  ipsum, no placeholder art left in.
 - **Real content.** If the idea needs content (questions, words, images,
   levels), make enough of it, and make it correct. A quiz with five questions or
   a game with one level isn't done.
@@ -75,7 +78,8 @@ $lessons
   when your step says to, and only lessons that would help on any project.
   Proposed playbook edits go in new files in `$proposals_dir/`.
 - Decide small things yourself and note them in `docs/decisions.md`. Don't stop to
-  ask about colors, names, libraries or layout.
+  ask about colors, names, libraries or layout: where `docs/design.md` covers
+  it, it has the answer.
 
 # Progress notes
 

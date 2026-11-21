@@ -36,7 +36,8 @@ one he picks from your files. Don't change the app itself in this step.
 1. Work out what he wants to choose between, and how many options: as many as
    he asked for, otherwise three (at most six). Make them really different from
    each other and from what's there now, each one something you'd be happy to
-   build. If there's been a round before (see "Done so far" and his feedback),
+   build. If the project has a design guide (`docs/design.md`), keep them within
+   it unless he asked for something outside it. If there's been a round before (see "Done so far" and his feedback),
    this round answers what he said about that one.
 2. Make each option concrete enough to judge from a picture. For anything he'd
    see (an art style, characters, a layout, colors, a logo), make it for real
@@ -97,7 +98,9 @@ changed flows once more in the browser on a phone. Fix what you find.
 
 ## docs
 
-1. Update `README.md` and `AGENTS.md` if the change made them wrong.
+1. Update `README.md` and `AGENTS.md` if the change made them wrong, and
+   `docs/design.md` if it changed the look (a new component, color or screen
+   pattern later work should reuse).
 2. Add anything a future worker should know to `docs/lessons.md`, and lessons
    for every project to the golem lessons file.
 

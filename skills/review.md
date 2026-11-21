@@ -21,8 +21,12 @@ Check, in this order:
 3. **Will it deploy?** `deploy/compose.yml` follows skills/deploy.md, the app
    listens on `0.0.0.0` at `golem.port`, the workflow tests, builds and pushes
    the image, and the tests pass locally.
-4. **Are the core paths tested?** Tests that would fail if the main flow broke.
-5. **Is it maintainable?** Docs accurate, no dead code, no secrets committed.
+4. **Does it follow the design guide?** If there's a `docs/design.md`, anything
+   new or changed that can be seen keeps to it: its colors (no new ones it
+   doesn't name), type, shapes, components, and dark mode. Look at the screens
+   on a phone, light and dark (`golem-screenshot --dark`).
+5. **Are the core paths tested?** Tests that would fail if the main flow broke.
+6. **Is it maintainable?** Docs accurate, no dead code, no secrets committed.
 
 Fix what you find on this branch in small commits, each message saying what was
 wrong. Don't rewrite working code to suit your taste, and don't add scope.

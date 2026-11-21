@@ -14,6 +14,7 @@ Every project repo has the same shape, so any worker can pick it up later.
 | `docs/specs/` | Specs: `mvp.md`, then one per bigger change. |
 | `docs/decisions.md` | One line per decision: what, and why. |
 | `docs/lessons.md` | What a future worker on this project should know. |
+| `docs/design.md` | The design guide, once a design pass has made one (skills/design.md); its rounds in `docs/design/rounds/`. |
 
 ## Stack
 
@@ -121,4 +122,5 @@ If a project needs a second image, add another build step tagged
 - **Deploy:** golem merges to main and deploys the merge commit once the
   `build` workflow passes on it (see golem's deploy skill).
 - **Gotchas:** ...
+- **Design:** anything visible follows `docs/design.md` (once there is one).
 ```

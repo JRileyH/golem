@@ -9,7 +9,7 @@ import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from conftest import Golem
+from conftest import REPO, Golem
 
 from golem import nuke, plan, scheduler
 from golem.harness import WRAPUP_SCHEMA, RunResult
@@ -422,6 +422,11 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         await golem.finish()
         assert any(a.startswith("open PR #1: Library View Redesign: ") for a in golem.workspace.actions)
         assert golem.bot.job_line(golem.store.job(job.id)).startswith(f"#{job.id} Tree Cards: change “Library View Redesign”, done")
+        # Every later change keeps to the project's design guide, and keeps it up to date.
+        prompts = {c.label: c.prompt for c in golem.harness.calls}
+        assert "If the project has a design guide, `docs/design.md`,\n  everything you make that can be seen follows it" in prompts["change"]
+        assert "Does it follow the design guide?" in (REPO / "skills/review.md").read_text() and "skills/review.md" in prompts["review"]
+        assert "`docs/design.md` if it changed the look" in prompts["docs"]
 
     run(go())
 

@@ -9,7 +9,8 @@ steps:
 Reckless mode, new project: one pass from idea to live site, straight to `main`
 with no review. Riggy chose speed; still make it work well and look good.
 
-Decide colors, names, libraries, layouts and similar yourself.
+Decide colors, names, libraries, layouts and similar yourself, or follow
+`docs/design.md` if the project has one.
 
 ## build
 
