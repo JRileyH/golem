@@ -889,6 +889,63 @@ def test_git_steps_branch_commit_push_and_land(checkout):
     asyncio.run(go())
 
 
+def in_tree(path, *args) -> str:
+    import subprocess
+
+    return subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_each_job_works_in_a_tree_of_its_own(checkout):
+    ws = checkout
+
+    async def go():
+        await ws.ensure_main("trees", "# Trees\n")
+        one = await ws.ensure_tree("trees", 1)
+        assert one == ws.root / ".jobs" / "1" and in_tree(one, "rev-parse", "HEAD") == git(ws, "rev-parse", "origin/main")
+        assert await ws.current_branch("trees", job=1) == "HEAD"  # detached until its first step
+        assert git(ws, "branch", "--show-current") == "main"  # the project's checkout stays on main
+        assert await ws.ensure_tree("trees", 1) == one  # there already: as it is
+
+        await ws.start_branch("trees", "golem/job-1", job=1)
+        (one / "app.js").write_text("hi\n")
+        assert await ws.commit_all("trees", "Work", job=1)
+        assert await ws.current_branch("trees", job=1) == "golem/job-1" and git(ws, "branch", "--show-current") == "main"
+
+        # A question about job 1's work looks in a tree of its own, and puts back only that.
+        two = await ws.ensure_tree("trees", 2, at="golem/job-1")
+        assert (two / "app.js").read_text() == "hi\n" and await ws.current_branch("trees", job=2) == "HEAD"
+        (two / "app.js").write_text("changed\n")
+        (two / "scratch.txt").write_text("notes\n")
+        await ws.discard("trees", job=2)
+        assert (two / "app.js").read_text() == "hi\n" and not (two / "scratch.txt").exists()
+        assert (one / "app.js").read_text() == "hi\n" and await ws.clean("trees", job=1)
+
+        sha = await ws.push_branch("trees", "golem/job-1", job=1)
+        assert sha == git(ws, "rev-parse", "origin/golem/job-1")
+        assert await ws.push_main("trees", "golem/job-1", job=1) == sha
+        assert await ws.current_branch("trees", job=1) == "HEAD" and in_tree(one, "rev-parse", "HEAD") == sha  # landed on main
+        assert "golem/job-1" not in git(ws, "branch") and git(ws, "branch", "--show-current") == "main"
+
+        # A tree that's lost comes back on its job's branch, with its work.
+        three = await ws.ensure_tree("trees", 3)
+        await ws.start_branch("trees", "golem/job-3", job=3)
+        (three / "more.js").write_text("more\n")
+        await ws.commit_all("trees", "More", job=3)
+        await workspace.remove_tree(three)
+        assert await ws.ensure_tree("trees", 3) == three
+        assert await ws.current_branch("trees", job=3) == "golem/job-3" and (three / "more.js").read_text() == "more\n"
+
+        await ws.prune_trees({3})  # only job 3 is still under way
+        assert sorted(p.name for p in (ws.root / ".jobs").iterdir()) == ["3"]
+        assert len(git(ws, "worktree", "list").splitlines()) == 2  # the checkout and job 3's tree
+        await ws.drop_tree("trees", 3)
+        assert not three.exists() and len(git(ws, "worktree", "list").splitlines()) == 1
+
+    from golem import workspace
+
+    asyncio.run(go())
+
+
 def test_ci_is_read_like_the_deployer_reads_it(checkout, monkeypatch):
     from golem import workspace
 

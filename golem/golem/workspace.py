@@ -26,6 +26,9 @@ ITEM = (
     " pr: (.pull_request != null), merged_at: .pull_request.merged_at}"
 )
 JOB_BRANCHES = "golem/job-"  # each job's branch is golem/job-<its number> (scheduler.branch)
+# Each job works in a git worktree of its own, <workspace>/.jobs/<job id> (tree_path): jobs on one
+# project never touch each other's files. Never a slug, so never a project's checkout.
+TREES = ".jobs"
 LEFTOVER = (
     "Closed by golem, which has adopted this repo again: this PR was left open by an earlier job of "
     "golem's, and new jobs reuse branch names like its. Its commits stay here."
@@ -62,7 +65,15 @@ class About:
 
 
 class Workspace(Protocol):
+    """A project's checkout (`path`), and each job's worktree of it (`tree_path`). Calls that work
+    in a checkout take `job`: that job's tree, or with None the project's own checkout (jobs from
+    before trees, and golem's own look at main)."""
+
     def path(self, slug: str) -> Path: ...
+    def tree_path(self, job: int) -> Path: ...
+    async def ensure_tree(self, slug: str, job: int, at: str | None = None) -> Path: ...
+    async def drop_tree(self, slug: str, job: int) -> None: ...
+    async def prune_trees(self, keep: set[int]) -> None: ...
     async def ensure_repo(self, slug: str, description: str) -> Path: ...
     async def ensure_main(self, slug: str, readme: str) -> None: ...
     async def sync_main(self, slug: str) -> None: ...
@@ -75,16 +86,16 @@ class Workspace(Protocol):
     async def close_leftover_prs(self, slug: str) -> list[int]: ...
     async def move_repo(self, old: str, new: str, description: str) -> Path: ...
     async def remove(self, slug: str) -> None: ...
-    async def start_branch(self, slug: str, branch: str) -> None: ...
-    async def current_branch(self, slug: str) -> str: ...
-    async def clean(self, slug: str) -> bool: ...
-    async def discard(self, slug: str) -> None: ...
-    async def commit_all(self, slug: str, message: str) -> bool: ...
-    async def push_branch(self, slug: str, branch: str) -> str | None: ...
-    async def push_main(self, slug: str, branch: str) -> str | None: ...
+    async def start_branch(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
+    async def current_branch(self, slug: str, *, job: int | None = None) -> str: ...
+    async def clean(self, slug: str, *, job: int | None = None) -> bool: ...
+    async def discard(self, slug: str, *, job: int | None = None) -> None: ...
+    async def commit_all(self, slug: str, message: str, *, job: int | None = None) -> bool: ...
+    async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
+    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None: ...
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
-    async def merge(self, slug: str, pr: PullRequest, branch: str) -> str: ...
+    async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
     async def main_sha(self, slug: str) -> str: ...
     async def ci(self, slug: str, sha: str) -> CI: ...
 
@@ -115,6 +126,57 @@ class GitHubWorkspace:
 
     def path(self, slug: str) -> Path:
         return self.root / slug
+
+    def tree_path(self, job: int) -> Path:
+        return self.root / TREES / str(job)
+
+    def where(self, slug: str, job: int | None) -> Path:
+        """The job's tree, or with None the project's own checkout."""
+        return self.path(slug) if job is None else self.tree_path(job)
+
+    # --- each job's own worktree ---------------------------------------------------
+    #
+    # The project's checkout holds git's data and stays on main; a tree is on the job's branch,
+    # or detached when the job has none (before its first agent step, after a merge). Never on
+    # main: git won't check a branch out in two places.
+
+    async def ensure_tree(self, slug: str, job: int, at: str | None = None) -> Path:
+        """The job's tree: as it is, or made now on the job's branch if it has one here (the
+        tree was lost), else detached at `at` (origin/main unless said)."""
+        path = self.tree_path(job)
+        if (path / ".git").exists():
+            return path
+        await self.git(slug, "fetch", "--quiet", "--prune", "origin")
+        await self.git(slug, "worktree", "prune")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        branch = f"{JOB_BRANCHES}{job}"
+        code, _ = await run("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=self.path(slug))
+        if code == 0:
+            await self.git(slug, "worktree", "add", "--quiet", str(path), branch)
+        else:
+            await self.git(slug, "worktree", "add", "--quiet", "--detach", str(path), at or "origin/main")
+        return path
+
+    async def drop_tree(self, slug: str, job: int) -> None:
+        """The job's tree goes (its branch stays, with whatever it pushed)."""
+        path = self.tree_path(job)
+        if path.exists():
+            code, _ = await run("git", "worktree", "remove", "--force", str(path), cwd=self.path(slug))
+            if code != 0:
+                await remove_tree(path)
+        if (self.path(slug) / ".git").is_dir():
+            await run("git", "worktree", "prune", cwd=self.path(slug))
+
+    async def prune_trees(self, keep: set[int]) -> None:
+        """Remove the trees of every job not in `keep`, then what git remembers of them."""
+        trees = self.root / TREES
+        gone = [p for p in (trees.iterdir() if trees.is_dir() else []) if p.name.isdigit() and int(p.name) not in keep]
+        for path in gone:
+            await remove_tree(path)
+        if gone:
+            for repo in self.root.iterdir():
+                if (repo / ".git").is_dir():
+                    await run("git", "worktree", "prune", cwd=repo)
 
     async def repo_exists(self, slug: str) -> bool:
         code, _ = await run("gh", "repo", "view", f"{self.org}/{slug}", "--json", "name")
@@ -191,6 +253,7 @@ class GitHubWorkspace:
         await run("gh", "repo", "edit", repo, "--default-branch", "main")
         target = self.path(new)
         path.rename(target)
+        await run("git", "worktree", "repair", cwd=target)  # its jobs' trees find it where it is now
         return target
 
     async def remove(self, slug: str) -> None:
@@ -243,10 +306,10 @@ class GitHubWorkspace:
 
     # --- the job's branch, from first commit to merge ---------------------------
 
-    async def git(self, slug: str, *args: str) -> str:
-        code, out = await run("git", *args, cwd=self.path(slug))
+    async def git(self, slug: str, *args: str, job: int | None = None) -> str:
+        code, out = await run("git", *args, cwd=self.where(slug, job))
         if code != 0:
-            raise WorkspaceError(f"git {args[0]} in {slug}: {out[-300:]}")
+            raise WorkspaceError(f"git {args[0]} in {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
         return out
 
     async def has_main(self, slug: str) -> bool:
@@ -265,61 +328,65 @@ class GitHubWorkspace:
         await self.git(slug, "commit", "--quiet", "-m", "Start the project")
         await self.git(slug, "push", "--quiet", "-u", "origin", "HEAD:main")
 
-    async def start_branch(self, slug: str, branch: str) -> None:
+    async def start_branch(self, slug: str, branch: str, *, job: int | None = None) -> None:
         """Be on the job's branch: as it is, or new from wherever the checkout is (main, normally)."""
-        if await self.git(slug, "branch", "--show-current") == branch:
+        if await self.git(slug, "branch", "--show-current", job=job) == branch:
             return
-        code, _ = await run("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=self.path(slug))
-        await self.git(slug, "checkout", "--quiet", *(() if code == 0 else ("-b",)), branch)
+        code, _ = await run("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=self.where(slug, job))
+        await self.git(slug, "checkout", "--quiet", *(() if code == 0 else ("-b",)), branch, job=job)
 
-    async def current_branch(self, slug: str) -> str:
-        return await self.git(slug, "branch", "--show-current") or "HEAD"
+    async def current_branch(self, slug: str, *, job: int | None = None) -> str:
+        return await self.git(slug, "branch", "--show-current", job=job) or "HEAD"
 
-    async def clean(self, slug: str) -> bool:
+    async def clean(self, slug: str, *, job: int | None = None) -> bool:
         """Whether the checkout has nothing uncommitted (ignored files and installed dependencies aside)."""
-        code, out = await run("git", "status", "--porcelain", "--", ".", *NEVER_COMMIT, cwd=self.path(slug))
+        code, out = await run("git", "status", "--porcelain", "--", ".", *NEVER_COMMIT, cwd=self.where(slug, job))
         return code == 0 and not out
 
-    async def discard(self, slug: str) -> None:
+    async def discard(self, slug: str, *, job: int | None = None) -> None:
         """Put a clean checkout back as it was: after a question, nothing it touched stays."""
-        await self.git(slug, "reset", "--quiet", "--hard", "HEAD")
-        await self.git(slug, "clean", "--quiet", "-fd", "--", ".", *NEVER_COMMIT)  # installed dependencies stay
+        await self.git(slug, "reset", "--quiet", "--hard", "HEAD", job=job)
+        await self.git(slug, "clean", "--quiet", "-fd", "--", ".", *NEVER_COMMIT, job=job)  # installed dependencies stay
 
-    async def commit_all(self, slug: str, message: str) -> bool:
+    async def commit_all(self, slug: str, message: str, *, job: int | None = None) -> bool:
         """Commit whatever the worker left uncommitted. Returns whether there was anything."""
-        await self.git(slug, "add", "-A", "--", ".", *NEVER_COMMIT)
-        code, _ = await run("git", "diff", "--cached", "--quiet", cwd=self.path(slug))
+        await self.git(slug, "add", "-A", "--", ".", *NEVER_COMMIT, job=job)
+        code, _ = await run("git", "diff", "--cached", "--quiet", cwd=self.where(slug, job))
         if code == 0:
             return False
-        await self.git(slug, "commit", "--quiet", "-m", message)
+        await self.git(slug, "commit", "--quiet", "-m", message, job=job)
         return True
 
-    async def ahead(self, slug: str, ref: str = "HEAD") -> int:
+    async def ahead(self, slug: str, ref: str = "HEAD", *, job: int | None = None) -> int:
         """How many commits `ref` has that main doesn't."""
-        await self.git(slug, "fetch", "--quiet", "--prune", "origin")
-        return int(await self.git(slug, "rev-list", "--count", f"origin/main..{ref}"))
+        await self.git(slug, "fetch", "--quiet", "--prune", "origin", job=job)
+        return int(await self.git(slug, "rev-list", "--count", f"origin/main..{ref}", job=job))
 
-    async def push_branch(self, slug: str, branch: str) -> str | None:
+    async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
         """Push the checkout's work to the job's branch on GitHub. None if there's nothing new for main."""
-        if not await self.ahead(slug):
+        if not await self.ahead(slug, job=job):
             return None
-        await self.git(slug, "push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}")
-        return await self.git(slug, "rev-parse", "HEAD")
+        await self.git(slug, "push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}", job=job)
+        return await self.git(slug, "rev-parse", "HEAD", job=job)
 
-    async def push_main(self, slug: str, branch: str) -> str | None:
+    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
         """Put the work straight on main (reckless mode). None if there's nothing new."""
-        if not await self.ahead(slug):
+        if not await self.ahead(slug, job=job):
             return None
-        await self.git(slug, "push", "--quiet", "origin", "HEAD:main")
-        sha = await self.git(slug, "rev-parse", "HEAD")
-        await self.back_to_main(slug, branch)
+        await self.git(slug, "push", "--quiet", "origin", "HEAD:main", job=job)
+        sha = await self.git(slug, "rev-parse", "HEAD", job=job)
+        await self.back_to_main(slug, branch, job=job)
         return sha
 
-    async def back_to_main(self, slug: str, branch: str) -> None:
-        """After a merge: the checkout on the latest main, the job's branch gone, ready for the next."""
-        await self.git(slug, "fetch", "--quiet", "--prune", "origin")
-        await self.git(slug, "checkout", "--quiet", "-B", "main", "origin/main")
-        await run("git", "branch", "-D", branch, cwd=self.path(slug))
+    async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None:
+        """After a merge: the checkout on the latest main, the job's branch gone, ready for the next.
+        A job's tree lands detached there: main itself stays the project's checkout's."""
+        await self.git(slug, "fetch", "--quiet", "--prune", "origin", job=job)
+        if job is None:
+            await self.git(slug, "checkout", "--quiet", "-B", "main", "origin/main")
+        else:
+            await self.git(slug, "checkout", "--quiet", "--detach", "origin/main", job=job)
+        await run("git", "branch", "-D", branch, cwd=self.where(slug, job))
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
         code, out = await run(
@@ -347,7 +414,7 @@ class GitHubWorkspace:
             raise WorkspaceError(f"opening a PR on {slug}: {out[-300:]}")
         return await self.pull_request(slug, branch)
 
-    async def merge(self, slug: str, pr: PullRequest, branch: str) -> str:
+    async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
         """Squash-merge exactly the commit CI checked. Returns the merge commit."""
         repo = f"{self.org}/{slug}"
         code, out = await run(
@@ -359,7 +426,7 @@ class GitHubWorkspace:
         if code != 0 or not sha:
             raise WorkspaceError(f"reading PR #{pr.number}'s merge commit on {slug}: {sha[-300:]}")
         await run("git", "push", "--quiet", "origin", "--delete", branch, cwd=self.path(slug))
-        await self.back_to_main(slug, branch)
+        await self.back_to_main(slug, branch, job=job)
         return sha
 
     async def main_sha(self, slug: str) -> str:
@@ -412,7 +479,9 @@ class LocalWorkspace:
         self.bodies: list[str] = []  # of the PRs opened
         self.has_work = True
         self.ci_results: list[CI] = []
-        self.branch: str | None = None
+        self.branch: str | None = None  # the last branch started, in any checkout
+        self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
+        self.trees: set[int] = set()  # jobs with a tree
         self.commits = 0
         self.main: dict[str, str] = {}
         self.pushed: dict[tuple[str, str], str] = {}
@@ -420,6 +489,31 @@ class LocalWorkspace:
 
     def path(self, slug: str) -> Path:
         return self.root / slug
+
+    def tree_path(self, job: int) -> Path:
+        return self.root / TREES / str(job)
+
+    async def ensure_tree(self, slug: str, job: int, at: str | None = None) -> Path:
+        """A copy of the project's directory, the first time: so a job sees the files a test put there."""
+        path = self.tree_path(job)
+        if not path.exists():
+            if self.path(slug).is_dir():
+                shutil.copytree(self.path(slug), path)
+            else:
+                path.mkdir(parents=True)
+            if at and not at.startswith("origin/"):
+                self.branches[job] = at
+        self.trees.add(job)
+        return path
+
+    async def drop_tree(self, slug: str, job: int) -> None:
+        await remove_tree(self.tree_path(job))
+        self.trees.discard(job)
+
+    async def prune_trees(self, keep: set[int]) -> None:
+        for job in [j for j in self.trees if j not in keep]:
+            await remove_tree(self.tree_path(job))
+            self.trees.discard(job)
 
     async def repo_exists(self, slug: str) -> bool:
         return slug in self.repos or slug in self.existing or self.path(slug).is_dir()
@@ -484,33 +578,36 @@ class LocalWorkspace:
     async def ensure_main(self, slug: str, readme: str) -> None:
         self.main.setdefault(slug, self._sha())
 
-    async def start_branch(self, slug: str, branch: str) -> None:
-        self.branch = branch
+    async def start_branch(self, slug: str, branch: str, *, job: int | None = None) -> None:
+        self.branch = self.branches[job] = branch
 
-    async def current_branch(self, slug: str) -> str:
+    async def current_branch(self, slug: str, *, job: int | None = None) -> str:
+        if job is not None:
+            return self.branches.get(job, "HEAD")
         return self.branch or "main"
 
-    async def clean(self, slug: str) -> bool:
+    async def clean(self, slug: str, *, job: int | None = None) -> bool:
         return True
 
-    async def discard(self, slug: str) -> None:
+    async def discard(self, slug: str, *, job: int | None = None) -> None:
         self.actions.append("discard")
 
-    async def commit_all(self, slug: str, message: str) -> bool:
+    async def commit_all(self, slug: str, message: str, *, job: int | None = None) -> bool:
         return False
 
-    async def push_branch(self, slug: str, branch: str) -> str | None:
+    async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
         if not self.has_work:
             return None
         self.actions.append(f"push {branch}")
         self.pushed[(slug, branch)] = self._sha()
         return self.pushed[(slug, branch)]
 
-    async def push_main(self, slug: str, branch: str) -> str | None:
+    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
         if not self.has_work:
             return None
         self.actions.append("push main")
         self.main[slug] = self._sha()
+        self.branches.pop(job, None)
         return self.main[slug]
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
@@ -525,10 +622,11 @@ class LocalWorkspace:
             self.prs[(slug, branch)] = PullRequest(number, f"https://github.com/unlaunched/{slug}/pull/{number}", "")
         return await self.pull_request(slug, branch)
 
-    async def merge(self, slug: str, pr: PullRequest, branch: str) -> str:
+    async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
         self.actions.append(f"merge PR #{pr.number}")
         del self.prs[(slug, branch)], self.pushed[(slug, branch)]
         self.main[slug] = self._sha()
+        self.branches.pop(job, None)
         return self.main[slug]
 
     async def main_sha(self, slug: str) -> str:
