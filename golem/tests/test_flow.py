@@ -1665,3 +1665,139 @@ def test_everything_said_is_kept_by_channel(golem):
         assert golem.store.messages("tree-cards") == [] and len(golem.store.messages("trees")) == 4
 
     run(go())
+
+
+# --- parallel workers -----------------------------------------------------------
+
+
+class Gate:
+    """Agent steps that run until the test lets their project go, to watch steps run side by side."""
+
+    def __init__(self):
+        self.started: list[tuple[str, str]] = []  # (slug, label), in the order they started
+        self.envs: list[dict] = []
+        self.go: dict[str, asyncio.Event] = {}
+
+    def let_go(self, slug: str) -> None:
+        self.go.setdefault(slug, asyncio.Event()).set()
+
+    async def run(self, *, env, label, **kwargs):
+        slug = env["GOLEM_SLUG"]
+        self.started.append((slug, label))
+        self.envs.append(env)
+        await self.go.setdefault(slug, asyncio.Event()).wait()
+        return RunResult("verdict", verdict=verdict("done"), session_id="s")
+
+    def slugs(self) -> list[str]:
+        return [slug for slug, _ in self.started]
+
+
+async def soon(check, seconds: float = 5) -> None:
+    """Wait until `check()` is true."""
+    for _ in range(int(seconds / 0.01)):
+        if check():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("never happened")
+
+
+def a_change(golem: Golem, slug: str, request: str = "make it better", **job):
+    """A live project with a change asked for."""
+    if golem.store.project(slug) is None:
+        golem.store.add_project(slug, slug.title(), f"The {slug} project.")
+    return golem.store.add_job(slug, "change", request, job.pop("playbook", "feature"), **job)
+
+
+def test_one_worker_by_default_and_more_run_steps_of_different_projects_at_once(golem):
+    async def go():
+        gate = golem.scheduler.harness = Gate()
+        trees, birds = a_change(golem, "trees"), a_change(golem, "birds")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: gate.started)
+        await asyncio.sleep(0.05)
+        assert gate.slugs() == ["trees"] and golem.scheduler.workers == 1
+
+        golem.store.put("workers", "2")
+        golem.scheduler.wake()
+        await soon(lambda: len(gate.started) == 2)
+        assert gate.slugs() == ["trees", "birds"]
+        assert {r.slug: r.slot for r in golem.scheduler.running.values()} == {"trees": 0, "birds": 1}
+
+        gate.let_go("trees")
+        gate.let_go("birds")
+        await soon(lambda: golem.store.job(trees.id).state == golem.store.job(birds.id).state == "done")
+        loop.cancel()
+
+    run(go())
+
+
+def test_a_project_runs_one_step_at_a_time_however_many_workers(golem):
+    async def go():
+        gate = golem.scheduler.harness = Gate()
+        golem.store.put("workers", "3")
+        change = a_change(golem, "trees")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: gate.started)
+        question = a_change(golem, "trees", "how big are the cards?", playbook="question", priority=10)
+        birds = a_change(golem, "birds")
+        golem.scheduler.wake()
+        await soon(lambda: len(gate.started) == 2)
+        await asyncio.sleep(0.05)
+        assert gate.slugs() == ["trees", "birds"]  # the question waits for the trees step
+        assert golem.store.job(question.id).state == "queued"
+
+        gate.let_go("trees")
+        await soon(lambda: golem.store.job(question.id).state == "done")
+        assert gate.started[2] == ("trees", "examine")  # it came first, between the change's steps
+        await soon(lambda: golem.store.job(change.id).state == "done")
+        assert golem.store.job(birds.id).state == "running"
+        loop.cancel()
+
+    run(go())
+
+
+def test_killing_or_deleting_one_of_two_running_projects_leaves_the_other(golem):
+    async def go():
+        gate = golem.scheduler.harness = Gate()
+        golem.store.put("workers", "2")
+        trees, birds, fish = a_change(golem, "trees"), a_change(golem, "birds"), a_change(golem, "fish")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: len(gate.started) == 2)
+        bird_task = golem.scheduler.running[birds.id].task
+
+        assert golem.scheduler.kill(trees.id)
+        await soon(lambda: trees.id not in golem.scheduler.running)
+        assert golem.store.job(trees.id).state == "killed" and not bird_task.done()
+        await soon(lambda: len(gate.started) == 3)  # its slot goes to the next project
+        assert gate.started[2][0] == "fish"
+
+        await golem.scheduler.drop_project("fish")  # waits only for its own step
+        assert golem.store.job(fish.id).state == "killed" and not bird_task.done()
+        gate.let_go("birds")
+        await soon(lambda: golem.store.job(birds.id).state == "done")
+        loop.cancel()
+
+    run(go())
+
+
+def test_an_upgrade_waits_for_every_running_step_and_starts_nothing_new(golem):
+    async def go():
+        gate = golem.scheduler.harness = Gate()
+        golem.store.put("workers", "2")
+        trees, birds = a_change(golem, "trees"), a_change(golem, "birds")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: len(gate.started) == 2)
+        golem.store.put("upgrade", "pending")
+        fish = a_change(golem, "fish")
+        gate.let_go("trees")
+        await soon(lambda: trees.id not in golem.scheduler.running)
+        await asyncio.sleep(0.05)
+        assert golem.deployer.upgrades == 0 and golem.scheduler.running.keys() == {birds.id}
+        assert golem.store.job(fish.id).state == "queued" and golem.store.job(trees.id).state == "queued"
+
+        gate.let_go("birds")
+        await soon(lambda: golem.deployer.upgrades == 1)
+        assert not golem.scheduler.running and golem.store.steps(fish.id) == []
+        loop.cancel()
+
+    run(go())

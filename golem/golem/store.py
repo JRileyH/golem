@@ -579,16 +579,22 @@ class Store:
             rows = self.db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [Job(**r) for r in rows]
 
-    def next_job(self, at: str | None = None) -> Job | None:
-        """Highest priority queued job whose project isn't paused; parked jobs come back once their time is up."""
+    def ready_jobs(self, at: str | None = None, limit: int = 100) -> list[Job]:
+        """Queued jobs whose project isn't paused, highest priority first; parked jobs come back
+        once their time is up."""
         at = at or now()
         self.db.execute("UPDATE jobs SET state = 'queued', retry_at = NULL WHERE state = 'parked' AND retry_at <= ?", (at,))
-        row = self.db.execute(
+        rows = self.db.execute(
             "SELECT jobs.* FROM jobs JOIN projects USING (slug)"
             " WHERE jobs.state = 'queued' AND projects.paused = 0"
-            " ORDER BY jobs.priority DESC, jobs.id LIMIT 1"
-        ).fetchone()
-        return Job(**row) if row else None
+            " ORDER BY jobs.priority DESC, jobs.id LIMIT ?",
+            (limit,),
+        )
+        return [Job(**r) for r in rows]
+
+    def next_job(self, at: str | None = None) -> Job | None:
+        """The first of the ready jobs."""
+        return next(iter(self.ready_jobs(at, limit=1)), None)
 
     def requeue_interrupted(self) -> list[Job]:
         """After a restart, a job left `running` carries on from its current step."""

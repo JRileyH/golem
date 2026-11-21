@@ -62,6 +62,7 @@ CI_POLL = timedelta(seconds=20)  # how often CI is checked while a step waits fo
 CI_START_TIMEOUT = timedelta(minutes=10)  # no workflow run on a commit by then: the repo has no CI
 CI_TIMEOUT = timedelta(minutes=60)  # CI started but still not finished: something's wrong at GitHub
 IDLE_POLL_SECONDS = 30
+MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting)
 MONITOR_SECONDS = 15  # how often a running agent step is checked on
 HEARTBEAT_SECONDS = 20 * 60  # no news from an agent step this long: say what it's on
 # Nothing logged this long and the run is stopped and retried. Claude Code logs while it
@@ -142,6 +143,12 @@ class Scheduler:
     def wake(self) -> None:
         self._wake.set()
 
+    @property
+    def workers(self) -> int:
+        """How many steps may run at once, across projects (set on the settings page). One by default."""
+        value = self.store.get("workers") or "1"
+        return min(max(int(value), 1), MAX_WORKERS) if value.isdigit() else 1
+
     def running_jobs(self) -> list[Job]:
         """The jobs whose current step is running, in the order they started."""
         return [job for job in map(self.store.job, self.running) if job is not None]
@@ -193,13 +200,16 @@ class Scheduler:
             raise
 
     def pick(self, at: str | None = None) -> Job | None:
-        """The next job to start a step of: the highest priority queued one."""
-        return self.store.next_job(at)
+        """The next job to start a step of: the highest priority queued one whose project has
+        no step running. A project's steps share its checkout, so they run one at a time."""
+        busy = {r.slug for r in self.running.values()}
+        return next((job for job in self.store.ready_jobs(at) if job.slug not in busy), None)
 
     def fill(self) -> bool:
-        """Start steps while there's a free worker slot and a job to give it. Whether any started."""
+        """Start steps while there's a free worker slot and a job to give it. Whether any started.
+        With fewer slots than are running (the setting was lowered), nothing new starts."""
         started = False
-        while not self.running and (job := self.pick()) is not None:
+        while len(self.running) < self.workers and (job := self.pick()) is not None:
             self.dispatch(job)
             started = True
         return started
