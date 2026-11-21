@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -63,6 +64,10 @@ CI_START_TIMEOUT = timedelta(minutes=10)  # no workflow run on a commit by then:
 CI_TIMEOUT = timedelta(minutes=60)  # CI started but still not finished: something's wrong at GitHub
 IDLE_POLL_SECONDS = 30
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting)
+# Each slot's localhost ports for dev servers: GOLEM_PORT to GOLEM_PORT+9 (worker_env), clear of
+# the usual defaults (3000, 4173, 5173, 8080) so a worker that forgets still can't take another's.
+PORTS = 20000
+PORTS_PER_SLOT = 100
 MONITOR_SECONDS = 15  # how often a running agent step is checked on
 HEARTBEAT_SECONDS = 20 * 60  # no news from an agent step this long: say what it's on
 # Nothing logged this long and the run is stopped and retried. Claude Code logs while it
@@ -180,6 +185,7 @@ class Scheduler:
         for job in self.store.jobs(ACTIVE):
             if self.store.runs(job.id):  # under way from before steps were tracked
                 self.ensure_steps(job)
+        self.tidy()
         self.backfill = asyncio.create_task(self.missing_cards())
         self.versions = asyncio.create_task(self.upgrades.watch_forever())
         try:
@@ -232,6 +238,7 @@ class Scheduler:
             await self.retry_or_ask(job, f"golem error: {e!r}")
         finally:
             self.running.pop(job.id, None)
+            self.tidy()
             self.wake()
 
     async def idle(self) -> None:
@@ -508,6 +515,7 @@ class Scheduler:
         current = self.store.step(step.id) or step
         engine = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current)
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{label}.jsonl.gz"
+        self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)
         run_id = self.store.start_run(job.id, label, str(engine), str(log_path), step.id)
         notes = self.progress_path(job)
         seen = notes.stat().st_size if notes.exists() else 0  # notes from earlier steps were passed on then
@@ -944,7 +952,11 @@ class Scheduler:
         return self.settings.job_logs(job.id) / "progress.txt"
 
     def worker_env(self, project: Project, job: Job) -> dict[str, str]:
+        """What a worker is told. Workers on other projects may run beside it, so it gets ports
+        and a TMPDIR of its own: its slot's GOLEM_PORT to GOLEM_PORT+9, and its job's directory."""
         env = {k: v for k, v in os.environ.items() if k not in WORKER_ENV_DENY}
+        slot = self.running[job.id].slot if job.id in self.running else 0
+        tmp = str(self.settings.job_tmp(job.id))
         env.update(
             GOLEM_SLUG=project.slug,
             GOLEM_JOB=str(job.id),
@@ -953,8 +965,20 @@ class Scheduler:
             GITHUB_ORG=self.settings.org,
             GOLEM_PLATFORM=self.settings.platform,
             DEPLOYER_URL=self.settings.deployer_url,
+            GOLEM_SLOT=str(slot),
+            GOLEM_PORT=str(PORTS + PORTS_PER_SLOT * slot),
+            GOLEM_TMP=tmp,
+            TMPDIR=tmp,
         )
         return env
+
+    def tidy(self) -> None:
+        """Remove the scratch directories of jobs that are over. Best effort."""
+        keep = self.store.active_job_ids() | set(self.running)
+        for path in self.settings.tmp_dir.glob("job-*"):
+            n = path.name.removeprefix("job-")
+            if n.isdigit() and int(n) not in keep:
+                shutil.rmtree(path, ignore_errors=True)
 
     async def say(self, project: Project, text: str, notice: bool = False) -> None:
         await self.chat.send(project.slug, text, notice=notice)

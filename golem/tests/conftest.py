@@ -109,6 +109,7 @@ class Golem:
                 workspace_dir=tmp / "workspace",
                 process_dir=REPO,
                 web_password="pw",
+                tmp_dir=tmp / "tmp",
             ),
             **overrides,
         )

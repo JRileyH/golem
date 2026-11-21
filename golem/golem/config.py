@@ -28,6 +28,8 @@ class Settings:
     default_effort: str = "high"
     # What CI builds project images for: this box's own architecture.
     platform: str = "linux/amd64"
+    # Scratch space: each job's TMPDIR is a directory of its own in here (job_tmp).
+    tmp_dir: Path = Path("/tmp/golem")
 
     @classmethod
     def from_env(cls, env: dict[str, str] = os.environ) -> Settings:
@@ -77,6 +79,11 @@ class Settings:
     def job_logs(self, job_id: int) -> Path:
         """Where a job's runs are logged, one compressed event stream per run."""
         return self.state_dir / "jobs" / str(job_id)
+
+    def job_tmp(self, job_id: int) -> Path:
+        """A job's own scratch directory, its workers' TMPDIR: workers running beside it have theirs.
+        Per job rather than per run, so a session resumed later finds its files."""
+        return self.tmp_dir / f"job-{job_id}"
 
 
 def _platform() -> str:

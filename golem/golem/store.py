@@ -579,6 +579,11 @@ class Store:
             rows = self.db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [Job(**r) for r in rows]
 
+    def active_job_ids(self) -> set[int]:
+        """Every unfinished job's id."""
+        marks = ", ".join("?" * len(ACTIVE))
+        return {r["id"] for r in self.db.execute(f"SELECT id FROM jobs WHERE state IN ({marks})", ACTIVE)}
+
     def ready_jobs(self, at: str | None = None, limit: int = 100) -> list[Job]:
         """Queued jobs whose project isn't paused, highest priority first; parked jobs come back
         once their time is up."""

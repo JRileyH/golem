@@ -1722,10 +1722,19 @@ def test_one_worker_by_default_and_more_run_steps_of_different_projects_at_once(
         await soon(lambda: len(gate.started) == 2)
         assert gate.slugs() == ["trees", "birds"]
         assert {r.slug: r.slot for r in golem.scheduler.running.values()} == {"trees": 0, "birds": 1}
+        # Side by side, each has ports and a TMPDIR of its own.
+        tmp = golem.settings.tmp_dir
+        own = {e["GOLEM_SLUG"]: (e["GOLEM_SLOT"], e["GOLEM_PORT"], e["TMPDIR"], e["GOLEM_TMP"]) for e in gate.envs}
+        assert own == {
+            "trees": ("0", "20000", str(tmp / f"job-{trees.id}"), str(tmp / f"job-{trees.id}")),
+            "birds": ("1", "20100", str(tmp / f"job-{birds.id}"), str(tmp / f"job-{birds.id}")),
+        }
+        assert (tmp / f"job-{trees.id}").is_dir() and (tmp / f"job-{birds.id}").is_dir()
 
         gate.let_go("trees")
         gate.let_go("birds")
         await soon(lambda: golem.store.job(trees.id).state == golem.store.job(birds.id).state == "done")
+        await soon(lambda: not list(tmp.glob("job-*")))  # gone with the jobs
         loop.cancel()
 
     run(go())
