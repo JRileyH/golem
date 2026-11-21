@@ -269,6 +269,42 @@ def test_collect_keeps_files_in_the_checkout_and_copies_the_first_pictures(tmp_p
     assert not any(options.is_image(name) for name in ("../12-a-1.png", "12-a-1.svg", "golem.db", "x-a-1.png"))
 
 
+def test_collect_design_keeps_a_doc_that_runs_nothing_and_its_shared_pages(tmp_path):
+    checkout, dest = tmp_path / "repo", tmp_path / "state"
+    rounds = checkout / "docs/design/rounds/job-7/round-1"
+    rounds.mkdir(parents=True)
+    (rounds / "doc.html").write_text("<!doctype html><style>body{}</style><section class=page>Directions</section>")
+    for n in range(1, 6):
+        (rounds / f"p{n}.png").write_bytes(PNG)
+    raw = {
+        "doc": "docs/design/rounds/job-7/round-1/doc.html",
+        "pages": ["../secret.png", *(f"docs/design/rounds/job-7/round-1/p{n}.png" for n in range(1, 6))],
+        "questions": ["Wordmark:   Oxanium or Zilla Slab?", "", "Icon: Granite or Kiln?"],
+        "recommendation": "B, with Oxanium and the Kiln icon.",
+    }
+    design, problem = options.collect_design(raw, checkout, dest, "12")
+    assert problem == "" and (design.doc, design.source) == ("12-doc.html", "docs/design/rounds/job-7/round-1/doc.html")
+    assert design.pages == ["12-p-1.png", "12-p-2.png", "12-p-3.png", "12-p-4.png"]  # the first four
+    assert design.questions == ["Wordmark: Oxanium or Zilla Slab?", "Icon: Granite or Kiln?"]
+    assert (dest / "12-doc.html").read_text().startswith("<!doctype html>")
+    assert options.is_doc("12-doc.html") and options.is_image("12-p-1.png")
+    assert not any(options.is_doc(name) for name in ("12-doc.htm", "../12-doc.html", "x-doc.html", "12-doc.html.png"))
+
+    def problem_with(doc: str, text: str | bytes = "<p>hi</p>") -> str:
+        path = checkout / doc
+        path.write_bytes(text) if isinstance(text, bytes) else path.write_text(text)
+        return options.collect_design({"doc": doc}, checkout, tmp_path / "other", "13")[1]
+
+    assert "has a <script>" in problem_with("a.html", "<p>hi</p><SCRIPT>fetch('/act')</SCRIPT>")
+    assert "has a <script>" in problem_with("b.html", "<meta http-equiv=refresh content='0;url=/act'>")
+    assert "isn't an HTML file" in problem_with("c.pdf")
+    assert "is over 10 MB" in problem_with("d.html", b"x" * (options.MAX_DOC_BYTES + 1))
+    assert "returned no doc" in options.collect_design({"doc": "../outside.html"}, checkout, dest, "14")[1]
+    assert not (tmp_path / "other").exists()  # nothing copied for a doc it refused
+    skipped, problem = options.collect_design({"skip": "He said keep the look."}, checkout, dest, "15")
+    assert (skipped.skip, skipped.doc, problem) == ("He said keep the look.", "", "")
+
+
 @pytest.mark.parametrize(
     "reply, more, picked",
     [
@@ -542,6 +578,12 @@ def test_older_databases_get_new_columns(tmp_path):
         " issue INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
     )
     db.execute("INSERT INTO jobs (slug, kind, request, playbook, created_at, updated_at) VALUES ('hey', 'change', 'add a quiz', 'feature', 'now', 'now')")
+    db.execute(
+        "CREATE TABLE steps (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL,"
+        " name TEXT NOT NULL, max_turns INTEGER, state TEXT NOT NULL DEFAULT 'pending', summary TEXT, problem TEXT, error TEXT,"
+        " links TEXT NOT NULL DEFAULT '{}', started_at TEXT, ended_at TEXT)"
+    )
+    db.execute("INSERT INTO steps (job_id, position, kind, name) VALUES (1, 1, 'agent', 'change')")
     db.commit()
     db.close()
     db = sqlite3.connect(tmp_path / "old.db")
@@ -562,6 +604,11 @@ def test_older_databases_get_new_columns(tmp_path):
     assert "via" not in {r["name"] for r in store.db.execute("PRAGMA table_info(messages)")}
     # Jobs from before titles have none: they go by their request's first line.
     assert (store.job(1).title, plan.title(store.job(1))) == ("", "add a quiz")
+    # Steps from before options and design rounds have none.
+    [step] = store.steps(1)
+    assert (step.options, step.design, step.optional) == ([], {}, False)
+    store.update_step(step.id, design={"doc": "1-doc.html"})
+    assert store.step(step.id).design == {"doc": "1-doc.html"}
 
 
 def test_of_the_tags_cards_had_only_game_stays(tmp_path):

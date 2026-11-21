@@ -95,7 +95,8 @@ CREATE TABLE IF NOT EXISTS steps (
     ended_at TEXT,
     model TEXT,                      -- Riggy's choice for this step, over the defaults
     effort TEXT,
-    options TEXT NOT NULL DEFAULT '[]'  -- JSON: an options step's options (options.py)
+    options TEXT NOT NULL DEFAULT '[]', -- JSON: an options step's options (options.py)
+    design TEXT NOT NULL DEFAULT '{}'   -- JSON: a design round's doc, pages, questions and pick (options.Design)
 );
 -- What the projects page shows for a live project (cards.py).
 CREATE TABLE IF NOT EXISTS cards (
@@ -167,6 +168,7 @@ MIGRATIONS = {
         "model": "TEXT",
         "effort": "TEXT",
         "options": "TEXT NOT NULL DEFAULT '[]'",
+        "design": "TEXT NOT NULL DEFAULT '{}'",
     },
     "notes": {"step_id": "INTEGER"},  # a note for one step rather than the next
 }
@@ -302,6 +304,7 @@ class Step:
     model: str | None = None  # Riggy's choice for this step; None for the defaults
     effort: str | None = None
     options: list[dict] = field(default_factory=list)  # an options step's, as options.Option fields
+    design: dict = field(default_factory=dict)  # a design step's round, as options.Design fields
 
 
 class Store:
@@ -644,7 +647,7 @@ class Store:
         return _step(row) if row else None
 
     def update_step(self, step_id: int, **fields) -> Step:
-        for name in ("links", "options"):
+        for name in ("links", "options", "design"):
             if name in fields:
                 fields[name] = json.dumps(fields[name])
         columns = ", ".join(f"{name} = ?" for name in fields)
@@ -792,6 +795,7 @@ def _step(row: sqlite3.Row | dict) -> Step:
     data = dict(row)
     data["links"] = json.loads(data["links"] or "{}")
     data["options"] = json.loads(data.get("options") or "[]")
+    data["design"] = json.loads(data.get("design") or "{}")
     data["optional"] = bool(data["optional"])
     return Step(**data)
 

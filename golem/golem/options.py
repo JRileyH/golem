@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import plan
@@ -60,6 +60,32 @@ SCHEMA = {
                 "additionalProperties": False,
             },
         },
+    },
+}
+# A design round (skills/design.md): its directions are the options, each with its own pages'
+# pictures; and the doc they're all in, the pages they share, what else to decide, and a pick.
+PAGES_SHOWN = 4  # pictures of the pages every direction shares (principles, logo sheet, decisions)
+QUESTIONS = 8
+MAX_DOC_BYTES = 10 * 1024 * 1024
+DESIGN_SCHEMA = {
+    **SCHEMA,
+    "properties": {
+        **SCHEMA["properties"],
+        "doc": {"type": "string", "description": "The design doc: one self-contained HTML file, its path from the repo root"},
+        "pages": {
+            "type": "array",
+            "maxItems": PAGES_SHOWN,
+            "items": {"type": "string"},
+            "description": "Pictures of the pages every direction shares, in order, as paths from the repo root",
+        },
+        "questions": {
+            "type": "array",
+            "maxItems": QUESTIONS,
+            "items": {"type": "string"},
+            "description": "What else there is to decide besides the direction, one question each, its choices by name, never by letter",
+        },
+        "recommendation": {"type": "string", "description": "Your pick in a sentence: the direction, and your answer to each question"},
+        "skip": {"type": "string", "description": "Only if there's nothing to design: why, in a sentence, and no options"},
     },
 }
 REQUEST_SCHEMA = {
@@ -122,6 +148,18 @@ class Reply:
     picked: list[str]  # the letters he chose, in his order; none leaves it to the worker
 
 
+@dataclass
+class Design:
+    """What a design round brings besides its directions (the options)."""
+
+    doc: str = ""  # the doc's copy: a file name in the job's options folder (folder())
+    source: str = ""  # the doc in the repo, from its root
+    pages: list[str] = field(default_factory=list)  # copies of the shared pages' pictures, in order
+    questions: list[str] = field(default_factory=list)
+    recommendation: str = ""
+    skip: str = ""  # why there's nothing to design, when the step found nothing to
+
+
 def folder(settings: Settings, job_id: int) -> Path:
     """Where copies of a job's option pictures are kept, for the conversation and the status page."""
     return settings.job_logs(job_id) / "options"
@@ -138,18 +176,70 @@ def collect(raw: object, checkout: Path, dest: Path, prefix: str) -> list[Option
         letter = LETTERS[len(found)]
         files, images = [], []
         for name in item.get("files") or []:
-            path = (root / str(name)).resolve()
-            if not path.is_relative_to(root) or not path.is_file() or ".git" in path.relative_to(root).parts:
+            path = _inside(root, name)
+            if path is None:
                 continue
             files.append(path.relative_to(root).as_posix())
-            suffix = path.suffix.lower()
-            if suffix in IMAGE_TYPES and len(images) < IMAGES_SHOWN and path.stat().st_size <= MAX_IMAGE_BYTES:
-                images.append(f"{prefix}-{letter.lower()}-{len(images) + 1}{suffix}")
-                dest.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, dest / images[-1])
+            if len(images) < IMAGES_SHOWN:
+                _copy_image(path, dest, f"{prefix}-{letter.lower()}-{len(images) + 1}", images)
         title = str(item.get("title") or "").strip()[:80] or f"Option {letter}"
         found.append(Option(letter, title, str(item.get("description") or "").strip()[:500], files[:30], images))
     return found
+
+
+def collect_design(raw: dict, checkout: Path, dest: Path, prefix: str) -> tuple[Design, str]:
+    """A design round's doc and shared pages (copied to `dest` as `<prefix>-doc.html` and
+    `<prefix>-p-<n>`), its questions and its pick; and what's wrong with it, or "". The doc is
+    served from golem's own site, so it has to be one file that runs nothing (web.DOC_POLICY)."""
+    root = checkout.resolve()
+    skip = " ".join(str(raw.get("skip") or "").split())[:300]
+    pages: list[str] = []
+    for name in raw.get("pages") or []:
+        path = _inside(root, name)
+        if path is not None and len(pages) < PAGES_SHOWN:
+            _copy_image(path, dest, f"{prefix}-p-{len(pages) + 1}", pages)
+    design = Design(
+        pages=pages,
+        questions=[q for q in (" ".join(str(x).split())[:300] for x in (raw.get("questions") or [])[:QUESTIONS]) if q],
+        recommendation=" ".join(str(raw.get("recommendation") or "").split())[:500],
+        skip=skip,
+    )
+    if skip:
+        return design, ""
+    named = str(raw.get("doc") or "").strip()
+    path = _inside(root, named) if named else None
+    if path is None:
+        return design, "The design step returned no doc: one self-contained HTML file in the repo, its path in `doc`."
+    if path.suffix.lower() not in (".html", ".htm"):
+        return design, f"The design doc {named} isn't an HTML file."
+    if path.stat().st_size > MAX_DOC_BYTES:
+        return design, f"The design doc {named} is over {MAX_DOC_BYTES // 2**20} MB: subset its fonts and shrink its pictures."
+    text = path.read_text(errors="replace").lower()
+    if "<script" in text or "http-equiv" in text:
+        return design, f"The design doc {named} has a <script> or http-equiv: it has to run nothing (skills/design.md)."
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, dest / f"{prefix}-doc.html")
+    design.doc, design.source = f"{prefix}-doc.html", path.relative_to(root).as_posix()
+    return design, ""
+
+
+def _inside(root: Path, name: object) -> Path | None:
+    """A file a worker named, if it's in the checkout (`root`, resolved) and not git's."""
+    path = (root / str(name)).resolve()
+    if not path.is_relative_to(root) or not path.is_file() or ".git" in path.relative_to(root).parts:
+        return None
+    return path
+
+
+def _copy_image(path: Path, dest: Path, stem: str, into: list[str]) -> bool:
+    """Copy a picture to `dest` as `stem` and its type, and add its name to `into`, if it's one golem shows."""
+    suffix = path.suffix.lower()
+    if suffix not in IMAGE_TYPES or path.stat().st_size > MAX_IMAGE_BYTES:
+        return False
+    dest.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(path, dest / f"{stem}{suffix}")
+    into.append(f"{stem}{suffix}")
+    return True
 
 
 def makes(step: Step) -> bool:
@@ -169,9 +259,15 @@ def shown(steps: list[Step], step: Step) -> tuple[Step | None, list[Option]]:
 
 
 def is_image(name: str) -> bool:
-    """A name `collect` could have given a copy: `<step>-<letter>-<n>.<image type>`."""
+    """A name `collect` could have given a copy, `<step>-<letter>-<n>.<image type>`, or
+    `collect_design` a shared page's, `<step>-p-<n>.<image type>`."""
     stem, _, suffix = name.rpartition(".")
-    return bool(re.fullmatch(r"\d+-[a-f]-\d+", stem)) and f".{suffix}" in IMAGE_TYPES
+    return bool(re.fullmatch(r"\d+-[a-fp]-\d+", stem)) and f".{suffix}" in IMAGE_TYPES
+
+
+def is_doc(name: str) -> bool:
+    """A name `collect_design` could have given a design doc's copy: `<step>-doc.html`."""
+    return bool(re.fullmatch(r"\d+-doc\.html", name))
 
 
 def picked(reply: Reply, found: list[Option], said: str) -> str:
