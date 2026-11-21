@@ -1135,7 +1135,9 @@ form.inline { display:inline; margin:0; }
 button, .button, select { font:inherit; font-size:.88rem; font-weight:600; min-height:38px; padding:.35rem .85rem .45rem; border:0; border-radius:var(--radius);
   background:var(--stone); color:var(--ink); cursor:pointer; box-shadow:inset 0 -3px 0 var(--lip); }
 button:active:not(:disabled), .button:active { padding-top:.45rem; padding-bottom:.35rem; box-shadow:inset 0 -1px 0 var(--lip); }
-select { font-weight:500; padding-right:.4rem; max-width:13rem; }
+select { font-weight:500; padding-right:2.1rem; max-width:13rem; -webkit-appearance:none; appearance:none; background-repeat:no-repeat;
+  background-image:linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-size:5px 5px; background-position:right 19px top calc(50% - 1px), right 14px top calc(50% - 1px); }
 .button { display:inline-flex; align-items:center; background:var(--accent) var(--rust); color:var(--accent-ink); box-shadow:inset 0 -3px 0 var(--lip-strong); }
 button.danger { color:var(--critical); }
 button.quiet, summary.quiet { background:transparent; border:0; box-shadow:none; cursor:pointer; color:inherit; font-size:.9rem; padding:.35rem .5rem; }
