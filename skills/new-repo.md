@@ -29,6 +29,11 @@ Pick the smallest stack that does the job well:
 Whatever you pick, the app listens on `0.0.0.0` on one port, given in
 `golem.port`.
 
+Other projects' workers serve on the same machine as you (skills/browser.md), so
+dev and test tooling never assumes a port is free: configs take it from `PORT`
+when that's set (`Number(process.env.PORT ?? 5173)`), and a Playwright
+`webServer` has `reuseExistingServer: !process.env.CI`.
+
 ## Dockerfile
 
 Multi-stage when there's a build step; small runtime image. For a Vite site

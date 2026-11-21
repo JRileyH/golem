@@ -74,9 +74,16 @@ $lessons
 - **No Docker here:** images are built by GitHub Actions once golem pushes. You
   can run the app's own tooling (node, npm, python, uv) to build and test, and
   `golem-deploy status` or `golem-deploy logs` to see the live site's state.
+- **Other workers may run beside you,** on other projects in this same machine.
+  Serve anything local only on your ports, `$$GOLEM_PORT` to `$$GOLEM_PORT+9`,
+  keep scratch files in `$$TMPDIR` (your job's own), and stop what you start
+  (skills/browser.md).
 - **Lessons:** the golem-wide lessons file is `$lessons_path`. Append to it only
-  when your step says to, and only lessons that would help on any project.
-  Proposed playbook edits go in new files in `$proposals_dir/`.
+  when your step says to, and only lessons that would help on any project. Other
+  workers may be adding theirs, so only ever append, in one command
+  (`cat >> $lessons_path <<'EOF'` … `EOF`), and never rewrite the file.
+  Proposed playbook edits go in new files in `$proposals_dir/`, named
+  `job-$job-<what>.md`.
 - Decide small things yourself and note them in `docs/decisions.md`. Don't stop to
   ask about colors, names, libraries or layout: where `docs/design.md` covers
   it, it has the answer.

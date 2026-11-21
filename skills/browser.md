@@ -3,15 +3,31 @@
 Chromium and Playwright are installed. Use them to see what you built: you can
 read PNG screenshots with your file-reading tool, and you should.
 
+## Other workers run beside you
+
+golem may have workers on other projects running in this same machine at the
+same time as you. So:
+
+- **Serve only on your own ports:** `$GOLEM_PORT` to `$GOLEM_PORT+9`. Always
+  name the port, and make the server fail if it's taken rather than pick
+  another (Vite's `--strictPort`): a server that quietly moves, or a page left
+  on a default port, can be another project's app.
+- **Keep scratch files in `$TMPDIR`**, your job's own directory: scripts,
+  screenshots, downloads. Never straight in `/tmp`.
+- **Check it's this project** before trusting a screenshot of a local server:
+  its title, its name on the page.
+- **Stop what you start.** golem stops anything still running when your step
+  ends.
+
 ## Quick look: `golem-screenshot`
 
 ```sh
-golem-screenshot http://localhost:5173/          # a dev or preview server
-golem-screenshot "$GOLEM_URL"                   # the live site
+golem-screenshot "http://127.0.0.1:$GOLEM_PORT/"   # your dev or preview server
+golem-screenshot "$GOLEM_URL"                      # the live site
 ```
 
 It loads the page at phone (390×844) and desktop (1280×800) sizes, waits for the
-network to settle, saves full-page screenshots to `/tmp/screens/`, and prints
+network to settle, saves full-page screenshots to `$TMPDIR/screens/`, and prints
 their paths plus any console errors, page errors and failed requests. Read both
 screenshots. Errors printed here are bugs.
 
@@ -37,7 +53,7 @@ For anything interactive (playing a round, submitting a form), write a short
 script and run it with `node`. `playwright` resolves from anywhere.
 
 ```js
-// /tmp/flow.mjs
+// $TMPDIR/flow.mjs
 import { chromium, devices } from "playwright";
 
 const browser = await chromium.launch();
@@ -48,7 +64,7 @@ page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 
 await page.goto(process.argv[2]);
 await page.getByRole("button", { name: /start/i }).click();
-await page.screenshot({ path: "/tmp/screens/after-start.png" });
+await page.screenshot({ path: `${process.env.TMPDIR}/screens/after-start.png` });
 // ...each step of the flow, with a screenshot where it matters
 
 console.log(errors.length ? errors.join("\n") : "no errors");
@@ -56,15 +72,22 @@ await browser.close();
 ```
 
 ```sh
-mkdir -p /tmp/screens && node /tmp/flow.mjs http://localhost:5173/
+mkdir -p "$TMPDIR/screens" && node "$TMPDIR/flow.mjs" "http://127.0.0.1:$GOLEM_PORT/"
 ```
 
 Keep scripts that are worth keeping as the project's browser tests (with
-`@playwright/test` in the repo, so CI runs them).
+`@playwright/test` in the repo, so CI runs them). Run those with `CI=1` and a
+port of your own, `PORT=$((GOLEM_PORT+4)) CI=1 npx playwright test`, so a
+`webServer` in its config starts this project's server rather than reusing
+whatever answers on its usual port (skills/new-repo.md).
 
 ## Serving the app locally
 
-- Vite: `npm run dev -- --host 127.0.0.1 &` (port 5173), or `npm run build &&
-  npx vite preview --port 4173 &` for the production build.
-- Static files: `python -m http.server 8080 -d dist &`.
+On your own ports, named every time:
+
+- Vite: `npm run dev -- --host 127.0.0.1 --port $GOLEM_PORT --strictPort &`, or
+  `npm run build && npx vite preview --host 127.0.0.1 --port $((GOLEM_PORT+1))
+  --strictPort &` for the production build.
+- Static files: `python -m http.server $((GOLEM_PORT+2)) -b 127.0.0.1 -d dist &`.
+- A server of the project's own: `PORT=$((GOLEM_PORT+3))` (or its own flag).
 - Stop what you started when you're done (`kill %1`).

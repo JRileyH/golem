@@ -97,7 +97,7 @@ class Cards:
                 prompt=prompt,
                 model=CARD_MODEL,
                 max_turns=3,
-                log_path=work / "last.jsonl.gz",
+                log_path=work / f"{project.slug}.jsonl.gz",  # each project's latest: two can be made at once
                 env={k: v for k, v in os.environ.items() if k not in DENY},
                 schema=SCHEMA,
                 label="card",

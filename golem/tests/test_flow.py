@@ -256,7 +256,12 @@ def test_step_prompts_are_fully_filled_in(golem):
         await golem.step()
         prompt = golem.harness.calls[-1].prompt
         assert '>> "$GOLEM_PROGRESS"' in prompt  # an environment variable, not a placeholder
-        assert "$" not in prompt.replace("$(", "").replace("$GOLEM_PROGRESS", "")
+        rest = prompt.replace("$(", "")
+        for name in ("$GOLEM_PROGRESS", "$GOLEM_PORT", "$TMPDIR"):  # environment variables too
+            rest = rest.replace(name, "")
+        assert "$" not in rest
+        assert "only on your ports, `$GOLEM_PORT` to `$GOLEM_PORT+9`" in prompt
+        assert "/proposals/`, named\n  `job-1-<what>.md`" in prompt
         assert "# Your step: spec" in prompt
         assert "on the branch `golem/job-1`" in prompt
         assert "Don't push, open or merge pull requests, or deploy" in prompt

@@ -75,11 +75,12 @@ explore it: three distinct moods, named.
 
 ### The real screens
 
-Run the app, then shoot it with each direction's CSS laid over it, so the
-mockups are its own screens and the app itself doesn't change:
+Run the app (on your own port: skills/browser.md), then shoot it with each
+direction's CSS laid over it, so the mockups are its own screens and the app
+itself doesn't change:
 
 ```js
-// /tmp/mock.mjs <url> <direction.css> <out.png> [light|dark] [width] [height]
+// $TMPDIR/mock.mjs <url> <direction.css> <out.png> [light|dark] [width] [height]
 import { chromium } from "playwright";
 const [url, css, out, scheme = "light", w = "390", h = "844"] = process.argv.slice(2);
 const browser = await chromium.launch();

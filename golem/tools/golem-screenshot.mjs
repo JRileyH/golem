@@ -3,11 +3,14 @@
 // any console errors, page errors and failed requests. With --dark, each again in dark mode
 // (prefers-color-scheme: dark). For workers (skills/browser.md).
 import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { chromium, devices } from "playwright";
 
 const args = process.argv.slice(2);
 const dark = args.includes("--dark");
-const [url, outDir = "/tmp/screens"] = args.filter((a) => a !== "--dark");
+// $TMPDIR/screens by default: each job has its own TMPDIR, so workers side by side keep theirs apart.
+const [url, outDir = join(tmpdir(), "screens")] = args.filter((a) => a !== "--dark");
 if (!url) {
   console.error("usage: golem-screenshot <url> [out-dir] [--dark]");
   process.exit(2);

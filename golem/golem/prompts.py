@@ -69,6 +69,7 @@ class Prompts:
             lessons=lessons.strip() or "(none yet)",
             lessons_path=s.state_dir / "lessons.md",
             proposals_dir=s.state_dir / "proposals",
+            job=job.id,
             skills=s.process_dir / "skills",
         )
 
