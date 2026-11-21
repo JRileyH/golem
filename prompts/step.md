@@ -8,7 +8,9 @@ merging, deploying, telling Riggy) itself.
 
 - Project: $name (`$slug`) — $summary
 - Live URL: $url
-- Repo: $repo. Your working directory is its checkout, on the branch `$branch`.
+- Repo: $repo. Your working directory is this job's own checkout of it, on the branch `$branch`.
+  Each job's checkout starts fresh, so dependencies may not be installed yet: install them
+  before you run anything.
 - Job: $kind, **$mode mode**
 - GitHub issue for this job: $issue
 

@@ -6,7 +6,8 @@ projects, and your step is to answer it.
 
 - Project: $name (`$slug`) — $summary
 - Live URL: $url
-- Repo: $repo. Your working directory is its checkout, on `$branch`$where.
+- Repo: $repo. Your working directory is a checkout of its own, on `$branch`$where. Install
+  dependencies before you run anything: it starts without them.
 
 # His question
 

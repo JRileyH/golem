@@ -67,10 +67,12 @@ RUN printf '#!/bin/sh\nexec /opt/golem/app/.venv/bin/python -m golem.deploy_cli 
     && chmod 755 /usr/local/bin/golem-deploy
 
 USER golem
+# npm's cache in the cache volume with uv's: each job installs in a fresh tree, from the cache.
 ENV PATH="/opt/golem/app/.venv/bin:$PATH" \
     PYTHONPATH=/opt/golem/app \
     PYTHONUNBUFFERED=1 \
     CLAUDE_CONFIG_DIR=/home/golem/.claude \
-    DISABLE_AUTOUPDATER=1
+    DISABLE_AUTOUPDATER=1 \
+    npm_config_cache=/home/golem/.cache/npm
 HEALTHCHECK --interval=30s --timeout=3s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"
 CMD ["python", "-m", "golem"]
