@@ -16,6 +16,15 @@ steps:
   - merge
   - deploy
   - {do: checkin, optional: true}
+  - {agent: design, turns: 400, optional: true}
+  - {do: choose, optional: true}
+  - {agent: guide, turns: 200}
+  - {agent: apply, turns: 400}
+  - push
+  - pr
+  - checks
+  - merge
+  - deploy
   - {agent: buildout, turns: 500}
   - {agent: review, turns: 200, optional: true}
   - {agent: second-pass, turns: 150, optional: true}
@@ -28,13 +37,16 @@ steps:
   - alert
 ---
 Rigorous mode, new project: a reviewed spec, a skeleton deployed to prove
-hosting, an MVP that Riggy tries, thorough tests, two review passes and docs.
+hosting, an MVP that Riggy tries, a design pass he picks the look in, thorough
+tests, two review passes and docs.
 Take the time to make it excellent: Riggy chose this mode because he wants the
 best version of the idea, not the fastest.
 
-Riggy is the product manager, not a reviewer of details. Decide colors, names,
+Riggy is the product manager, not a reviewer of details. Decide names,
 libraries, layouts and similar yourself and record the choice in
-`docs/decisions.md` (one line each: decision, why).
+`docs/decisions.md` (one line each: decision, why). The look is his to pick: until
+the design pass after the MVP, keep it simple and tidy; from then on, anything
+visible follows `docs/design.md`.
 
 ## spec
 
@@ -88,6 +100,35 @@ Build the MVP from `docs/specs/mvp.md`. Riggy tries it on the live site next.
    flow in the browser.
 
 Message: what to try and, briefly, what's deliberately not there yet.
+
+## design
+
+Riggy has tried the MVP; next, the project gets a look of its own. Make round 1
+of its design pass (skills/design.md): the doc, with directions for him to pick
+from, built on his words in `docs/brief.md` and what the MVP is. If there's been
+a round before (see "Done so far" and his feedback), this round answers what he
+said about it. His reply to the check-in is for the buildout step, not this one:
+don't act on it here, but design for the project it describes. Don't change the
+app itself in this step. Return what the skill says to return.
+
+## guide
+
+Write the design guide, `docs/design.md`, and the real assets it lists
+(skills/design.md): from the direction Riggy picked (under "Done so far", with
+where its files are), his answers to the questions (his feedback), and his
+words. If he didn't pick one (the pick was skipped or left to you), go with the
+round's recommendation (the doc's decisions page) and say so in your message.
+Add the line about it to `AGENTS.md`. Don't restyle the app yet: the next step
+does.
+
+## apply
+
+Restyle the MVP from `docs/design.md` and its assets (skills/design.md): tokens
+and fonts first, then every component, screen and state, the icons and
+manifest. Check it in a real browser on a phone and wide, light and dark
+(`golem-screenshot --dark`), beside the picked direction's pages in
+`docs/design/rounds/`. Keep tests passing. If building it showed the guide was
+wrong somewhere, fix the guide. The buildout comes next and follows the guide.
 
 ## buildout
 

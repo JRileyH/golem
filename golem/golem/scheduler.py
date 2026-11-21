@@ -735,8 +735,12 @@ class Scheduler:
         return Outcome("done", f"Merged PR #{pr.number} as {sha[:7]}.", {"pr": pr.url, "commit": self.commit_url(project, sha)})
 
     async def do_deploy(self, job: Job, project: Project, step: Step) -> Outcome:
-        """Deploy main once its CI passes; done only when the deployer has the site answering."""
+        """Deploy main once its CI passes; done only when the deployer has the site answering.
+        Skipped if this job already deployed that commit (nothing new since: a skipped design pass)."""
         sha = await self.workspace.main_sha(project.slug)
+        deployed = [s for s in self.store.steps(job.id) if s.kind == "deploy" and s.state == "done" and s.position < step.position]
+        if deployed and deployed[-1].links.get("commit") == self.commit_url(project, sha):
+            return Outcome("skipped", f"{sha[:7]} is live already.")
         ci = await self.wait_for_ci(project, step, sha, "main")
         if ci.state != "done":
             return ci
@@ -762,10 +766,16 @@ class Scheduler:
             return Outcome("done", f"You said: “{said}”" if said else "You replied.")
         steps = self.store.steps(job.id)
         message = plan.last_said(steps) or "Something to try is live."
+        then = next((s for s in steps if s.position > step.position and s.kind == "agent"), None)
+        design = (
+            " Then I'll make a few design directions for its look, for you to pick from."
+            if then and then.name == "design" and then.state == "pending"
+            else ""
+        )
         await self.say(
             project,
             f"{message}\n{self.settings.project_url(project.slug)}\n\n"
-            "Try it and reply here: say it looks good, or what to change.",
+            f"Try it and reply here: say it looks good, or what to change.{design}",
         )
         return Outcome("checkin")
 

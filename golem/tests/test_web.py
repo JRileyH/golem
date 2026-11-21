@@ -66,9 +66,10 @@ def test_anyone_sees_what_is_under_way(golem, page):
 
     html = page.get("/p/trees").text
     assert "https://trees.unlaunched.dev/" in html and ">Queued</span>" in html and "Next up: plan it, starting <time" in html
-    # Its 24 steps as the 7 pieces of work Riggy would name, in order; golem's shipping steps belong to them.
-    names = ["Plan it", "Set up hosting", "Build the MVP", "You try it", "Build the rest", "Review", "Write the docs"]
-    assert html.count("class='piece todo'") == 7 and [html.index(n) for n in names] == sorted(html.index(n) for n in names)
+    # Its 33 steps as the 11 pieces of work Riggy would name, in order; golem's shipping steps belong to them.
+    names = ["Plan it", "Set up hosting", "Build the MVP", "You try it", "Make the design doc", "You pick one",
+             "Write the design guide", "Restyle it", "Build the rest", "Review", "Write the docs"]  # fmt: skip
+    assert html.count("class='piece todo'") == 11 and [html.index(n) for n in names] == sorted(html.index(n) for n in names)
     assert "href='/jobs/1/planned/2'" in html  # each opens its sheet, by position until the job starts
     assert "Sign in (Settings) to see the conversation" in html and "/act" not in html
 
@@ -203,6 +204,13 @@ def test_skipped_steps_are_passed_over(golem):
         await control.skip(job.id, by_name(golem, job, "review").id)
         assert golem.chat.texts(room)[-1] == "Skipped review, from the status page."
         await control.skip(job.id, by_name(golem, job, "checkin").id)
+        await control.skip(job.id, by_name(golem, job, "design").id)  # and with it the guide and restyle
+        golem.workspace.has_work = False  # as in git: nothing new on the branch after the skipped pass
+        await golem.until("buildout")
+        deploys = [s for s in golem.store.steps(job.id) if s.kind == "deploy"]
+        assert [s.state for s in deploys[:3]] == ["done", "done", "skipped"] and deploys[2].summary.endswith("is live already.")
+        assert len(golem.deployer.deploys) == 2  # not the same commit again
+        golem.workspace.has_work = True
         await golem.finish()
         assert [c.label for c in golem.harness.calls[1:]] == ["spec", "scaffold", "mvp", "buildout", "docs"]
         assert golem.store.job(job.id).state == "done"
@@ -224,7 +232,7 @@ def test_skipping_the_checkin_carries_on(golem):
         assert golem.store.job(job.id).state == "queued"
         assert "as if you'd said it looks good" in golem.chat.texts(room)[-1]
         await golem.step()
-        assert golem.harness.calls[-1].label == "buildout"
+        assert golem.harness.calls[-1].label == "design"  # the design pass comes next, then the buildout
 
     asyncio.run(go())
 
@@ -393,7 +401,7 @@ def test_a_step_before_it_starts_can_get_its_own_model_effort_and_context(golem,
     assert "Runs on</dt><dd>opus/high" in html and "default: opus" in html
     act(page, action="step-setting", job=job.id, position=2, name="model", value="haiku")
     spec = by_name(golem, job, "spec")  # the job's steps are stored now
-    assert spec.model == "haiku" and len(golem.store.steps(job.id)) == 24
+    assert spec.model == "haiku" and len(golem.store.steps(job.id)) == 33
     act(page, action="step-setting", job=job.id, step=spec.id, name="effort", value="low")
     html = page.get(f"/steps/{spec.id}?part=sheet").text
     assert "haiku/low" in html and "model from this step" in html

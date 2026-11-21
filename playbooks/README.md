@@ -11,7 +11,9 @@ else). The model and effort
 are chosen in the web app: for a kind of step (all `docs` steps, say), a project,
 or one step. Baked read-only into the golem image.
 
-- `reckless.md`, `standard.md`, `rigorous.md`: new projects, by mode.
+- `reckless.md`, `standard.md`, `rigorous.md`: new projects, by mode. Standard and
+  rigorous have a design pass after the MVP check-in (as in `design.md`), shipped
+  before the buildout; Riggy's check-in reply goes past it to the buildout.
 - `options.md`: changes he wants to choose first: an `options` step mocks up a
   few, golem's `choose` step shows them to him and waits, and the next step
   builds his pick (`golem/golem/options.py`).

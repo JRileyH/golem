@@ -65,8 +65,8 @@ def test_project_images_are_built_for_this_box(monkeypatch, machine, platform):
     "name, mode, agents",
     [
         ("reckless", "reckless", ["build"]),
-        ("standard", "standard", ["spec", "scaffold", "mvp", "buildout", "review", "docs"]),
-        ("rigorous", "rigorous", ["spec", "spec-review", "scaffold", "mvp", "buildout", "review", "second-pass", "docs"]),
+        ("standard", "standard", ["spec", "scaffold", "mvp", "design", "guide", "apply", "buildout", "review", "docs"]),
+        ("rigorous", "rigorous", ["spec", "spec-review", "scaffold", "mvp", "design", "guide", "apply", "buildout", "review", "second-pass", "docs"]),
         ("feature", "reckless", ["change", "docs"]),
         ("feature", "standard", ["change", "review", "docs"]),
         ("feature", "rigorous", ["change", "review", "second-pass", "docs"]),

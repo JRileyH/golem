@@ -143,8 +143,11 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
         assert "✓ PR: PR #1 is open.\nhttps://github.com/unlaunched/tree-cards/pull/1\nNext: CI, merge, deploy, then mvp." in texts
         deployed = [t for t in texts if t.startswith("✓ deploy:")]
         assert deployed[0].endswith(f" is live.\n{URL}\nNext: mvp.")
-        assert deployed[1].endswith(f" is live.\n{URL}\nNext: your check-in, then buildout.")
-        assert texts[-1] == f"Try the quiz: ten trees per round.\n{URL}\n\nTry it and reply here: say it looks good, or what to change."
+        assert deployed[1].endswith(f" is live.\n{URL}\nNext: your check-in, then design.")
+        assert texts[-1] == (
+            f"Try the quiz: ten trees per round.\n{URL}\n\nTry it and reply here: say it looks good, or what to change. "
+            "Then I'll make a few design directions for its look, for you to pick from."
+        )
         # Progress is posted as notices (no push); the check-in as a message (push).
         assert [n for r, _, n in golem.chat.sent if r == room][-1] is False
 
@@ -153,9 +156,21 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
 
         await golem.say(room, "looks good but make the photos bigger")
         assert golem.chat.texts(room)[-1] == "Thanks, picking it back up. Starting now."
-        golem.harness.script = [verdict("done"), verdict("done"), verdict("done", "Ten trees a round, with streaks.")]
+        golem.harness.script = by_label({
+            "design": [three_looks], "pick": [{"decision": "pick", "picked": ["A"]}],
+            "docs": [verdict("done", "Ten trees a round, with streaks.")],
+        })  # fmt: skip
+        await golem.finish()  # the design pass's first round, up for his pick
+        design = next(c for c in golem.harness.calls if c.label == "design")
+        assert "# Your step: design" in design.prompt and "skills/design.md" in design.prompt
+        assert "- your check-in: You said: “looks good but make the photos bigger”" in design.prompt
+        assert "> looks good but make the photos bigger" not in design.prompt  # his reply is for the buildout
+        assert golem.store.job(job.id).state == "waiting" and plan.label(current(golem, job.id)) == "your pick"
+        await golem.say(room, "A")
         await golem.finish()
 
+        guide, apply = (next(c for c in golem.harness.calls if c.label == name) for name in ("guide", "apply"))
+        assert "- your pick: You picked A (Field guide)." in guide.prompt and "Restyle the MVP" in apply.prompt
         buildout, review, docs = golem.harness.calls[-3:]
         assert "# Your step: buildout" in buildout.prompt
         assert "> looks good but make the photos bigger" in buildout.prompt
@@ -168,12 +183,12 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
         job = golem.store.job(job.id)
         assert job.state == "done"
         steps = golem.store.steps(job.id)
-        assert [s.state for s in steps] == ["done"] * 24
+        assert [s.state for s in steps] == ["done"] * 33
         assert [plan.label(s) for s in steps[-2:]] == ["deploy", "done"]
-        assert len(golem.deployer.deploys) == 3
+        assert len(golem.deployer.deploys) == 4  # the skeleton, the MVP, its new look, and the rest
         assert golem.workspace.bodies[-1].startswith("Closes #1")
         assert golem.chat.texts(room)[-1] == f"Done: Ten trees a round, with streaks.\n{URL}"
-        assert [r["phase"] for r in golem.store.runs(job.id)] == ["spec", "scaffold", "mvp", "buildout", "review", "docs"]
+        assert [r["phase"] for r in golem.store.runs(job.id)] == ["spec", "scaffold", "mvp", "design", "guide", "apply", "buildout", "review", "docs"]
         assert "Finished job" in golem.chat.texts("status")[-1]
 
     run(go())
@@ -308,7 +323,7 @@ def test_waiting_for_ci_frees_the_worker_and_checks_again(golem):
         step = current(golem, job.id)
         assert (job.state, plan.label(step), step.summary) == ("parked", "CI", "Waiting for CI on PR #1: build: in_progress")
         assert golem.store.next_job() is None  # checked again in 20 seconds
-        assert "waiting for CI, CI (6/24)" in golem.bot.job_line(job)
+        assert "waiting for CI, CI (6/33)" in golem.bot.job_line(job)
         await golem.step()
         assert golem.store.step(step.id).state == "done"
 
@@ -1271,7 +1286,7 @@ def test_a_running_step_passes_on_progress_and_says_what_it_is_on(golem, monkeyp
         texts = golem.chat.texts(room)
         assert "▸ The spec is drafted; checking it against the idea." in texts
         still = [t for t in texts if t.startswith("Still on")]
-        assert still[0] == 'Still on spec (step 2/24), 0s in. Last said: "Reading the brief." Now running Bash npm test.'
+        assert still[0] == 'Still on spec (step 2/33), 0s in. Last said: "Reading the brief." Now running Bash npm test.'
         assert texts[-1].startswith("✓ spec: Spec written.")
 
     run(go())
@@ -1309,7 +1324,7 @@ def test_commands(golem):
 
         await golem.say(inbox, "!queue")
         job = golem.store.active_job("tree-cards")
-        assert golem.chat.sent[-1] == (inbox, f"#{job.id} Tree Cards: new project “Tree Flashcard Game”, starting shortly, set up (1/24)", True)
+        assert golem.chat.sent[-1] == (inbox, f"#{job.id} Tree Cards: new project “Tree Flashcard Game”, starting shortly, set up (1/33)", True)
 
         await golem.say(room, "!status")
         assert golem.chat.texts(room)[-1].startswith("Tree Cards (tree-cards)\nMode standard, each step's default model and effort\n#")
@@ -1359,7 +1374,7 @@ def test_dictated_settings_pick_the_playbook_model_and_effort(golem):
         call = golem.harness.calls[-1]
         assert (call.model, call.effort) == ("fable", "max")
         assert "# Your step: spec" in call.prompt and "**rigorous mode**" in call.prompt
-        assert len(golem.store.steps(golem.store.active_job("leaf-peeper").id)) == 26
+        assert len(golem.store.steps(golem.store.active_job("leaf-peeper").id)) == 35
         assert golem.store.runs()[0]["model"] == "fable/max"
 
     run(go())

@@ -92,7 +92,8 @@ phone.
   Peeper, rigorous, opus, max effort") or change them later in its conversation
   (or its Settings):
   - `!mode reckless|standard|rigorous`: one quick pass; spec, MVP check-in,
-    review; or a reviewed spec, thorough tests and two reviews.
+    a design pass, review; or a reviewed spec, the check-in and design pass,
+    thorough tests and two reviews.
   - `!model fable|opus|sonnet|haiku|default` and
     `!effort low|medium|high|xhigh|max|default`: for all the project's agent
     steps, from the next one; `default` goes back to each step's default.
