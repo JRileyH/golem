@@ -539,6 +539,31 @@ def test_kinds_of_proposal_are_all_on_until_riggy_unticks_one(golem, page):
     assert golem.store.project("trees").proposals_off == ",".join(x.name for x in LENSES[:-1])
 
 
+def test_a_project_with_two_changes_shows_each_and_who_waits_for_whom(golem, page):
+    sign_in(page)
+    golem.store.update_job(page.job.id, state="done")
+    golem.store.update_project("trees", parallel_jobs=2)
+    a = golem.store.add_job("trees", "change", "bigger cards", "feature", title="Bigger Cards")
+    b = golem.store.add_job("trees", "change", "a round timer", "feature", title="Round Timer")
+    for job in (a, b):
+        start(golem, job, "change")
+    building = next(s for s in golem.store.steps(a.id) if s.name == "change")
+    golem.store.update_step(building.id, state="running", started_at="2026-10-23T10:10:00+00:00")
+    golem.store.update_job(a.id, state="parked")  # between tries: it keeps its turn
+
+    home = page.get("/").text
+    assert "Bigger Cards" in home and "Round Timer" in home  # a lane each
+    assert f"Waiting for job {a.id} to finish building, then make the change." in home
+    talk = page.get("/p/trees").text
+    assert talk.count("class=card-head") == 2 and f"Waiting for job {a.id} to finish building" in talk
+    settings = page.get("/p/trees/settings").text
+    assert f"name=job value='{a.id}'" in settings and f"name=job value='{b.id}'" in settings  # controls for each
+    assert f"waiting for job {a.id} to finish building" in golem.bot.status_text(golem.store.project("trees"))
+
+    golem.store.update_project("trees", parallel_jobs=1)  # one at a time: one lane, as ever
+    assert page.get("/p/trees").text.count("class=card-head") == 1
+
+
 def test_how_many_workers_and_what_memory_each_has(golem, page, monkeypatch):
     monkeypatch.setattr(web.config, "memory_cap", lambda: 1536 * 2**20)
     assert "id=workers" not in page.get("/settings").text  # signed out: nothing to change

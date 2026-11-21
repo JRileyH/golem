@@ -200,14 +200,15 @@ class Eta:
 
 
 def forecast(
-    order: list[tuple[Job, list[Step]]], known: dict[str, float], now: datetime, workers: int = 1
+    order: list[tuple[Job, list[Step]]], known: dict[str, float], now: datetime, workers: int = 1, beside: set[str] = frozenset()
 ) -> dict[int, dict[int, Eta]]:
     """When each step still to come should start and end: {job id: {position: Eta}}.
 
     The first free of `workers` takes each job in `order` (the queue's), once nothing else on
     its project is running, until it's done or reaches something Riggy has to answer: a
     check-in, options to pick from or a question. A running step has its usual time left, or a
-    minute if it's over."""
+    minute if it's over. Jobs on projects `beside` don't wait for each other: their changes
+    overlap, taking turns only at building and shipping, so their times are rougher."""
     free = [now] * max(workers, 1)  # when each worker is next free
     project_free: dict[str, datetime] = {}  # a project's steps run one at a time
     found: dict[int, dict[int, Eta]] = {}
@@ -215,7 +216,7 @@ def forecast(
         etas = found[job.id] = {}
         if job.state == "waiting":
             continue
-        t = max(min(free), project_free.get(job.slug, now))
+        t = max(min(free), now if job.slug in beside else project_free.get(job.slug, now))
         # The worker free latest by then: one free sooner is left for a job that can start sooner.
         worker = max((i for i, f in enumerate(free) if f <= t), key=lambda i: free[i])
         for step in steps:

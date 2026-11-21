@@ -24,7 +24,7 @@ import logging
 import os
 from datetime import timedelta
 
-from . import adopt, intake, options, plan, teardown
+from . import adopt, intake, options, plan, teardown, turns
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
@@ -487,6 +487,7 @@ class Bot:
                 state = "waiting for CI"
             else:
                 state = "retrying soon"
+        state = turns.waiting_for(self.store, job) or state  # a change waiting its turn: who for
         return f"#{job.id} {project.name}: {what} “{plan.title(job)}”, {state}, {plan.where(steps)}{held}"
 
     def status_text(self, project: Project) -> str:

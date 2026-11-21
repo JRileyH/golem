@@ -67,3 +67,13 @@ def blocked_by(store: Store, job: Job, running: set[int] = frozenset()) -> tuple
         if other.id in running or other.state == "running" or not mine.started or (theirs.started, other.id) < (mine.started, job.id):
             return mine.kind, other
     return None
+
+
+def waiting_for(store: Store, job: Job) -> str:
+    """For a queued change waiting its turn, who it's waiting for, in words; "" if it isn't."""
+    held = blocked_by(store, job) if job.state == "queued" else None
+    if held is None:
+        return ""
+    kind, other = held
+    doing = "building" if kind == "build" else "shipping"
+    return f"waiting for job {other.id} to finish {doing}" + (" (it's waiting on you)" if other.state == "waiting" else "")

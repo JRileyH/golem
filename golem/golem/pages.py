@@ -260,6 +260,8 @@ def headline(lane: LaneData, now: datetime) -> str:
     piece = progress.current(progress.pieces(lane.steps))
     if piece is None:
         return escape(lane.state.capitalize()) + "."
+    if piece.state == "todo" and lane.state.startswith("waiting for job"):  # its turn at building or shipping (turns.py)
+        return f"{escape(lane.state.capitalize())}, then {escape(piece.name.lower())}."
     if piece.state == "todo":
         eta = lane.etas.get(piece.step.position)
         start = f", starting {when(eta.start, now)}" if eta else ""

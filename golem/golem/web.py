@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, config, conversation, gallery, home, insights, options, pages, plan, pwa
+from . import brand, config, conversation, gallery, home, insights, options, pages, plan, pwa, turns
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -45,7 +45,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, Job, Project, Said, Step, Store
+from .store import ACTIVE, LOOKS, Job, Project, Said, Step, Store
 from .talk import INBOX, STATUS
 
 if TYPE_CHECKING:
@@ -164,22 +164,27 @@ def create_app(
         order = queue_order()
         known = insights.estimates(store)
         planned = [(j, plan.planned(settings, store, j)) for j in order]
-        etas = {} if scheduler.paused else insights.forecast(planned, known, now, scheduler.workers)
+        beside = {p.slug for p in store.projects() if p.parallel_jobs > 1}  # their changes overlap: roughly
+        etas = {} if scheduler.paused else insights.forecast(planned, known, now, scheduler.workers, beside)
         extra = max(sum(j.state == "running" for j in order) - 1, 0)
         places = {j.id: 1 if j.state == "running" else i - extra for i, j in enumerate(order, start=1)}
         return {"order": places, "colors": colors(), "known": known, "etas": etas}
 
     def lanes(signed: bool, now: datetime) -> tuple[list[LaneData], list[LaneData]]:
-        """Projects with a job under way, in the queue's order, and the others with their last job."""
+        """Projects with a job under way, in the queue's order, and the others with their last job.
+        A project that allows several changes at once has a lane for each change under way."""
         ctx = context(now)
         order = ctx["order"]
-        active, busy = [], set()
-        jobs = sorted(store.jobs(ACTIVE), key=lambda j: (order.get(j.id, 999), j.id))
+        active, busy, seen = [], set(), set()
+        jobs = sorted(store.jobs(ACTIVE, limit=1000), key=lambda j: (order.get(j.id, 999), j.id))
         for job in jobs:
-            if job.slug in busy:
+            project = store.project(job.slug)
+            key = (job.slug, job.id) if project.parallel_jobs > 1 and job.playbook not in LOOKS else job.slug
+            if key in seen:
                 continue
+            seen.add(key)
             busy.add(job.slug)
-            active.append(lane(job, store.project(job.slug), order.get(job.id), signed, ctx))
+            active.append(lane(job, project, order.get(job.id), signed, ctx))
         idle = []
         recent = store.jobs(limit=500)
         for project in store.projects():
@@ -275,12 +280,29 @@ def create_app(
         job = store.active_job(project.slug) or (jobs[0] if jobs else None)
         return lane(job, project, ctx["order"].get(job.id) if job else None, signed, ctx), jobs
 
+    def project_lanes(project: Project, signed: bool) -> tuple[list[LaneData], list[Job]]:
+        """The project's lane, and one for each other change under way if it allows several at once."""
+        main, jobs = project_lane(project, signed)
+        if project.parallel_jobs <= 1:
+            return [main], jobs
+        ctx = context(datetime.now(UTC))
+        more = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in store.change_jobs(project.slug) if not main.job or j.id != main.job.id]
+        return [main, *more], jobs
+
+    def composing(project: Project) -> str:
+        """The box at the bottom of a project's page: waiting if a change waits on Riggy."""
+        waiting = next((j for j in store.change_jobs(project.slug) if j.state == "waiting"), None)
+        return conversation.state_of(waiting or store.active_job(project.slug))
+
     def nav() -> list[NavProject]:
         """Every project for the sidebar, by name so each stays where it's looked for."""
         palette = colors()
         out = []
         for p in sorted(store.projects(), key=lambda p: p.name.lower()):
             job = store.active_job(p.slug)
+            if p.parallel_jobs > 1:  # several changes: one waiting on Riggy shows first, then one working
+                changes = store.change_jobs(p.slug)
+                job = next((j for j in changes if j.state == "waiting"), None) or next((j for j in changes if j.state == "running"), job)
             state = job.state if job and job.state in ("waiting", "running") and not p.paused else ""
             out.append(NavProject(p.slug, p.name, palette.get(p.slug, 1), state))
         return out
@@ -397,11 +419,11 @@ def create_app(
         if project is None:
             return HTMLResponse("No such project.", 404)
         signed = signed_in(request)
-        bottom = conversation.composer(project.slug, conversation.state_of(store.active_job(project.slug))) if signed and bot else ""
-        data, _ = project_lane(project, signed)
+        bottom = conversation.composer(project.slug, composing(project)) if signed and bot else ""
+        data, _ = project_lanes(project, signed)
         said, earlier = _latest(request, store.messages(project.slug, limit=_shown(request) + 1)) if signed else ([], "")
         waiting = store.proposals(project.slug, ("open",)) if signed else []
-        body = conversation.project_page(data, said, signed, datetime.now(UTC), earlier, waiting)
+        body = conversation.project_page(data[0], said, signed, datetime.now(UTC), earlier, waiting, more=data[1:])
         return respond(request, project.name, body, signed, bottom, here=project.slug, up=("/p", "Projects"),
                        subnav=tabs(project, "talk", signed))  # fmt: skip
 
@@ -412,9 +434,9 @@ def create_app(
         signed = signed_in(request)
         if not signed:
             return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to change a project.")
-        data, jobs = project_lane(project, signed)
+        data, jobs = project_lanes(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
-        page = conversation.settings_page(project, data, jobs, [t.name for t in store.tags()], decided)
+        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:])
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=("/p", "Projects"),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
@@ -696,7 +718,7 @@ def _state(store: Store, job: Job, steps) -> str:
             return "waiting for CI"
         case "parked":
             return "retrying soon"
-    return "queued"
+    return turns.waiting_for(store, job) or "queued"
 
 
 def _first_paragraph(text: str) -> str:

@@ -35,17 +35,22 @@ COMPOSE = {
 
 
 def project_page(lane: LaneData, said: list[Said], signed_in: bool, now: datetime, earlier: str = "",
-                 waiting: list[Proposal] = ()) -> str:  # fmt: skip
-    """The page's main part, refreshed in place every few seconds; the box to write in is separate (composer)."""
-    top = status_card(lane, signed_in, now)
+                 waiting: list[Proposal] = (), more: list[LaneData] = ()) -> str:  # fmt: skip
+    """The page's main part, refreshed in place every few seconds; the box to write in is separate
+    (composer). `more`: the other changes under way, on a project that allows several at once."""
+    lanes = [lane, *more]
+    top = "".join(status_card(x, signed_in, now) for x in lanes)
     if not signed_in:
         return top + "<p class=hint>Sign in (Settings) to see the conversation and write to golem.</p>"
     back = f"/p/{lane.project.slug}#end"
-    return top + thread(said, "Nothing said here yet.", earlier) + ask_card(lane, signed_in, back=back, reply=False) + proposals_card(waiting, back)
+    asks = "".join(ask_card(x, signed_in, back=back, reply=bool(more)) for x in lanes)  # several: each answered on its own
+    return top + thread(said, "Nothing said here yet.", earlier) + asks + proposals_card(waiting, back)
 
 
-def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = ()) -> str:
-    return settings_html(project, tags) + proposals_settings(project, decided) + job_controls(lane) + jobs_html(jobs) + _danger(project)
+def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = (),
+                  more: list[LaneData] = ()) -> str:  # fmt: skip
+    controls = "".join(job_controls(x) for x in (lane, *more))
+    return settings_html(project, tags) + proposals_settings(project, decided) + controls + jobs_html(jobs) + _danger(project)
 
 
 def proposals_card(waiting: list[Proposal], back: str) -> str:
