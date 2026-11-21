@@ -135,6 +135,56 @@ def test_steps_golem_puts_in_are_part_of_the_section_they_are_in():
     assert plan.step_class([Step(1, 1, 1, "agent", "something-new")], Step(1, 1, 1, "agent", "something-new")) == "build"
 
 
+def test_changes_on_one_project_take_turns_at_building_and_shipping(tmp_path):
+    from golem import turns
+
+    store = Store(tmp_path / "golem.db")
+    store.add_project("trees", "Trees", "s")
+    store.update_project("trees", parallel_jobs=3)
+    names = ["setup", "sync", "change", "review", "sync", "push", "pr", "checks", "merge", "deploy", "alert"]
+
+    def change(at: str = ""):
+        job = store.add_job("trees", "change", "r", "feature")
+        store.add_steps(job.id, [Step(0, 0, 0, "agent" if n in ("change", "review") else n, n) for n in names])
+        return job, store.steps(job.id)
+
+    def on(job, steps, name: str, at: str, state: str = "queued", nth: int = 0):
+        """The job's current step is the `nth` called `name`; everything before it done; its section started at `at`."""
+        target = [s for s in steps if s.name == name][nth]
+        for s in steps:
+            if s.position < target.position:
+                store.update_step(s.id, state="done", started_at=at, ended_at=at)
+        store.update_step(target.id, state="running" if at else "pending", started_at=at or None)
+        return store.update_job(job.id, state=state)
+
+    a, a_steps = change()
+    b, b_steps = change()
+    a = on(a, a_steps, "change", "2026-11-20T10:00:00+00:00", "running")
+    b = on(b, b_steps, "sync", "")  # about to build
+    assert turns.wants(store, a) == turns.Turn("build", "2026-11-20T10:00:00+00:00")  # from its catch-up with main
+    assert turns.blocked_by(store, b) == ("build", a)
+
+    a = store.update_job(a.id, state="waiting")  # asked Riggy something: its build turn goes
+    assert turns.blocked_by(store, b) is None
+    b = on(b, b_steps, "change", "2026-11-20T11:00:00+00:00", "running")
+    a = store.update_job(a.id, state="queued")  # he answered: B is building now, then A, which started first
+    assert turns.blocked_by(store, a) == ("build", b)
+    b = store.update_job(b.id, state="parked")  # between B's steps, A goes ahead
+    assert turns.blocked_by(store, a) is None and turns.blocked_by(store, b) == ("build", a)
+
+    # Shipping: waiting keeps the turn, or another job could merge in between.
+    a = on(a, a_steps, "checks", "2026-11-20T12:00:00+00:00", "waiting")
+    b = on(b, b_steps, "sync", "", nth=1)
+    assert turns.wants(store, b).kind == "ship" and turns.blocked_by(store, b) == ("ship", a)
+    assert turns.blocked_by(store, a) is None  # nobody holds A up
+    store.update_job(a.id, state="killed")
+    assert turns.blocked_by(store, b) is None
+
+    # Only changes take turns: a question or a new project never waits for one, nor holds one.
+    q = store.add_job("trees", "change", "why?", "question")
+    assert turns.wants(store, q) is None
+
+
 def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
     from golem.proposals import MAX_PER_RUN, collect, past
     from golem.store import Proposal

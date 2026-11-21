@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS projects (
     tag TEXT NOT NULL DEFAULT '',    -- what sort of project it is (tags), '' for none
     proposals TEXT NOT NULL DEFAULT 'off',  -- how often golem looks for improvements to propose (EVERY)
     proposals_max INTEGER NOT NULL DEFAULT 5,  -- proposals awaiting Riggy before golem stops making more
-    proposals_off TEXT NOT NULL DEFAULT ''  -- kinds of proposal (proposals.LENSES) he turned off, comma-separated
+    proposals_off TEXT NOT NULL DEFAULT '',  -- kinds of proposal (proposals.LENSES) he turned off, comma-separated
+    parallel_jobs INTEGER NOT NULL DEFAULT 1  -- changes that may be under way at once, taking turns (turns.py)
 );
 -- The few big-picture sorts of project ("Game"), shown on the projects page in their color.
 CREATE TABLE IF NOT EXISTS tags (
@@ -160,6 +161,7 @@ MIGRATIONS = {
         "proposals": "TEXT NOT NULL DEFAULT 'off'",
         "proposals_max": "INTEGER NOT NULL DEFAULT 5",
         "proposals_off": "TEXT NOT NULL DEFAULT ''",
+        "parallel_jobs": "INTEGER NOT NULL DEFAULT 1",
     },
     # Jobs from before trees have 0 and finish in the project's checkout, where their work is.
     "jobs": {"title": "TEXT NOT NULL DEFAULT ''", "worktree": "INTEGER NOT NULL DEFAULT 0"},
@@ -217,6 +219,8 @@ class Project:
     # Kinds of proposal he turned off, comma-separated (proposals.LENSES): every kind is on
     # until he turns it off, new ones too.
     proposals_off: str = ""
+    # Changes that may be under way at once; they take turns at building and shipping (turns.py).
+    parallel_jobs: int = 1
 
 
 @dataclass
@@ -380,7 +384,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str | int) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off"}, fields
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -390,8 +394,8 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off"
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs"
                 " FROM projects WHERE slug = ?",
                 (new, old),
             )
@@ -563,9 +567,28 @@ class Store:
         self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
         return self.job(job_id)
 
+    def change_jobs(self, slug: str) -> list[Job]:
+        """The project's unfinished jobs that change it (not questions or proposals), oldest first."""
+        marks, looks = ", ".join("?" * len(ACTIVE)), ", ".join("?" * len(LOOKS))
+        rows = self.db.execute(
+            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}) AND playbook NOT IN ({looks}) ORDER BY id",
+            (slug, *ACTIVE, *LOOKS),
+        )
+        return [Job(**r) for r in rows]
+
+    def room_for_change(self, slug: str) -> bool:
+        """Whether another change can start on the project now: fewer under way than it allows
+        (parallel_jobs), and none of them a new project, an adoption or a job from before trees,
+        which only run alone."""
+        project, jobs = self.project(slug), self.change_jobs(slug)
+        if project is None or len(jobs) >= max(project.parallel_jobs, 1):
+            return False
+        return not jobs or not any(j.kind in ("new", "adopt") or not j.worktree for j in jobs)
+
     def active_job(self, slug: str, questions: bool = True) -> Job | None:
-        """The project's unfinished job, if any. A project works on one change at a time; a
-        question or a look for proposals can come in between (`questions=False` leaves them out)."""
+        """The project's oldest unfinished job, if any. A question or a look for proposals can
+        come in between its changes (`questions=False` leaves them out); a project allows one
+        change at a time unless it says more (room_for_change)."""
         marks = ", ".join("?" * len(ACTIVE))
         skip = "" if questions else f" AND playbook NOT IN ({', '.join('?' * len(LOOKS))})"
         row = self.db.execute(

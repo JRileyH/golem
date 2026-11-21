@@ -35,7 +35,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import adopt, options, plan, proposals, teardown
+from . import adopt, options, plan, proposals, teardown, turns
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
@@ -207,10 +207,29 @@ class Scheduler:
             raise
 
     def pick(self, at: str | None = None) -> Job | None:
-        """The next job to start a step of: the highest priority queued one whose project has
-        no step running. A project's steps share its checkout, so they run one at a time."""
+        """The next job to start a step of: the highest priority queued one that can go. On a
+        project that allows several changes at once, a job goes unless another has the turn its
+        step needs (turns.py); otherwise a project's steps run one at a time."""
         busy = {r.slug for r in self.running.values()}
-        return next((job for job in self.store.ready_jobs(at) if job.slug not in busy), None)
+        for job in self.store.ready_jobs(at):
+            if job.id in self.running:
+                continue
+            if self.side_by_side(job):
+                if turns.blocked_by(self.store, job, set(self.running)) is None:
+                    return job
+            elif job.slug not in busy:
+                return job
+        return None
+
+    def side_by_side(self, job: Job) -> bool:
+        """Whether the job's steps can run beside others on its project: each job in a tree of
+        its own, on a project that allows more than one change at once, with nothing from before
+        trees under way there."""
+        project = self.store.project(job.slug)
+        if not job.worktree or project is None or project.parallel_jobs <= 1:
+            return False
+        others = self.store.change_jobs(job.slug) + [j for j in self.running_jobs() if j.slug == job.slug]
+        return all(j.worktree for j in others)
 
     def fill(self) -> bool:
         """Start steps while there's a free worker slot and a job to give it. Whether any started.
@@ -222,7 +241,9 @@ class Scheduler:
         return started
 
     def dispatch(self, job: Job) -> None:
-        """Start the job's current step in the lowest free worker slot."""
+        """Start the job's current step in the lowest free worker slot. Made ready here, before
+        the next pick, so that pick sees the turn it takes."""
+        self.prepare(job)
         taken = {r.slot for r in self.running.values()}
         slot = next(i for i in range(len(taken) + 1) if i not in taken)
         self.running[job.id] = Running(job.slug, slot, asyncio.create_task(self.work(job)))
@@ -284,16 +305,25 @@ class Scheduler:
             steps = self.store.steps(job.id)
         return steps
 
+    def prepare(self, job: Job) -> Step | None:
+        """The job's current step, ready to run: the job's steps written the first time, the
+        job running and its step started. None if it has no step left."""
+        step = plan.current(self.ensure_steps(job))
+        if step is None:
+            return None
+        self.store.update_job(job.id, state="running")
+        if step.started_at is None:
+            step = self.store.update_step(step.id, state="running", started_at=now())
+        return step
+
     async def step(self, job: Job) -> None:
         """Do the job's current step and act on how it went."""
         project = self.store.project(job.slug)
-        step = plan.current(self.ensure_steps(job))
+        step = self.prepare(job)
         if step is None:
             self.store.update_job(job.id, state="done")
             return
-        job = self.store.update_job(job.id, state="running")
-        if step.started_at is None:
-            step = self.store.update_step(step.id, state="running", started_at=now())
+        job = self.store.job(job.id)
         try:
             if job.worktree and step.kind in USES_TREE:  # made by its first step; back if it was lost
                 await self.workspace.ensure_tree(project.slug, job.id)

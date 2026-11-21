@@ -1933,3 +1933,98 @@ def test_a_job_from_before_trees_finishes_in_the_projects_checkout(golem):
         assert job.id not in golem.workspace.trees and golem.store.job(job.id).state == "done"
 
     run(go())
+
+
+# --- changes on one project, taking turns -----------------------------------------
+
+
+class JobGate:
+    """Agent runs held until the test lets that job's step go (by job id and label); others go at once."""
+
+    def __init__(self, *held: tuple[int, str]):
+        self.held = {key: asyncio.Event() for key in held}
+        self.started: list[tuple[int, str]] = []
+        self.calls: list = []
+
+    def let_go(self, job: int, label: str) -> None:
+        self.held[(job, label)].set()
+
+    async def run(self, *, env, label, **kwargs):
+        key = (int(env["GOLEM_JOB"]), label)
+        self.started.append(key)
+        self.calls.append({"env": env, "label": label, **kwargs})
+        if key in self.held:
+            await self.held[key].wait()
+        return RunResult("verdict", verdict=verdict("done", f"{label} done"), session_id="s")
+
+
+def side_by_side(golem: Golem, changes: int = 2, workers: int = 3):
+    golem.store.put("workers", str(workers))
+    golem.store.add_project("trees", "Trees", "Tree flashcards.")
+    golem.store.update_project("trees", parallel_jobs=changes)
+    return [golem.store.add_job("trees", "change", f"change {n}", "feature", title=f"Change {n}") for n in range(1, changes + 1)]
+
+
+def test_two_changes_overlap_but_take_turns_building_and_shipping(golem):
+    async def go():
+        a, b = side_by_side(golem)
+        gate = golem.scheduler.harness = JobGate((a.id, "change"), (a.id, "review"))
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: (a.id, "change") in gate.started)
+        await soon(lambda: plan.label(current(golem, b.id)) == "change" and golem.store.job(b.id).state == "queued")
+        await asyncio.sleep(0.05)
+        assert [s for s in gate.started if s[0] == b.id] == []  # set up beside A, then waits for A's build
+        assert current(golem, b.id).started_at is None
+
+        gate.let_go(a.id, "change")  # A reviews; B builds meanwhile
+        await soon(lambda: (b.id, "change") in gate.started)
+        assert (a.id, "review") in gate.started and a.id in golem.scheduler.running
+
+        await soon(lambda: golem.store.job(b.id).state == "done")  # B got to shipping first, A still reviewing
+        assert a.id in golem.scheduler.running and len(golem.deployer.deploys) == 1
+        gate.let_go(a.id, "review")
+        await soon(lambda: golem.store.job(a.id).state == "done")
+        actions = golem.workspace.actions
+        assert [a for a in actions if a.startswith(("push", "open PR", "merge"))] == [
+            f"push golem/job-{b.id}", "open PR #1: Change 2: change + review + docs", "merge PR #1",
+            f"push golem/job-{a.id}", "open PR #2: Change 1: change + review + docs", "merge PR #2",
+        ]  # fmt: skip
+        assert len(golem.deployer.deploys) == 2
+        loop.cancel()
+
+    run(go())
+
+
+def test_one_change_ships_at_a_time_however_long_its_ci_takes(golem, monkeypatch):
+    monkeypatch.setattr(scheduler, "CI_POLL", timedelta(0))  # check CI again straight away
+    async def go():
+        a, b = side_by_side(golem)
+        golem.scheduler.harness = JobGate()
+        golem.workspace.ci_results = [CI("pending", "build: in_progress")] * 20  # A's PR, for a while
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: golem.store.job(a.id).state == golem.store.job(b.id).state == "done")
+        actions = [x for x in golem.workspace.actions if x.startswith(("push", "open PR", "merge"))]
+        assert actions == [
+            f"push golem/job-{a.id}", "open PR #1: Change 1: change + review + docs", "merge PR #1",
+            f"push golem/job-{b.id}", "open PR #2: Change 2: change + review + docs", "merge PR #2",
+        ]  # fmt: skip
+        assert sum("pending" in x for x in golem.workspace.actions) == 20  # B waited through all of it
+        loop.cancel()
+
+    run(go())
+
+
+def test_a_fix_while_shipping_runs_while_another_change_builds(golem):
+    async def go():
+        a, b = side_by_side(golem)
+        gate = golem.scheduler.harness = JobGate((b.id, "change"))
+        golem.workspace.ci_results = [CI("failed", "npm test: 1 failing")]  # A's PR
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: (a.id, "fix") in gate.started)  # A has the ship turn: its fix is part of it
+        assert b.id in golem.scheduler.running and gate.started.count((b.id, "change")) == 1  # B building all along
+        await soon(lambda: golem.store.job(a.id).state == "done")
+        gate.let_go(b.id, "change")
+        await soon(lambda: golem.store.job(b.id).state == "done")
+        loop.cancel()
+
+    run(go())
