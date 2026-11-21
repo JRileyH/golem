@@ -28,10 +28,28 @@ LABELS = {
     "answer": "your answer",
     "proposals": "proposals for you",
     "vet": "check it over",
+    "sync": "catch up with main",
 }
 TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
 ASKS = ("checkin", "choose")
+# What each kind of step does to a project, by golem's step kind or an agent step's name: changes
+# on one project take turns at "build" (writing the code) and "ship" (push to deploy), and
+# overlap at the rest (turns.py). plan: specs, options, a design round, setup. finish: review,
+# docs and the last word. wait: on Riggy. look: a job that changes nothing.
+CLASSES = {
+    "setup": "plan", "vet": "plan", "spec": "plan", "spec-review": "plan", "options": "plan", "design": "plan",
+    "scaffold": "build", "mvp": "build", "buildout": "build", "build": "build", "change": "build", "adopt": "build",
+    "guide": "build", "apply": "build",
+    "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish",
+    "checkin": "wait", "choose": "wait",
+    "push": "ship", "push-main": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
+    "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look",
+}  # fmt: skip
+# Steps golem puts in where they're needed: each is part of the section it's in (the class of the
+# next step that has one). A fix after failed CI is shipping; a catch-up with main before
+# building is building, and before pushing, shipping.
+INSERTED = ("fix", "resolve", "sync")
 # Before steps were tracked, a job was a list of phases and an index into it. Jobs still
 # under way from then pick up at the agent step their phase became (ship became docs).
 LEGACY_PHASES = {
@@ -166,6 +184,31 @@ def label(step: Step) -> str:
     return step.name if step.kind == "agent" else LABELS.get(step.kind, step.kind)
 
 
+def step_class(steps: list[Step], step: Step) -> str:
+    """What the step does to the project (CLASSES). One golem put in (INSERTED) is part of the
+    section it's in: the class of the next step that has one. An agent step golem doesn't know
+    counts as building, to be safe."""
+    key = step.name if step.kind == "agent" else step.kind
+    if key in INSERTED:
+        later = sorted((s for s in steps if s.position > step.position), key=lambda s: s.position)
+        return next((step_class(steps, s) for s in later if (s.name if s.kind == "agent" else s.kind) not in INSERTED), "finish")
+    return CLASSES.get(key, "build" if step.kind == "agent" else "plan")
+
+
+def section(steps: list[Step], step: Step) -> list[Step]:
+    """The run of steps around `step`, in order, that are of its class: its job's turn at
+    building, say, from the catch-up with main through every build step after it."""
+    ordered = sorted(steps, key=lambda s: s.position)
+    classes = [step_class(ordered, s) for s in ordered]
+    i = next(i for i, s in enumerate(ordered) if s.position == step.position)
+    start = end = i
+    while start > 0 and classes[start - 1] == classes[i]:
+        start -= 1
+    while end + 1 < len(ordered) and classes[end + 1] == classes[i]:
+        end += 1
+    return ordered[start : end + 1]
+
+
 def where(steps: list[Step]) -> str:
     """The current step and how far along the job is: "mvp (9/24)", or "finished"."""
     step = current(steps)
@@ -181,7 +224,7 @@ def upcoming(steps: list[Step], after: Step) -> str:
     for s in ahead:
         if s.kind == "agent":
             return ", ".join(names + [f"then {s.name}"]) if names else s.name
-        if s.kind != "push":
+        if s.kind not in ("push", "sync"):
             names.append(label(s))
     return ", ".join(names) or "nothing"
 

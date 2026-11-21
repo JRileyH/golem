@@ -116,6 +116,25 @@ def test_the_adopt_playbook_checks_first_and_ships_in_every_mode():
     assert "What golem's checks found" in book.intro and "skills/new-repo.md" in book.instructions("adopt")
 
 
+def test_every_playbook_step_says_what_it_does_to_the_project():
+    for path in sorted((REPO / "playbooks").glob("*.md")):
+        if path.name != "README.md":
+            for s in playbooks.load(path).steps:
+                assert (s.name if s.kind == "agent" else s.kind) in plan.CLASSES, f"{path.stem}: {s.name} has no class"
+
+
+def test_steps_golem_puts_in_are_part_of_the_section_they_are_in():
+    names = ["setup", "sync", "change", "review", "docs", "sync", "push", "pr", "checks", "fix", "push", "pr", "checks", "merge", "deploy", "alert"]
+    kinds = {"setup", "sync", "push", "pr", "checks", "merge", "deploy", "alert"}
+    steps = [Step(i, 1, i, n if n in kinds else "agent", n) for i, n in enumerate(names, start=1)]
+    assert [plan.step_class(steps, s) for s in steps] == [
+        "plan", "build", "build", "finish", "finish", "ship", "ship", "ship", "ship", "ship", "ship", "ship", "ship", "ship", "ship", "finish",
+    ]  # fmt: skip
+    assert [s.name for s in plan.section(steps, steps[2])] == ["sync", "change"]
+    assert [s.position for s in plan.section(steps, steps[9])] == list(range(6, 16))  # the fix is shipping
+    assert plan.step_class([Step(1, 1, 1, "agent", "something-new")], Step(1, 1, 1, "agent", "something-new")) == "build"
+
+
 def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
     from golem.proposals import MAX_PER_RUN, collect, past
     from golem.store import Proposal
