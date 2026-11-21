@@ -253,10 +253,13 @@ class Bot:
         position = self.queue_position(job)
         if position == STARTING:  # "Looking into it" follows straight away
             return ""
-        current = next(iter(self.scheduler.running_jobs()), None)
-        if current and not self.scheduler.paused and not project.paused:
-            return f"Good question. I'll look into it as soon as the step I'm on for {self.store.project(current.slug).name} finishes."
-        return position
+        running = self.scheduler.running_jobs()
+        if not running or self.scheduler.paused or project.paused:
+            return position
+        mine = next((j for j in running if j.slug == project.slug), None)
+        if mine or len(running) == 1:  # its project's step, or the only one
+            return f"Good question. I'll look into it as soon as the step I'm on for {self.store.project((mine or running[0]).slug).name} finishes."
+        return f"Good question. I'll look into it as soon as one of the steps I'm on (for {self.project_names(running)}) finishes."
 
     def start_options(self, project: Project, request: str, title: str = "") -> str:
         job = self.store.add_job(project.slug, "change", request, "options", title=title)
@@ -282,13 +285,20 @@ class Bot:
             return "Work is paused (!resume to start again)."
         if self.store.project(job.slug).paused:
             return "This project is paused (!resume to start again)."
-        current = next(iter(self.scheduler.running_jobs()), None)
-        if current is None or current.id == job.id:
+        running = self.scheduler.running_jobs()
+        busy = {j.slug for j in running}
+        if not running or job.id in {j.id for j in running}:
+            return STARTING
+        if len(running) < self.scheduler.workers and job.slug not in busy:  # a worker is free for it
             return STARTING
         ahead = [j for j in self.store.jobs(("queued",)) if j.id != job.id and (j.priority, -j.id) >= (job.priority, -job.id)]
-        busy = self.store.project(current.slug)
         others = f" and {len(ahead)} more queued" if ahead else ""
-        return f"Queued: I'm on {busy.name}{others} first."
+        return f"Queued: I'm on {self.project_names(running)}{others} first."
+
+    def project_names(self, jobs: list[Job]) -> str:
+        """The jobs' projects by name: "Trees", "Trees and Birds", "Trees, Birds and Fish"."""
+        names = list(dict.fromkeys(p.name for p in map(self.store.project, (j.slug for j in jobs)) if p))
+        return " and ".join(names) if len(names) < 3 else f"{', '.join(names[:-1])} and {names[-1]}"
 
     # --- commands -------------------------------------------------------------
 
@@ -447,7 +457,7 @@ class Bot:
         if await self.slug_taken(new):
             return f"{new} is taken (by a project or an existing repo)."
         job = self.store.active_job(old)
-        if job and job.state == "running":
+        if any(j.slug == old for j in self.scheduler.running_jobs()) or (job and job.state == "running"):
             return "A step is running. Try again when it finishes, or !pause the project first."
         try:
             await self.workspace.move_repo(old, new, project.summary)

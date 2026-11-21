@@ -87,6 +87,21 @@ def test_estimates_and_the_forecast(golem):
     assert late[a.id][1].end - late[a.id][1].start == timedelta(minutes=1)
 
 
+def test_the_forecast_with_two_workers(golem):
+    store = golem.store
+    for slug in ("a", "b"):
+        store.add_project(slug, slug.upper(), "s")
+    known = {"spec": 1800.0}
+    a1, a2, b = store.add_job("a", "change", "r", "feature"), store.add_job("a", "change", "r", "feature"), store.add_job("b", "new", "r", "standard")
+    order = [(job, steps_of(store, job, ("agent", "spec"))) for job in (a1, a2, b)]
+    etas = insights.forecast(order, known, T0, workers=2)
+    starts = {job.id: etas[job.id][1].start - T0 for job, _ in order}
+    # B takes the second worker straight away; A's second job waits for A's first, not for a worker.
+    assert starts == {a1.id: timedelta(0), a2.id: timedelta(minutes=30), b.id: timedelta(0)}
+    one = insights.forecast(order, known, T0)
+    assert [one[job.id][1].start - T0 for job, _ in order] == [timedelta(0), timedelta(minutes=30), timedelta(minutes=60)]
+
+
 def test_a_pick_between_options_waits_like_a_check_in(golem):
     store = golem.store
     store.add_project("trees", "Trees", "s")

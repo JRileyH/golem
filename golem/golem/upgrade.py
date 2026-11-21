@@ -3,7 +3,7 @@
 Every CHECK_EVERY golem asks the deployer what's running and what GitHub's `main` has, and
 keeps the answer for the Settings tab (marked while golem is behind). Riggy presses
 "Upgrade now", or turns on upgrading automatically (when golem is behind and has no work
-queued or running). Either way the upgrade waits for a running step to finish, so no
+queued or running). Either way the upgrade waits for the running steps to finish, so no
 agent's work is thrown away, and no new step starts meanwhile. The deployer then
 fast-forwards golem's checkout, rebuilds and restarts the stack, and puts the old commit
 back if the new one won't build or come up healthy. golem says how it went in its own
@@ -48,7 +48,7 @@ class Upgrades:
 
     @property
     def state(self) -> str:
-        """"" | pending (waiting for a running step) | started (the deployer is on it)."""
+        """"" | pending (waiting for the running steps) | started (the deployer is on it)."""
         return self.store.get("upgrade") or ""
 
     @property

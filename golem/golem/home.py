@@ -201,7 +201,7 @@ def version_card(upgrades: Upgrades) -> str:
     if last.get("state") in ("failed", "rolled back") and last.get("from") == on:  # once golem's moved on (by hand), it's history
         body += f"<p class=hint>Last upgrade, to {escape(str(last.get('to', ''))[:7])}: {escape(last['state'])}. {escape(last.get('detail', ''))}</p>"
     if state == "pending":
-        body += "<p class=hint>Upgrading once the running step finishes.</p>"
+        body += "<p class=hint>Upgrading once the running steps finish.</p>"
     elif state == "started":
         body += "<p class=hint>Upgrading: rebuilding and restarting, back in a few minutes.</p>"
     button = ""

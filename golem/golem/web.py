@@ -152,19 +152,22 @@ def create_app(
         )
 
     def queue_order() -> list[Job]:
-        """Unfinished jobs in the order the worker will take them, the running one first."""
+        """Unfinished jobs in the order the workers will take them, the running ones first."""
         jobs = store.jobs(ACTIVE)
         running = [j for j in jobs if j.state == "running"]
         ready = [j for j in jobs if j.state in ("queued", "parked") and not store.project(j.slug).paused]
         return running + ready
 
     def context(now: datetime) -> dict:
-        """What every lane needs: the queue, colors, usual step times and the forecast."""
+        """What every lane needs: the queue, colors, usual step times and the forecast. A running
+        job is first in the queue, and so is each beside it: the job after them is second."""
         order = queue_order()
         known = insights.estimates(store)
         planned = [(j, plan.planned(settings, store, j)) for j in order]
-        etas = {} if scheduler.paused else insights.forecast(planned, known, now)
-        return {"order": {j.id: i for i, j in enumerate(order, start=1)}, "colors": colors(), "known": known, "etas": etas}
+        etas = {} if scheduler.paused else insights.forecast(planned, known, now, scheduler.workers)
+        extra = max(sum(j.state == "running" for j in order) - 1, 0)
+        places = {j.id: 1 if j.state == "running" else i - extra for i, j in enumerate(order, start=1)}
+        return {"order": places, "colors": colors(), "known": known, "etas": etas}
 
     def lanes(signed: bool, now: datetime) -> tuple[list[LaneData], list[LaneData]]:
         """Projects with a job under way, in the queue's order, and the others with their last job."""

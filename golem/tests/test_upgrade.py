@@ -143,7 +143,7 @@ def test_the_settings_tab_shows_whats_new_and_upgrades(golem):
     assert "value='upgrade'" in html and "class=dot" in html  # the Settings tab is marked
     assert "Upgrading%20to%20bbbbbbb" in act(client, action="upgrade")
     html = client.get("/settings").text
-    assert "Upgrading once the running step finishes." in html and "value='upgrade'" not in html
+    assert "Upgrading once the running steps finish." in html and "value='upgrade'" not in html
     assert "upgrades%20itself" in act(client, action="auto-upgrade", value="on")
     assert golem.scheduler.upgrades.auto and "Upgrade automatically: on" in client.get("/settings").text
     act(client, action="auto-upgrade", value="off")

@@ -199,18 +199,25 @@ class Eta:
     end: datetime
 
 
-def forecast(order: list[tuple[Job, list[Step]]], known: dict[str, float], now: datetime) -> dict[int, dict[int, Eta]]:
+def forecast(
+    order: list[tuple[Job, list[Step]]], known: dict[str, float], now: datetime, workers: int = 1
+) -> dict[int, dict[int, Eta]]:
     """When each step still to come should start and end: {job id: {position: Eta}}.
 
-    One worker takes the jobs in `order` (the queue's), each until it's done or reaches
-    something Riggy has to answer: a check-in, options to pick from or a question. A running step has its usual
-    time left, or a minute if it's over."""
-    t = now
+    The first free of `workers` takes each job in `order` (the queue's), once nothing else on
+    its project is running, until it's done or reaches something Riggy has to answer: a
+    check-in, options to pick from or a question. A running step has its usual time left, or a
+    minute if it's over."""
+    free = [now] * max(workers, 1)  # when each worker is next free
+    project_free: dict[str, datetime] = {}  # a project's steps run one at a time
     found: dict[int, dict[int, Eta]] = {}
     for job, steps in order:
         etas = found[job.id] = {}
         if job.state == "waiting":
             continue
+        t = max(min(free), project_free.get(job.slug, now))
+        # The worker free latest by then: one free sooner is left for a job that can start sooner.
+        worker = max((i for i, f in enumerate(free) if f <= t), key=lambda i: free[i])
         for step in steps:
             if step.state not in OPEN:
                 continue
@@ -224,6 +231,7 @@ def forecast(order: list[tuple[Job, list[Step]]], known: dict[str, float], now: 
                 took = max(took - (now - datetime.fromisoformat(step.started_at)).total_seconds(), 60)
             etas[step.position] = Eta(t, t + timedelta(seconds=took))
             t += timedelta(seconds=took)
+        free[worker] = project_free[job.slug] = t
     return found
 
 

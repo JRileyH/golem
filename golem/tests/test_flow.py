@@ -1815,3 +1815,32 @@ def test_an_upgrade_waits_for_every_running_step_and_starts_nothing_new(golem):
         loop.cancel()
 
     run(go())
+
+
+def test_what_golem_says_about_the_queue_with_several_workers(golem):
+    from golem.bot import STARTING
+
+    async def go():
+        gate = golem.scheduler.harness = Gate()
+        golem.store.put("workers", "2")
+        a_change(golem, "trees")
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: len(gate.started) == 1)
+        fish = a_change(golem, "fish")
+        assert golem.bot.queue_position(fish) == STARTING  # a worker is free for it
+        golem.scheduler.wake()
+        await soon(lambda: len(gate.started) == 2)
+
+        birds = a_change(golem, "birds")
+        assert golem.bot.queue_position(birds) == "Queued: I'm on Trees and Fish first."
+        trees = golem.store.project("trees")
+        assert golem.bot.start_question(trees, "how big are the cards?") == (
+            "Good question. I'll look into it as soon as the step I'm on for Trees finishes."
+        )
+        assert golem.bot.start_question(golem.store.project("birds"), "what is it?") == (
+            "Good question. I'll look into it as soon as one of the steps I'm on (for Trees and Fish) finishes."
+        )
+        assert await golem.bot.move(trees, "tree-cards") == "A step is running. Try again when it finishes, or !pause the project first."
+        loop.cancel()
+
+    run(go())
