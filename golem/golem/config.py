@@ -18,7 +18,7 @@ class Settings:
     org: str
     deployer_url: str
     state_dir: Path  # SQLite, run logs, lessons.md
-    workspace_dir: Path  # one checkout per project
+    workspace_dir: Path  # a checkout per project, and a worktree per job in .jobs/ (workspace.TREES)
     process_dir: Path  # playbooks, skills and prompts, read-only
     # Signs Riggy in on the web app. No default: it's set in .env or golem won't start.
     web_password: str

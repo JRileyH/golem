@@ -5,7 +5,7 @@
 
 bin/nuke.sh runs this after asking. It deletes every project the way !delete does,
 every other site the deployer still has (stopped ones and hello too) with its data,
-and whatever else golem keeps per project: checkouts, run logs, the triage log,
+and whatever else golem keeps per project: checkouts and job trees, run logs, the triage log,
 lessons and proposals. It keeps the stack, golem's own conversation (new ideas and its
 news) and .env. GitHub repos stay for Riggy to delete: golem's token can't.
 """
