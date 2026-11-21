@@ -2028,3 +2028,49 @@ def test_a_fix_while_shipping_runs_while_another_change_builds(golem):
         loop.cancel()
 
     run(go())
+
+
+def test_a_change_catches_up_with_main_before_it_builds_and_ships_and_merges_conflicts(golem):
+    async def go():
+        [job] = side_by_side(golem, changes=2)[:1]
+        golem.store.update_job(job.id + 1, state="killed")  # just one change here
+        golem.harness.script = by_label({})
+        golem.workspace.syncs = [(0, []), (2, ["src/app.js", "README.md"]), (2, [])]  # building, shipping, after the merge
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"
+        assert [(plan.label(s), s.state) for s in golem.store.steps(job.id)][:9] == [
+            ("set up", "done"), ("catch up with main", "skipped"), ("change", "done"), ("review", "done"), ("docs", "done"),
+            ("catch up with main", "failed"), ("resolve", "done"), ("catch up with main", "done"), ("push", "done"),
+        ]  # fmt: skip
+        resolve = next(c for c in golem.harness.calls if c.label == "resolve")
+        assert "Other work on this project shipped while this job was under way" in resolve.prompt
+        assert "- src/app.js\n- README.md" in resolve.prompt and resolve.cwd == golem.workspace.tree_path(job.id)
+        assert "Main moved on under Change 1: 2 file(s) conflict with what shipped since. Merging it in." in golem.chat.texts("trees")
+
+    run(go())
+
+
+def test_merging_in_circles_asks_riggy_for_a_hint(golem):
+    async def go():
+        [job] = side_by_side(golem, changes=2)[:1]
+        golem.store.update_job(job.id + 1, state="killed")
+        golem.harness.script = by_label({})
+        golem.workspace.syncs = [(0, [])] + [(1, ["src/app.js"])] * 4
+        await golem.finish()
+        assert golem.store.job(job.id).state == "waiting"
+        assert sum(s.name == "resolve" for s in golem.store.steps(job.id)) == 4
+        assert golem.chat.texts("trees")[-1].startswith("I've tried to merge main into Change 1 3 times and it still conflicts")
+
+    run(go())
+
+
+def test_one_change_at_a_time_never_catches_up_by_itself(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change"}]})
+        await golem.say(room, "make the cards bigger")
+        await golem.finish()
+        job = golem.store.jobs()[0]
+        assert "catch up with main" not in golem.labels(job.id) and not any(a.startswith("sync") for a in golem.workspace.actions)
+
+    run(go())

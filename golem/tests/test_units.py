@@ -1020,6 +1020,36 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
     asyncio.run(go())
 
 
+def test_a_branch_catches_up_with_main_or_says_where_it_conflicts(checkout):
+    ws = checkout
+
+    async def go():
+        await ws.ensure_main("trees", "# Trees\n")
+        for job, name in ((1, "README.md"), (2, "app.js")):  # 1 changes what main will change; 2 doesn't
+            tree = await ws.ensure_tree("trees", job)
+            await ws.start_branch("trees", f"golem/job-{job}", job=job)
+            (tree / name).write_text(f"job {job}\n")
+            await ws.commit_all("trees", f"Job {job}", job=job)
+        assert await ws.sync_branch("trees", job=1) == (0, [])  # nothing new on main yet
+
+        (ws.path("trees") / "README.md").write_text("# Trees, shipped\n")  # another change ships
+        git(ws, "commit", "--quiet", "-am", "Shipped")
+        git(ws, "push", "--quiet", "origin", "HEAD:main")
+
+        assert await ws.sync_branch("trees", job=2) == (1, [])
+        two = ws.tree_path(2)
+        assert (two / "README.md").read_text() == "# Trees, shipped\n" and (two / "app.js").read_text() == "job 2\n"
+        assert await ws.clean("trees", job=2) and await ws.sync_branch("trees", job=2) == (0, [])
+
+        assert await ws.sync_branch("trees", job=1) == (1, ["README.md"])
+        one = ws.tree_path(1)
+        assert await ws.clean("trees", job=1) and (one / "README.md").read_text() == "job 1\n"  # merged back out
+        status = in_tree(one, "status")
+        assert "merging" not in status and "unmerged" not in status  # not left mid-merge
+
+    asyncio.run(go())
+
+
 def test_ci_is_read_like_the_deployer_reads_it(checkout, monkeypatch):
     from golem import workspace
 

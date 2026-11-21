@@ -32,6 +32,8 @@ NAMES = {
     "second-pass": "Second review",
     "docs": "Write the docs",
     "fix": "Fix what broke",
+    "resolve": "Merge in what shipped",
+    "sync": "Catch up with main",
     "checkin": "You try it",
     "choose": "You pick one",
     "setup": "Get ready",
@@ -76,7 +78,7 @@ def pieces(steps: list[Step]) -> list[Piece]:
             out[-1].ship.append(s)
         elif s.kind == "alert":
             continue
-        elif s.kind in ("setup", "refresh"):
+        elif s.kind in ("setup", "refresh", "sync"):  # shown only while they run or if they fail
             if s.state in ("running", "failed"):
                 out.append(Piece(s))
         else:

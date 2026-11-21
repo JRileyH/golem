@@ -57,6 +57,8 @@ SURVEY_TURNS = 100  # install, run the tests, read for what it needs
 FAKE_SURVEY = {"tests": {"result": "passed", "command": "", "detail": "not run (HARNESS=fake)"}, "missing": [], "needs": []}
 MAX_ATTEMPTS = 3  # failed attempts at one step before asking Riggy for help
 MAX_FIXES = 4  # fix steps in one job before asking Riggy for a hint
+RESOLVE_TURNS = 150
+MAX_RESOLVES = 3  # resolve steps in one job (conflicts with main) before asking Riggy for a hint
 LIMIT_RETRY = timedelta(minutes=30)
 ERROR_RETRY = timedelta(minutes=1)
 CI_POLL = timedelta(seconds=20)  # how often CI is checked while a step waits for it
@@ -80,7 +82,7 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
-USES_TREE = ("agent", "push", "push-main", "merge", "deploy", "alert")
+USES_TREE = ("agent", "push", "push-main", "merge", "deploy", "alert", "sync")
 BUILDS_DESIGN = ("guide", "apply")  # agent steps that build a design pass's pick (playbooks/design.md)
 DESIGN_PASS = ("design", *BUILDS_DESIGN)
 
@@ -103,7 +105,8 @@ class Outcome:
     error: try the step again later, then ask Riggy.  limit: out of Claude usage.
     blocked: the worker asked Riggy a question.  checkin: the step waits for his reply (a
     check-in, or his pick of some options).  refused: golem won't adopt the repo; `problem`
-    says why, and the project goes.
+    says why, and the project goes.  resolve: main moved under the job and conflicts with its
+    work; a resolve step merges them, and the catch-up goes again.
     """
 
     state: str
@@ -306,15 +309,31 @@ class Scheduler:
         return steps
 
     def prepare(self, job: Job) -> Step | None:
-        """The job's current step, ready to run: the job's steps written the first time, the
-        job running and its step started. None if it has no step left."""
-        step = plan.current(self.ensure_steps(job))
+        """The job's current step, ready to run: the job's steps written the first time, a catch-up
+        with main put in where its turn at building or shipping begins (turns.py), the job running
+        and its step started. None if it has no step left."""
+        steps = self.ensure_steps(job)
+        step = plan.current(steps)
         if step is None:
             return None
+        if self.needs_sync(job, steps, step):
+            self.store.add_steps(job.id, [Step(0, job.id, 0, "sync", "sync")], after=step.position - 1)
+            step = plan.current(self.store.steps(job.id))
         self.store.update_job(job.id, state="running")
         if step.started_at is None:
             step = self.store.update_step(step.id, state="running", started_at=now())
         return step
+
+    def needs_sync(self, job: Job, steps: list[Step], step: Step) -> bool:
+        """Whether a change's branch should catch up with main before this step: the first of a
+        turn at building or shipping, on a project where changes take turns. Others may have
+        shipped since it branched; building and shipping start from what's live."""
+        if job.kind != "change" or job.playbook in LOOKS or not job.worktree or step.started_at or step.kind == "sync":
+            return False
+        project = self.store.project(job.slug)
+        if project is None or project.parallel_jobs <= 1 or plan.step_class(steps, step) not in turns.TURNS:
+            return False
+        return plan.section(steps, step)[0].position == step.position  # a catch-up before it would be in its section
 
     async def step(self, job: Job) -> None:
         """Do the job's current step and act on how it went."""
@@ -369,6 +388,22 @@ class Scheduler:
                         project,
                         f"I've tried to fix {name} {fixes} times and it still fails: {outcome.summary}.\n\n"
                         "Reply with a hint and I'll try again, or `!kill` to drop the job.",
+                    )
+            case "resolve":  # main moved under it and conflicts: a worker merges them, then it catches up again
+                self.store.update_step(step.id, state="failed", summary=outcome.summary, error=outcome.problem, ended_at=now())
+                steps = self.store.steps(job.id)
+                tries = sum(1 for s in steps if s.kind == "agent" and s.name == "resolve")
+                resolve = Step(0, job.id, 0, "agent", "resolve", RESOLVE_TURNS, problem=outcome.problem)
+                self.store.add_steps(job.id, [resolve, Step(0, job.id, 0, "sync", "sync")], after=step.position)
+                if tries < MAX_RESOLVES:
+                    self.store.update_job(job.id, state="queued", attempts=0)
+                    await self.say(project, f"Main moved on under {plan.title(job)}: {outcome.summary}. Merging it in.", notice=True)
+                else:
+                    self.store.update_job(job.id, state="waiting", attempts=0)
+                    await self.say(
+                        project,
+                        f"I've tried to merge main into {plan.title(job)} {tries} times and it still conflicts: "
+                        f"{outcome.summary}.\n\nReply with a hint and I'll try again, or `!kill` to drop the job.",
                     )
             case "checkin":
                 self.store.update_step(step.id, state="waiting", summary=outcome.summary or "Waiting for your reply.")
@@ -777,6 +812,25 @@ class Scheduler:
                 self.store.set_proposal_issue(p.id, await self.workspace.open_issue(project.slug, *proposals.issue(p, page)))
         await self.say(project, proposals.announcement(name, made, page))
         return Outcome("done", f"Proposed {len(made)} for you to decide on.")
+
+    async def do_sync(self, job: Job, project: Project, step: Step) -> Outcome:
+        """Catch the job's branch up with main where its turn at building or shipping begins
+        (turns.py): another change may have shipped since it branched."""
+        branch, tree = self.branch(job), self.tree(job)
+        await self.workspace.start_branch(project.slug, branch, job=tree)
+        await self.workspace.commit_all(project.slug, "Work left uncommitted", job=tree)
+        merged, conflicts = await self.workspace.sync_branch(project.slug, job=tree)
+        if conflicts:
+            shipped = [f"#{j.id} “{plan.title(j)}”" for j in self.store.jobs(("done",), limit=20) if j.slug == project.slug][:3]
+            problem = (
+                f"Main has {merged} commit(s) this job's branch ({branch}) doesn't, from other work on this project "
+                f"that shipped since it branched{(' (' + ', '.join(shipped) + ')') if shipped else ''}. Merging main "
+                f"in conflicts in:\n" + "\n".join(f"- {f}" for f in conflicts)
+            )
+            return Outcome("resolve", f"{len(conflicts)} file(s) conflict with what shipped since", problem=problem)
+        if not merged:
+            return Outcome("skipped", "Up to date with main.")
+        return Outcome("done", f"Caught up with main: merged in {merged} new commit(s).")
 
     async def do_push(self, job: Job, project: Project, step: Step) -> Outcome:
         branch, tree = self.branch(job), self.tree(job)

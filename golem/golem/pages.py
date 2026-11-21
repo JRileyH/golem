@@ -48,6 +48,8 @@ DOES = {
     "alert": "Tells you it's live. Always the last step, after the last deploy.",
     "refresh": "Brings the checkout up to date with what's live, unless a job's work is under way in it.",
     "answer": "Sends you the answer. A question changes nothing: no commits, pushes or deploys.",
+    "sync": "Brings the job's branch up to date with main where its turn at building or shipping begins, when "
+    "changes on a project take turns. If what shipped since conflicts with it, a resolve step goes in to merge them.",
 }
 
 
@@ -275,7 +277,7 @@ def checklist(lane: LaneData, found: list[progress.Piece], now: datetime) -> str
         s = x.step
         tags = "<span class=opt>optional</span>" if s.optional and x.state == "todo" else ""
         tags += "<span class=live>live</span>" if x.live else ""
-        why = f"<p class=why>{escape(_short(s.problem.splitlines()[0], 140))}</p>" if s.name == "fix" and s.problem else ""
+        why = f"<p class=why>{escape(_short(s.problem.splitlines()[0], 140))}</p>" if s.name in ("fix", "resolve") and s.problem else ""
         rows.append(
             f"<li class='piece {x.state}'><a href='{escape(step_href(lane.job, s))}' data-sheet><span class=mark>{MARKS[x.state]}</span>"
             f"<span class=name>{escape(x.name)}</span></a>{tags}<span class=meta>{piece_meta(lane, x, now)}</span>{why}</li>"
@@ -408,7 +410,7 @@ def sheet(d: SheetData, signed_in: bool, now: datetime) -> str:
         f"{ICONS.get(s.state, '')} {escape(words)}</span></h2><p class=muted>{kind}{' · optional' if s.optional else ''}</p></header>"
     )
     body = f"<p>{escape(d.does)}</p>" if d.does else ""
-    if s.name == "fix" and s.problem and signed_in:
+    if s.name in ("fix", "resolve") and s.problem and signed_in:
         body += f"<details><summary>The problem it was given</summary><pre class=problem>{escape(_short(s.problem, 3000))}</pre></details>"
     facts = []
     if s.state in OPEN and not s.started_at:

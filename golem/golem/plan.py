@@ -98,6 +98,7 @@ SUGGESTED = {
     "guide": ("opus", "high"),  # the design guide every later step follows
     "apply": ("opus", "high"),  # restyling the whole app from the guide
     "fix": ("opus", "high"),
+    "resolve": ("opus", "high"),  # merging main into a change: both intents have to survive
     "review": ("opus", "xhigh"),
     "second-pass": ("sonnet", "high"),
     "docs": ("sonnet", "medium"),

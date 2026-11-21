@@ -21,6 +21,9 @@ the golem image.
   golem can't give. It changes nothing; its answer is structured output.
 - `fix.md`: the instructions of a `fix` step, which golem inserts when CI fails
   or the deployer refuses a commit.
+- `resolve.md`: the instructions of a `resolve` step, which golem inserts when a
+  change's branch conflicts with main as it catches up (changes taking turns on
+  one project, `golem/golem/turns.py`): merge main in, keeping both intents.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
 - `request.md`: whether a message in a project's conversation is a question to answer,

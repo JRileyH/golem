@@ -36,8 +36,8 @@ class Prompts:
         lessons: str,
     ) -> str:
         s = self.settings
-        if step.name == "fix" and step.problem:
-            instructions = self.render("fix", problem=step.problem)
+        if step.name in ("fix", "resolve") and step.problem:  # steps golem puts in, with what to fix or merge
+            instructions = self.render(step.name, problem=step.problem)
         else:
             instructions = book.instructions(step.name)
             if step.problem:  # what golem found for the step to do: an adoption's gaps

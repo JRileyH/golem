@@ -93,6 +93,7 @@ class Workspace(Protocol):
     async def commit_all(self, slug: str, message: str, *, job: int | None = None) -> bool: ...
     async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
     async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
+    async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]: ...
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None: ...
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
@@ -398,6 +399,23 @@ class GitHubWorkspace:
             await self.git(slug, "checkout", "--quiet", "--detach", "origin/main", job=job)
         await run("git", "branch", "-D", branch, cwd=self.where(slug, job))
 
+    async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]:
+        """Merge the latest main into the checkout's branch: (how many commits main had that it
+        didn't, the files they conflict in). A conflict is merged back out again, so the checkout
+        is always left clean, and a resolve step can do the merge itself (turns.py)."""
+        await self.git(slug, "fetch", "--quiet", "--prune", "origin", job=job)
+        behind = int(await self.git(slug, "rev-list", "--count", "HEAD..origin/main", job=job))
+        if not behind:
+            return 0, []
+        code, out = await run("git", "merge", "--no-edit", "--quiet", "origin/main", cwd=self.where(slug, job))
+        if code == 0:
+            return behind, []
+        conflicts = (await self.git(slug, "diff", "--name-only", "--diff-filter=U", job=job)).splitlines()
+        await run("git", "merge", "--abort", cwd=self.where(slug, job))
+        if not conflicts:
+            raise WorkspaceError(f"merging main into {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
+        return behind, conflicts
+
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
         code, out = await run(
             "gh", "pr", "list", "--repo", f"{self.org}/{slug}", "--head", branch, "--state", "open",
@@ -489,6 +507,7 @@ class LocalWorkspace:
         self.bodies: list[str] = []  # of the PRs opened
         self.has_work = True
         self.ci_results: list[CI] = []
+        self.syncs: list[tuple[int, list[str]]] = []  # what catching up with main finds, in turn; then nothing new
         self.branch: str | None = None  # the last branch started, in any checkout
         self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
         self.trees: set[int] = set()  # jobs with a tree
@@ -619,6 +638,11 @@ class LocalWorkspace:
         self.main[slug] = self._sha()
         self.branches.pop(job, None)
         return self.main[slug]
+
+    async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]:
+        found = self.syncs.pop(0) if self.syncs else (0, [])
+        self.actions.append(f"sync job {job}: {found[0]} new" + (f", conflicts in {', '.join(found[1])}" if found[1] else ""))
+        return found
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
         pr = self.prs.get((slug, branch))

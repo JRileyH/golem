@@ -242,7 +242,7 @@ def create_app(
             engine = plan.engine(settings, store, project, step)
             inherited = plan.engine(settings, store, project, replace(step, model=None, effort=None))
         if step.kind == "agent":
-            does = step.problem.splitlines()[0] if step.name == "fix" and step.problem else ""
+            does = step.problem.splitlines()[0] if step.name in ("fix", "resolve") and step.problem else ""
             if not does:
                 try:
                     does = _first_paragraph(plan.load(settings, job.playbook).instructions(step.name))
