@@ -618,6 +618,10 @@ class Store:
     def consume_notes(self, ids: list[int]) -> None:
         self.db.executemany("UPDATE notes SET consumed = 1 WHERE id = ?", [(i,) for i in ids])
 
+    def aim_notes(self, ids: list[int], step_id: int) -> None:
+        """Pass notes on to one step rather than whichever comes next: the others don't see them."""
+        self.db.executemany("UPDATE notes SET step_id = ? WHERE id = ?", [(step_id, i) for i in ids])
+
     # --- steps ----------------------------------------------------------------
 
     def add_steps(self, job_id: int, steps: list[Step], after: int | None = None) -> None:

@@ -75,6 +75,7 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 BUILDS_DESIGN = ("guide", "apply")  # agent steps that build a design pass's pick (playbooks/design.md)
+DESIGN_PASS = ("design", *BUILDS_DESIGN)
 
 
 @dataclass
@@ -749,10 +750,15 @@ class Scheduler:
         return Outcome("done", f"{sha[:7]} is live.", {"site": url, "commit": self.commit_url(project, sha)})
 
     async def do_checkin(self, job: Job, project: Project, step: Step) -> Outcome:
-        """Show Riggy the live site and wait for his reply, which goes to the next step."""
+        """Show Riggy the live site and wait for his reply, which goes to the next step that
+        builds (past a design pass's steps, which see it under "Done so far")."""
         if step.state == "waiting":  # he's replied (the bot queued the job again)
             replies = self.store.pending_notes(job.id)
             said = _first_line(replies[-1][1], 200) if replies else ""
+            later = [s for s in self.store.steps(job.id) if s.position > step.position and s.kind == "agent"]
+            builds = next((s for s in later if s.name not in DESIGN_PASS), None)
+            if replies and builds and later[0].name in DESIGN_PASS:
+                self.store.aim_notes([i for i, _ in replies], builds.id)
             return Outcome("done", f"You said: “{said}”" if said else "You replied.")
         steps = self.store.steps(job.id)
         message = plan.last_said(steps) or "Something to try is live."

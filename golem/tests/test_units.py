@@ -556,6 +556,18 @@ def test_store_delete_project_leaves_other_projects_alone(tmp_path):
     assert store.pending_notes(1) == [] and store.pending_notes(2) == [(2, "note for birds")]
 
 
+def test_notes_aimed_at_one_step_are_for_it_alone(tmp_path):
+    store = Store(tmp_path / "db")
+    store.add_project("trees", "Trees", "s")
+    job = store.add_job("trees", "new", "idea", "standard")
+    store.add_steps(job.id, [Step(0, job.id, 0, "agent", name) for name in ("design", "buildout")])
+    design, buildout = store.steps(job.id)
+    store.add_note(job.id, "the score is broken")
+    store.aim_notes([i for i, _ in store.pending_notes(job.id)], buildout.id)
+    assert store.pending_notes(job.id) == [] and store.pending_notes(job.id, design.id) == []
+    assert [text for _, text in store.pending_notes(job.id, buildout.id)] == ["the score is broken"]
+
+
 # --- golem-deploy ------------------------------------------------------------
 
 
