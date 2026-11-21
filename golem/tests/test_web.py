@@ -272,6 +272,26 @@ def test_options_show_side_by_side_and_can_be_picked(golem):
     assert (said.who, said.text) == ("riggy", "B")
 
 
+def test_a_design_doc_is_served_in_a_sandbox(golem, page):
+    from golem import options
+
+    folder = options.folder(golem.settings, page.job.id)
+    folder.mkdir(parents=True)
+    (folder / "12-doc.html").write_text("<!doctype html><title>Directions</title><section class=page>A · Field guide</section>")
+    (folder / "12-p-1.png").write_bytes(b"\x89PNG rest")
+    doc = page.get(f"/jobs/{page.job.id}/options/12-doc.html")
+    assert doc.status_code == 200 and "A · Field guide" in doc.text
+    assert doc.headers["content-security-policy"] == web.DOC_POLICY and web.DOC_POLICY.startswith("sandbox; default-src 'none';")
+    assert doc.headers["content-type"] == "text/html; charset=utf-8"
+    assert (doc.headers["x-content-type-options"], doc.headers["referrer-policy"], doc.headers["cache-control"]) == (
+        "nosniff", "no-referrer", "no-cache"
+    )
+    assert page.get(f"/jobs/{page.job.id}/options/12-p-1.png").headers["content-type"] == "image/png"  # a shared page
+    for bad in ("13-doc.html", "12-doc.htm", "doc.html", "..%2F12-doc.html", "12-doc.html%00.png"):
+        assert page.get(f"/jobs/{page.job.id}/options/{bad}").status_code == 404
+    assert page.get(f"/jobs/{page.job.id + 1}/options/12-doc.html").status_code == 404  # another job's folder
+
+
 def test_skipping_the_pick_leaves_it_to_the_next_step(golem):
     room = options_up(golem)
     job = golem.store.active_job("tree-cards")

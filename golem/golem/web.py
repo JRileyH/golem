@@ -59,6 +59,13 @@ COMMANDS = {"options", "mode", "rename", "slug", "delete", "adopt"}
 MAX_FAILURES = 10  # wrong passwords in FAILURE_WINDOW before sign-in is refused for a while
 FAILURE_WINDOW = 15 * 60
 SHOWN = 40  # a conversation's latest messages on its page; "Show earlier messages" adds as many again
+# A design doc is a worker's HTML on golem's own site, where Riggy is signed in. In a sandbox its
+# origin is no one's (a request from it says Origin: null, which _same_site refuses), and it can
+# run nothing and load nothing but what's in the file. golem-render-doc renders it the same way.
+DOC_POLICY = (
+    "sandbox; default-src 'none'; img-src data:; font-src data:; style-src 'unsafe-inline'; "
+    "form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+)
 
 
 class Auth:
@@ -369,9 +376,14 @@ def create_app(
         return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=86400"})
 
     async def option_image(request: Request) -> Response:
-        """A picture of an option (options.collect made the copy). Only those names, and never sniffed as anything else."""
+        """A picture of an option, or a design round's doc (options.collect and collect_design made
+        the copies). Only those names, never sniffed as anything else; a doc in a sandbox (DOC_POLICY)."""
         name = request.path_params["name"]
         path = options.folder(settings, request.path_params["job_id"]) / name
+        if options.is_doc(name) and path.is_file():
+            headers = {"Content-Security-Policy": DOC_POLICY, "X-Content-Type-Options": "nosniff",
+                       "Referrer-Policy": "no-referrer", "Cache-Control": "no-cache"}  # fmt: skip
+            return FileResponse(path, media_type="text/html; charset=utf-8", headers=headers)
         if not options.is_image(name) or not path.is_file():
             return Response("No such image.", 404)
         headers = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
