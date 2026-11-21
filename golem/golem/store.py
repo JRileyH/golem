@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     issue INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    title TEXT NOT NULL DEFAULT ''   -- what it's about in a few words ("Quiz Mode"); '' for none (plan.title)
+    title TEXT NOT NULL DEFAULT '',  -- what it's about in a few words ("Quiz Mode"); '' for none (plan.title)
+    worktree INTEGER NOT NULL DEFAULT 0  -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -160,7 +161,8 @@ MIGRATIONS = {
         "proposals_max": "INTEGER NOT NULL DEFAULT 5",
         "proposals_off": "TEXT NOT NULL DEFAULT ''",
     },
-    "jobs": {"title": "TEXT NOT NULL DEFAULT ''"},
+    # Jobs from before trees have 0 and finish in the project's checkout, where their work is.
+    "jobs": {"title": "TEXT NOT NULL DEFAULT ''", "worktree": "INTEGER NOT NULL DEFAULT 0"},
     "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
@@ -284,6 +286,7 @@ class Job:
     created_at: str
     updated_at: str
     title: str = ""  # what it's about in a few words ("Quiz Mode"); plan.title has one for every job
+    worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
 
 
 @dataclass

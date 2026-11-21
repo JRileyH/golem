@@ -935,6 +935,10 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
         assert await ws.ensure_tree("trees", 3) == three
         assert await ws.current_branch("trees", job=3) == "golem/job-3" and (three / "more.js").read_text() == "more\n"
 
+        # A question about a job that has no branch yet looks at main.
+        four = await ws.ensure_tree("trees", 4, at="golem/job-99")
+        assert in_tree(four, "rev-parse", "HEAD") == git(ws, "rev-parse", "origin/main")
+
         await ws.prune_trees({3})  # only job 3 is still under way
         assert sorted(p.name for p in (ws.root / ".jobs").iterdir()) == ["3"]
         assert len(git(ws, "worktree", "list").splitlines()) == 2  # the checkout and job 3's tree

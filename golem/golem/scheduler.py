@@ -79,6 +79,8 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # reply was read). The rest (setup, push, CI, merge) show on the status page; failures are
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
+# Steps that work in the job's tree (made by setup, vet or refresh, the first step).
+USES_TREE = ("agent", "push", "push-main", "merge", "deploy", "alert")
 BUILDS_DESIGN = ("guide", "apply")  # agent steps that build a design pass's pick (playbooks/design.md)
 DESIGN_PASS = ("design", *BUILDS_DESIGN)
 
@@ -294,6 +296,8 @@ class Scheduler:
         if step.started_at is None:
             step = self.store.update_step(step.id, state="running", started_at=now())
         try:
+            if job.worktree and step.kind in USES_TREE:  # made by its first step; back if it was lost
+                await self.workspace.ensure_tree(project.slug, job.id)
             outcome = await getattr(self, "do_" + step.kind.replace("-", "_"))(job, project, step)
         except (WorkspaceError, DeployerError) as e:
             outcome = Outcome("error", problem=str(e))
@@ -392,13 +396,13 @@ class Scheduler:
         way), and anything it changes there is put back."""
         if step.name in BUILDS_DESIGN and (nothing := self.nothing_designed(job, step)):
             return Outcome("skipped", nothing)
-        looking = job.playbook in LOOKS
+        looking, tree = job.playbook in LOOKS, self.tree(job)
         if looking:
-            branch = await self.workspace.current_branch(project.slug)
-            was_clean = await self.workspace.clean(project.slug)
+            branch = await self.workspace.current_branch(project.slug, job=tree)
+            was_clean = await self.workspace.clean(project.slug, job=tree)
         else:
             branch = self.branch(job)
-            await self.workspace.start_branch(project.slug, branch)
+            await self.workspace.start_branch(project.slug, branch, job=tree)
         notes = self.store.pending_notes(job.id, step.id)
         feedback = [text for _, text in notes]
         if job.resume_session:
@@ -437,7 +441,7 @@ class Scheduler:
             else:
                 result = RunResult("error", error=f"ran out of turns: {said}")
         if looking and was_clean:
-            await self.workspace.discard(project.slug)
+            await self.workspace.discard(project.slug, job=tree)
         if result.outcome == "limit":
             return Outcome("limit")
         if result.outcome != "verdict":
@@ -459,7 +463,7 @@ class Scheduler:
         if v["verdict"] == "blocked":
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
-            await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted")
+            await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
         return Outcome("done", message, links)
 
     def history(self, project: Project, job: Job) -> tuple[list[str], list[str]]:
@@ -486,7 +490,7 @@ class Scheduler:
     def keep_options(self, job: Job, project: Project, step: Step, v: dict) -> str:
         """Keep what a step that makes options returned with them (options.collect; a design
         round's doc and pages too, collect_design), or say what's wrong with it."""
-        checkout, folder = self.workspace.path(project.slug), options.folder(self.settings, job.id)
+        checkout, folder = self.checkout(project, job), options.folder(self.settings, job.id)
         design, problem = options.collect_design(v, checkout, folder, str(step.id)) if step.name == "design" else (None, "")
         if problem:
             return problem
@@ -520,7 +524,7 @@ class Scheduler:
         seen = notes.stat().st_size if notes.exists() else 0  # notes from earlier steps were passed on then
         run = asyncio.create_task(
             self.harness.run(
-                cwd=self.workspace.path(project.slug),
+                cwd=self.checkout(project, job),
                 prompt=prompt,
                 model=engine.model,
                 effort=engine.effort,
@@ -585,6 +589,8 @@ class Scheduler:
         slug, s = project.slug, self.settings
         await self.workspace.ensure_repo(slug, project.summary)  # a clone: preflight saw the repo
         await self.workspace.sync_main(slug)
+        if job.worktree:
+            await self.workspace.ensure_tree(slug, job.id)
         sha = await self.workspace.main_sha(slug)
         result = await self.workspace.ci(slug, sha)
         links = {"repo": s.repo_url(slug), **({"ci": result.url} if result.url else {})}
@@ -593,7 +599,7 @@ class Scheduler:
             if waited >= CI_TIMEOUT:
                 return Outcome("error", problem=f"CI on main still hasn't finished after {span(waited)}: {result.detail}")
             return Outcome("wait", f"Waiting for CI on main to finish before checking it over: {result.detail}", links)
-        path = self.workspace.path(slug)
+        path = self.checkout(project, job)
         checks = [adopt.ci(result), *adopt.files(path, s.org, slug, s.platform, s.project_url(slug))]
         present = (path / "deploy" / "compose.yml").is_file()
         checks.append(adopt.compose(present, await self.deployer.validate(slug, sha) if present else None))
@@ -625,12 +631,13 @@ class Scheduler:
         (prompts/survey.md), and changes nothing. Its report, or how the run went wrong."""
         if self.settings.harness == "fake":
             return FAKE_SURVEY
-        branch = await self.workspace.current_branch(project.slug)
-        was_clean = await self.workspace.clean(project.slug)
+        tree = self.tree(job)
+        branch = await self.workspace.current_branch(project.slug, job=tree)
+        was_clean = await self.workspace.clean(project.slug, job=tree)
         prompt = self.prompts.survey(project, branch, _adopt_words(job))
         result = await self.execute(job, project, step, "survey", SURVEY_TURNS, prompt, None, adopt.SURVEY_SCHEMA, kind="survey")
         if was_clean:
-            await self.workspace.discard(project.slug)
+            await self.workspace.discard(project.slug, job=tree)
         if result.outcome == "limit":
             return Outcome("limit")
         if result.outcome == "max_turns":
@@ -646,6 +653,8 @@ class Scheduler:
         await self.workspace.ensure_repo(slug, project.summary)
         await self.workspace.ensure_main(slug, f"# {project.name}\n\nLive at {url}\n\n{project.summary}\n")
         await self.workspace.sync_main(slug)
+        if job.worktree:  # the job's own, from the latest main
+            await self.workspace.ensure_tree(slug, job.id)
         if job.kind == "adopt" and job.issue is None:  # before its own issue, which would look like one of them
             await self.bring_back_history(job, project)
             if closed := await self.workspace.close_leftover_prs(slug):  # or a new job could take one for its own
@@ -694,21 +703,24 @@ class Scheduler:
     async def write_brief(self, job: Job, project: Project) -> None:
         """docs/brief.md for an adopted repo without one, committed on the job's branch so it ships
         with the rest: the brief, and what Riggy said after `!adopt <slug>`."""
-        await self.workspace.start_branch(project.slug, self.branch(job))
-        path = self.workspace.path(project.slug) / adopt.BRIEF
+        await self.workspace.start_branch(project.slug, self.branch(job), job=self.tree(job))
+        path = self.checkout(project, job) / adopt.BRIEF
         if path.exists():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(adopt.brief(project.name, project.summary, _adopt_words(job), self.settings.repo_url(project.slug), now()[:10]))
-        await self.workspace.commit_all(project.slug, "Brief: what golem was asked to adopt")
+        await self.workspace.commit_all(project.slug, "Brief: what golem was asked to adopt", job=self.tree(job))
 
     async def do_refresh(self, job: Job, project: Project, step: Step) -> Outcome:
         """The first step of a job that only looks: the checkout up to date with main, unless a
-        job's work is under way in it (then that's what a question is about, most likely)."""
+        job's work is under way (then that's what a question is about, most likely). In a tree of
+        its own, that's main or the work so far: what it touches there touches nothing else."""
         await self.workspace.ensure_repo(project.slug, project.summary)
         busy = self.store.active_job(project.slug, questions=False)
         if busy is None:
             await self.workspace.sync_main(project.slug)
+        if job.worktree:
+            await self.workspace.ensure_tree(project.slug, job.id, at=self.branch(busy) if busy else None)
         if job.playbook == "proposals":
             await self.say(project, f"Nothing else on, so I'm looking at its {proposals.lens(self.store, job).name} for things to propose.", notice=True)
         else:
@@ -738,16 +750,16 @@ class Scheduler:
         return Outcome("done", f"Proposed {len(made)} for you to decide on.")
 
     async def do_push(self, job: Job, project: Project, step: Step) -> Outcome:
-        branch = self.branch(job)
-        await self.workspace.commit_all(project.slug, "Work left uncommitted")
-        sha = await self.workspace.push_branch(project.slug, branch)
+        branch, tree = self.branch(job), self.tree(job)
+        await self.workspace.commit_all(project.slug, "Work left uncommitted", job=tree)
+        sha = await self.workspace.push_branch(project.slug, branch, job=tree)
         if sha is None:
             return Outcome("skipped", "Nothing new to push.")
         return Outcome("done", f"Pushed {sha[:7]} to {branch}.", {"branch": f"{self.settings.repo_url(project.slug)}/tree/{branch}"})
 
     async def do_push_main(self, job: Job, project: Project, step: Step) -> Outcome:
-        await self.workspace.commit_all(project.slug, "Work left uncommitted")
-        sha = await self.workspace.push_main(project.slug, self.branch(job))
+        await self.workspace.commit_all(project.slug, "Work left uncommitted", job=self.tree(job))
+        sha = await self.workspace.push_main(project.slug, self.branch(job), job=self.tree(job))
         if sha is None:
             return Outcome("skipped", "Nothing new to push.")
         return Outcome("done", f"Pushed {sha[:7]} to main.", {"commit": self.commit_url(project, sha)})
@@ -778,7 +790,7 @@ class Scheduler:
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
         if pr is None:
             return Outcome("skipped", "Nothing to merge.")
-        sha = await self.workspace.merge(project.slug, pr, self.branch(job))
+        sha = await self.workspace.merge(project.slug, pr, self.branch(job), job=self.tree(job))
         return Outcome("done", f"Merged PR #{pr.number} as {sha[:7]}.", {"pr": pr.url, "commit": self.commit_url(project, sha)})
 
     async def do_deploy(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -797,7 +809,7 @@ class Scheduler:
             return Outcome("fix", f"the deployer refused {sha[:7]}", {"commit": self.commit_url(project, sha)}, problem)
         url = self.settings.project_url(project.slug)
         if self.store.card(project.slug) is None:  # live for the first time: on the projects page
-            await self.refresh_card(project)
+            await self.refresh_card(project, job)
         return Outcome("done", f"{sha[:7]} is live.", {"site": url, "commit": self.commit_url(project, sha)})
 
     async def do_checkin(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -897,13 +909,15 @@ class Scheduler:
             await self.workspace.close_issue(project.slug, job.issue, f"Done: {message}\n\n{url}")
         await self.say(project, _join(f"Done: {message}", url))
         await self.status(f"Finished job {job.id} on {project.name}: {url}", notice=True)
-        await self.refresh_card(project)  # what it is now, on the projects page
+        await self.refresh_card(project, job)  # what it is now, on the projects page
         return Outcome("done", "Told you it's live.", {"site": url})
 
-    async def refresh_card(self, project: Project) -> None:
-        """The project's card on the projects page (cards.py). Never holds up or fails a step."""
+    async def refresh_card(self, project: Project, job: Job | None = None) -> None:
+        """The project's card on the projects page (cards.py), from what the job just shipped (its
+        checkout, on main now) or the project's checkout. Never holds up or fails a step."""
         try:
-            await self.cards.refresh(self.store.project(project.slug) or project, self.workspace.path(project.slug))
+            checkout = self.checkout(project, job) if job else self.workspace.path(project.slug)
+            await self.cards.refresh(self.store.project(project.slug) or project, checkout)
         except Exception:
             log.exception("couldn't make the card for %s", project.slug)
 
@@ -938,6 +952,15 @@ class Scheduler:
     def branch(self, job: Job) -> str:
         """Where a job's work goes between merges."""
         return f"{JOB_BRANCHES}{job.id}"
+
+    def tree(self, job: Job) -> int | None:
+        """Which checkout the job works in, for the workspace's calls: its own tree (its id), or
+        None for the project's checkout (a job from before trees)."""
+        return job.id if job.worktree else None
+
+    def checkout(self, project: Project, job: Job) -> Path:
+        """Where the job's files are: its tree, or the project's checkout."""
+        return self.workspace.tree_path(job.id) if job.worktree else self.workspace.path(project.slug)
 
     def commit_url(self, project: Project, sha: str) -> str:
         return f"{self.settings.repo_url(project.slug)}/commit/{sha}"

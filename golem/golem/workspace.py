@@ -142,7 +142,8 @@ class GitHubWorkspace:
 
     async def ensure_tree(self, slug: str, job: int, at: str | None = None) -> Path:
         """The job's tree: as it is, or made now on the job's branch if it has one here (the
-        tree was lost), else detached at `at` (origin/main unless said)."""
+        tree was lost), else detached at `at` if there's such a thing (another job's branch), or
+        at origin/main."""
         path = self.tree_path(job)
         if (path / ".git").exists():
             return path
@@ -153,8 +154,10 @@ class GitHubWorkspace:
         code, _ = await run("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=self.path(slug))
         if code == 0:
             await self.git(slug, "worktree", "add", "--quiet", str(path), branch)
-        else:
-            await self.git(slug, "worktree", "add", "--quiet", "--detach", str(path), at or "origin/main")
+            return path
+        if at:
+            code, _ = await run("git", "rev-parse", "--verify", "--quiet", at, cwd=self.path(slug))
+        await self.git(slug, "worktree", "add", "--quiet", "--detach", str(path), at if at and code == 0 else "origin/main")
         return path
 
     async def drop_tree(self, slug: str, job: int) -> None:
