@@ -125,7 +125,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
         # The survey: one run that builds and tests it here, as its own kind of step.
         triage, survey = golem.harness.calls
         assert (survey.label, survey.model) == ("survey", "sonnet")
-        assert survey.cwd == golem.workspace.path("mimic") and survey.schema["required"] == ["tests", "missing", "needs"]
+        assert survey.cwd == golem.workspace.tree_path(job.id) and survey.schema["required"] == ["tests", "missing", "needs"]  # its own tree
         assert "# 1. Can a worker build and test it here?" in survey.prompt and "linux/arm64" in survey.prompt
         assert "discard" in golem.workspace.actions  # the checkout is put back
 
@@ -167,7 +167,7 @@ def test_gaps_go_to_a_worker_and_ship_like_any_change(golem):
         assert "→ repo shape: Missing AGENTS.md" in next(t for t in golem.chat.texts("mimic") if t.startswith("I checked it over"))
         assert "I'll fix what's marked →, then PR, CI, merge and deploy it." in golem.chat.texts("mimic")[1]
 
-        brief = (repo / "docs" / "brief.md").read_text()
+        brief = (golem.workspace.tree_path(job.id) / "docs" / "brief.md").read_text()  # on the job's branch, in its tree
         assert brief.startswith("# Mimic\n\nPrintable cards for a D&D table.\n\n## Where it came from\n\nAdopted by golem on ")
         assert brief.endswith("Riggy said:\n\n> cards for my table\n")
         assert "open PR #1: Mimic: adopt" in golem.workspace.actions
@@ -187,7 +187,7 @@ def test_a_missing_brief_alone_needs_no_worker(tmp_path):
         job = golem.store.jobs()[0]
         assert ("adopt", "skipped") in states(golem, job.id) and job.state == "done"
         assert len(golem.harness.calls) == 2  # the triage and the survey, nothing else
-        assert (golem.workspace.path("mimic") / "docs" / "brief.md").read_text().startswith("# Mimic\n")
+        assert (golem.workspace.tree_path(job.id) / "docs" / "brief.md").read_text().startswith("# Mimic\n")
         assert "open PR #1: Mimic: brief" in golem.workspace.actions
         assert "→ docs/brief.md: I'll write it from what you said and the README.\n" in golem.chat.texts("mimic")[1]
         assert "I'll write its brief, then deploy it." in golem.chat.texts("mimic")[1]

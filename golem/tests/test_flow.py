@@ -690,7 +690,7 @@ def test_a_design_round_keeps_its_doc_pages_questions_and_pick(golem):
         # A doc that would run something is sent back.
         golem.store.update_step(made.id, state="pending", options=[], design={})
         golem.harness.script = by_label({"design": [lambda c: {**three_looks(c), "doc": "evil.html"}]})
-        (golem.workspace.path("tree-cards") / "evil.html").write_text("<script>fetch('/act')</script>")
+        (golem.workspace.tree_path(job.id) / "evil.html").write_text("<script>fetch('/act')</script>")  # in the job's tree
         await golem.step()
         made = golem.store.step(made.id)
         assert (made.state, made.error) == ("pending", "The design doc evil.html has a <script> or http-equiv: it has to run nothing (skills/design.md).")
@@ -1862,5 +1862,74 @@ def test_a_spare_worker_looks_for_proposals_while_another_project_is_worked_on(g
         await soon(lambda: ("tree-cards", "propose") in gate.started)
         assert len(golem.store.proposal_jobs("tree-cards")) == 1
         loop.cancel()
+
+    run(go())
+
+
+# --- each job's own tree ----------------------------------------------------------
+
+
+def test_a_job_works_in_a_tree_of_its_own_and_a_question_in_another(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change"}], "change": [verdict("blocked", "Which trees?")]})
+        await golem.say(room, "make the cards bigger")
+        job = golem.store.active_job("tree-cards", questions=False)
+        await golem.until("change")
+        await golem.step()
+        assert golem.store.job(job.id).state == "waiting"
+        await golem.say(room, "oaks and maples")  # his answer resumes the same session, in the same tree
+        await golem.step()
+        runs = [c for c in golem.harness.calls if c.label == "change"]
+        assert [c.cwd for c in runs] == [golem.workspace.tree_path(job.id)] * 2 and runs[1].resume == "s"
+
+        # A question while the change is under way looks at its work so far, in a tree of its own.
+        golem.harness.script = by_label({"request": [{"kind": "question"}]})
+        await golem.say(room, "how big are the cards now?")
+        question = newest_job(golem)
+        await golem.step()
+        await golem.step()
+        examine = golem.harness.calls[-1]
+        assert examine.label == "examine" and examine.cwd == golem.workspace.tree_path(question.id)
+        assert f"on `golem/job-{job.id}` (a job is under way" in examine.prompt
+
+        await golem.finish()
+        assert golem.workspace.trees == {job.id, question.id}  # until golem tidies up
+        await golem.scheduler.tidy()
+        assert golem.workspace.trees == set() and not any((golem.settings.workspace_dir / ".jobs").iterdir())
+
+    run(go())
+
+
+def test_trees_go_with_a_killed_job_and_a_deleted_project(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change"}]})
+        await golem.say(room, "make the cards bigger")
+        job = golem.store.active_job("tree-cards", questions=False)
+        await golem.until("change")
+        assert golem.workspace.tree_path(job.id).is_dir()
+        await golem.say(room, "!kill")
+        await golem.scheduler.tidy()
+        assert not golem.workspace.tree_path(job.id).exists()
+
+        await golem.say(room, "make the cards smaller")
+        again = golem.store.active_job("tree-cards", questions=False)
+        await golem.until("change")
+        await golem.say(room, "!delete tree-cards")
+        assert golem.store.project("tree-cards") is None and not golem.workspace.tree_path(again.id).exists()
+
+    run(go())
+
+
+def test_a_job_from_before_trees_finishes_in_the_projects_checkout(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "change"}]})
+        await golem.say(room, "make the cards bigger")
+        job = golem.store.update_job(golem.store.active_job("tree-cards", questions=False).id, worktree=0)
+        await golem.finish()
+        assert [c.cwd for c in golem.harness.calls if c.label == "change"] == [golem.workspace.path("tree-cards")]
+        assert job.id not in golem.workspace.trees and golem.store.job(job.id).state == "done"
 
     run(go())

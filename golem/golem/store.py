@@ -545,9 +545,10 @@ class Store:
     # --- jobs -----------------------------------------------------------------
 
     def add_job(self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "") -> Job:
+        """A new job, which works in a tree of its own (Job.worktree)."""
         cur = self.db.execute(
-            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
             (slug, kind, request, playbook, priority, now(), now(), title),
         )
         return self.job(cur.lastrowid)
