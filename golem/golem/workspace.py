@@ -124,6 +124,13 @@ class GitHubWorkspace:
     def __init__(self, root: Path, org: str):
         self.root = root
         self.org = org
+        self.locks: dict[str, asyncio.Lock] = {}
+
+    def lock(self, slug: str) -> asyncio.Lock:
+        """One per project: its jobs' trees share one repo (refs, the list of trees), so golem's
+        own git calls on it go one at a time. Workers' git use isn't held to it: a clash there is
+        a failed step, tried again."""
+        return self.locks.setdefault(slug, asyncio.Lock())
 
     def path(self, slug: str) -> Path:
         return self.root / slug
@@ -164,12 +171,13 @@ class GitHubWorkspace:
     async def drop_tree(self, slug: str, job: int) -> None:
         """The job's tree goes (its branch stays, with whatever it pushed)."""
         path, repo = self.tree_path(job), (self.path(slug) / ".git").is_dir()
-        if path.exists():
-            code = (await run("git", "worktree", "remove", "--force", str(path), cwd=self.path(slug)))[0] if repo else 1
-            if code != 0:  # no checkout any more (the project's going), or git couldn't
-                await remove_tree(path)
-        if repo:
-            await run("git", "worktree", "prune", cwd=self.path(slug))
+        async with self.lock(slug):
+            if path.exists():
+                code = (await run("git", "worktree", "remove", "--force", str(path), cwd=self.path(slug)))[0] if repo else 1
+                if code != 0:  # no checkout any more (the project's going), or git couldn't
+                    await remove_tree(path)
+            if repo:
+                await run("git", "worktree", "prune", cwd=self.path(slug))
 
     async def prune_trees(self, keep: set[int]) -> None:
         """Remove the trees of every job not in `keep`, then what git remembers of them."""
@@ -180,7 +188,8 @@ class GitHubWorkspace:
         if gone:
             for repo in self.root.iterdir():
                 if (repo / ".git").is_dir():
-                    await run("git", "worktree", "prune", cwd=repo)
+                    async with self.lock(repo.name):
+                        await run("git", "worktree", "prune", cwd=repo)
 
     async def repo_exists(self, slug: str) -> bool:
         code, _ = await run("gh", "repo", "view", f"{self.org}/{slug}", "--json", "name")
@@ -267,15 +276,16 @@ class GitHubWorkspace:
     async def sync_main(self, slug: str) -> None:
         """Start a job from the latest main. Best effort: an empty repo or local changes leave it alone."""
         path = self.path(slug)
-        await run("git", "fetch", "--quiet", "origin", cwd=path)
-        code, dirty = await run("git", "status", "--porcelain", cwd=path)
-        if code != 0 or dirty:
-            return
-        for args in (("git", "checkout", "--quiet", "main"), ("git", "merge", "--quiet", "--ff-only", "origin/main")):
-            code, out = await run(*args, cwd=path)
-            if code != 0:
-                log.info("sync %s: %s", slug, out[-200:])
+        async with self.lock(slug):
+            await run("git", "fetch", "--quiet", "origin", cwd=path)
+            code, dirty = await run("git", "status", "--porcelain", cwd=path)
+            if code != 0 or dirty:
                 return
+            for args in (("git", "checkout", "--quiet", "main"), ("git", "merge", "--quiet", "--ff-only", "origin/main")):
+                code, out = await run(*args, cwd=path)
+                if code != 0:
+                    log.info("sync %s: %s", slug, out[-200:])
+                    return
 
     async def open_issue(self, slug: str, title: str, body: str) -> int | None:
         code, out = await run(
@@ -311,7 +321,8 @@ class GitHubWorkspace:
     # --- the job's branch, from first commit to merge ---------------------------
 
     async def git(self, slug: str, *args: str, job: int | None = None) -> str:
-        code, out = await run("git", *args, cwd=self.where(slug, job))
+        async with self.lock(slug):
+            code, out = await run("git", *args, cwd=self.where(slug, job))
         if code != 0:
             raise WorkspaceError(f"git {args[0]} in {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
         return out
@@ -397,7 +408,8 @@ class GitHubWorkspace:
             await self.git(slug, "checkout", "--quiet", "-B", "main", "origin/main")
         else:
             await self.git(slug, "checkout", "--quiet", "--detach", "origin/main", job=job)
-        await run("git", "branch", "-D", branch, cwd=self.where(slug, job))
+        async with self.lock(slug):
+            await run("git", "branch", "-D", branch, cwd=self.where(slug, job))
 
     async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]:
         """Merge the latest main into the checkout's branch: (how many commits main had that it
@@ -407,11 +419,13 @@ class GitHubWorkspace:
         behind = int(await self.git(slug, "rev-list", "--count", "HEAD..origin/main", job=job))
         if not behind:
             return 0, []
-        code, out = await run("git", "merge", "--no-edit", "--quiet", "origin/main", cwd=self.where(slug, job))
+        async with self.lock(slug):
+            code, out = await run("git", "merge", "--no-edit", "--quiet", "origin/main", cwd=self.where(slug, job))
         if code == 0:
             return behind, []
         conflicts = (await self.git(slug, "diff", "--name-only", "--diff-filter=U", job=job)).splitlines()
-        await run("git", "merge", "--abort", cwd=self.where(slug, job))
+        async with self.lock(slug):
+            await run("git", "merge", "--abort", cwd=self.where(slug, job))
         if not conflicts:
             raise WorkspaceError(f"merging main into {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
         return behind, conflicts
