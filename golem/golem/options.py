@@ -91,7 +91,7 @@ MAKERS = {"options": SCHEMA, "design": DESIGN_SCHEMA}
 REQUEST_SCHEMA = {
     "type": "object",
     "properties": {
-        "kind": {"enum": ["change", "options", "question"]},
+        "kind": {"enum": ["change", "options", "design", "question"]},
         "title": {"type": "string", "description": "What it's about in 2 to 5 words, Title Case: 'Library View Redesign'"},
     },
     "required": ["kind", "title"],
@@ -120,6 +120,8 @@ QUESTION_RE = re.compile(
 )
 REQUEST_RE = re.compile(r"^\s*((can|could|would|will) (you|u)|how about|what about)\b|\b(please|make|add|change|fix)\b", re.I)
 LETTER_RE = re.compile(r"^\W*(?:[Oo]ption\s+)?([a-fA-F])\W*$|^\s*(?:[Oo]ption\s+)?([A-F])[,.:;!)\-]")
+# Without a model: a message that asks for a whole new look (a design pass), not one change to it.
+DESIGN_RE = re.compile(r"\b(redesign|design pass|re-?theme|rebrand|new look|look and feel|restyle)\b", re.I)
 MORE_RE = re.compile(
     r"\b(none of (these|them|those)|(other|more|different|new) (options|ones|takes|ideas|directions)|another round|try again|start over"
     r"|something else)\b",
@@ -332,17 +334,20 @@ def asks_a_question(text: str) -> bool:
 class Request:
     """What a message in a project's conversation asks for, and the job's title if it becomes one."""
 
-    kind: str  # change | options | question
+    kind: str  # change | options | design | question
     title: str  # "" without a model: plan.title falls back to his words
 
 
 async def read_request(harness: Harness, settings: Settings, text: str) -> Request:
     """What a message in a project's conversation asks for: a `change`, `options` to pick from first,
-    or only an answer to a `question`. The same call names it, for the job it starts."""
+    a `design` pass (a look of its own, picked from a few directions), or only an answer to a
+    `question`. The same call names it, for the job it starts."""
     if settings.harness != "fake":
         v = await _ask(harness, settings, "request", {"$request": text.strip()}, REQUEST_SCHEMA)
-        if v and v.get("kind") in ("change", "options", "question"):
+        if v and v.get("kind") in ("change", "options", "design", "question"):
             return Request(v["kind"], plan.clean_title(v.get("title")))
+    if DESIGN_RE.search(text):
+        return Request("design", "")
     if asks_for_options(text):
         return Request("options", "")
     return Request("question" if asks_a_question(text) else "change", "")

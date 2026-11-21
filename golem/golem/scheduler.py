@@ -602,6 +602,8 @@ class Scheduler:
             await self.write_brief(job, project)
         if job.playbook == "options":
             await self.say(project, f"Making options: {plan.title(job)}", notice=True)
+        elif job.playbook == "design":
+            await self.say(project, f"Making design directions: {plan.title(job)}", notice=True)
         elif job.kind == "change":
             await self.say(project, f"Working on it: {plan.title(job)}", notice=True)
         links = {"repo": self.settings.repo_url(slug)}

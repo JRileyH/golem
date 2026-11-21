@@ -7,7 +7,7 @@
   waiting on him, a question (answered by a quick look, not a job that builds anything,
   even while a job is under way), a note for the job that's running, or else a new job:
   a change, or, if he asks to see options first, options to pick from and then his pick
-  (options.py).
+  (options.py), or, if he asks for a new look, a design pass (playbooks/design.md).
 - `!commands` work anywhere; in a project's conversation they default to that project.
 
 One message is handled at a time, so two can't both start a job.
@@ -37,6 +37,7 @@ HELP = """Commands (in a project's conversation they apply to that project; else
 !status [project] — a project's state, settings and links
 !question <what> — just an answer: golem looks into it (the code, the site, its logs) and replies, building nothing; asking a question does the same
 !options <what> — mock up a few options (A, B, C) to pick from before building any; asking to see options does the same
+!design [how it should feel] — a design pass: a doc with a few directions for its look, logo and icons; you pick, golem builds it and writes a design guide later work follows. Asking for a redesign does the same
 !mode reckless|standard|rigorous — how carefully it's built
 !model fable|opus|sonnet|haiku|default — the Claude model for all its steps, or each step's default
 !effort low|medium|high|xhigh|max|default — how hard they think
@@ -230,6 +231,9 @@ class Bot:
             if asked.kind == "options":
                 await self.chat.send(project.slug, self.start_options(project, text, asked.title), notice=True)
                 return
+            if asked.kind == "design":
+                await self.chat.send(project.slug, self.start_design(project, text, asked.title), notice=True)
+                return
             job = self.store.add_job(project.slug, "change", text, "feature", title=asked.title)
             position = self.queue_position(job)
             if position != STARTING:  # otherwise "Working on it" follows straight away
@@ -261,6 +265,16 @@ class Bot:
         return (
             "Got it: I'll make some options for you to pick from first, then build the one you pick. "
             "(Rather I just built it? !kill, then say it again.)" + ("" if position == STARTING else f" {position}")
+        )
+
+    def start_design(self, project: Project, request: str, title: str = "") -> str:
+        job = self.store.add_job(project.slug, "change", request, "design", title=title)
+        self.scheduler.wake()
+        position = self.queue_position(job)
+        return (
+            "Got it: a design pass. I'll make a doc with a few directions for how it could look, for you to pick "
+            "from, then build the one you pick and write it down so later changes keep to it."
+            + ("" if position == STARTING else f" {position}")
         )
 
     def queue_position(self, job: Job) -> str:
@@ -334,6 +348,15 @@ class Bot:
                 if job:
                     return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
                 return self.start_options(project, " ".join(words))
+            case "design":
+                project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
+                if not project:
+                    return "Usage: !design [how it should feel] in the project's conversation, or !design <slug> [how it should feel]."
+                job = self.store.active_job(project.slug, questions=False)
+                if job:
+                    return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
+                request = " ".join(words) or "A design pass: give it a look of its own."
+                return self.start_design(project, request, "" if words else "Design Pass")
             case "rename":
                 project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
                 if not project or not words:

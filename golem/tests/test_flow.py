@@ -754,6 +754,40 @@ def test_a_change_request_is_not_options(golem):
     run(go())
 
 
+def test_asking_for_a_new_look_starts_a_design_pass(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.harness.script = by_label({"request": [{"kind": "design", "title": "Field Guide Redesign"}]})
+        await golem.say(room, "it looks generic, make it feel like an old field guide")
+        job = golem.store.active_job("tree-cards")
+        assert (job.kind, job.playbook, job.title) == ("change", "design", "Field Guide Redesign")
+        assert golem.chat.texts(room)[-1].startswith("Got it: a design pass. I'll make a doc with a few directions")
+        await golem.step()
+        assert golem.chat.texts(room)[-1] == "Making design directions: Field Guide Redesign"
+        assert plan.label(current(golem, job.id)) == "design"
+
+    run(go())
+
+
+def test_a_design_pass_on_command_and_never_beside_another_job(golem):
+    async def go():
+        room = await idle_project(golem)
+        await golem.say(room, "!design")
+        job = golem.store.active_job("tree-cards")
+        assert (job.playbook, job.request, job.title) == ("design", "A design pass: give it a look of its own.", "Design Pass")
+        assert all(call.label != "request" for call in golem.harness.calls)  # no need to ask the model
+        await golem.say(room, "!design warmer")
+        assert golem.chat.texts(room)[-1] == f"Tree Cards has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
+        golem.store.update_job(job.id, state="killed")
+        await golem.say(golem.inbox, "!design tree-cards cozy, like a cabin")
+        job = golem.store.active_job("tree-cards")
+        assert (job.playbook, job.request, plan.title(job)) == ("design", "cozy, like a cabin", "cozy, like a cabin")
+        await golem.say(golem.inbox, "!design")
+        assert golem.chat.texts(golem.inbox)[-1].startswith("Usage: !design")
+
+    run(go())
+
+
 def newest_job(golem: Golem):
     return golem.store.jobs(limit=1)[0]
 

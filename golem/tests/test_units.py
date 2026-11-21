@@ -340,6 +340,24 @@ def test_asking_for_options_without_a_model(text, wants):
     assert options.asks_for_options(text) is wants
 
 
+@pytest.mark.parametrize(
+    "text, kind",
+    [
+        ("give it a design pass", "design"),
+        ("redesign it so it feels like a field guide", "design"),
+        ("it needs a new look and a logo", "design"),
+        ("show me some logo options and I'll pick", "options"),
+        ("make the button blue", "change"),
+        ("why is the header grey?", "question"),
+    ],
+)
+def test_what_a_message_asks_for_without_a_model(golem, text, kind):
+    from dataclasses import replace
+
+    fake = replace(golem.settings, harness="fake")
+    assert asyncio.run(options.read_request(golem.harness, fake, text)) == options.Request(kind, "")
+
+
 def test_what_a_pick_tells_the_next_step():
     found = [options.Option("A", "Round", "", ["docs/o/a/1.png", "docs/o/a/x.css"], []), options.Option("B", "Ink", "", ["docs/o/b.png"], [])]
     assert options.picked(options.Reply(False, ["B"]), found, "b please") == "You picked B (Ink). You said: “b please”. Files: docs/o/b.png."

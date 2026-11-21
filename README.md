@@ -77,6 +77,15 @@ phone.
     job's branch; golem posts them as pictures (A, B, C…) and waits. Reply with
     a letter and anything you'd change ("B, but bigger eyes"), or ask for other
     options for another round. The next step builds your pick from its files.
+  - **Design pass:** ask for a new look ("make it feel like an old field
+    guide") or say `!design [how it should feel]`. A worker makes a design doc
+    (`skills/design.md`): principles, a few directions with named palettes,
+    type and the project's real screens in light and dark, logo and icon
+    choices, and its pick. Golem posts each direction's pages, the doc's link
+    and its questions, and waits. Reply with a letter and your answers, or ask
+    for another round ("A, but show me more icons"). Then a worker writes the
+    design guide, `docs/design.md`, with the real assets, restyles the app from
+    it, and every later change follows it.
 - **golem status:** usage-limit notices and finished jobs.
 - **Settings,** per project, shown when it's created (work starts a minute later,
   so there's time to change them). Say them while dictating ("…called Leaf
@@ -100,7 +109,7 @@ phone.
   steps' own choices stay). The default mode is
   `GOLEM_DEFAULT_MODE`.
 - **Commands,** in any conversation (in a project's they apply to that project;
-  in golem's own put its slug first): `!help`, `!queue`, `!status`, `!question`, `!options`, `!mode`,
+  in golem's own put its slug first): `!help`, `!queue`, `!status`, `!question`, `!options`, `!design`, `!mode`,
   `!model`, `!effort`, `!rename <name>`, `!slug <new-slug>` (moves the repo and
   address; the old repo stays for you to delete), `!pause`, `!resume`, `!kill`.
 - **Adopting a repo golem didn't make:** `!adopt <repo> [what it is]` in golem's
