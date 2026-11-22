@@ -57,7 +57,9 @@ def as_step(node: dict) -> dict:
 
 
 def old_steps(book: str, mode: str) -> list[dict]:
-    return [{**s, "turns": s["turns"] or None} for s in golden()[book]["modes"][mode]]
+    """A playbook's steps, with the one deliberate change since: workflows where it said playbooks."""
+    return [{**s, "turns": s["turns"] or None, "instructions": s["instructions"].replace("If a playbook or skill", "If a workflow or skill")}
+            for s in golden()[book]["modes"][mode]]  # fmt: skip
 
 
 @pytest.mark.parametrize("book, mode", CASES)

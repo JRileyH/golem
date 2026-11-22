@@ -7,7 +7,7 @@
   waiting on him, a question (answered by a quick look, not a job that builds anything,
   even while a job is under way), a note for the job that's running, or else a new job:
   a change, or, if he asks to see options first, options to pick from and then his pick
-  (options.py), or, if he asks for a new look, a design pass (playbooks/design.md). On a
+  (options.py), or, if he asks for a new look, a design pass (workflows/design.yml). On a
   project that allows more than one change at once, a message with changes under way is a
   note for the one it's about or, if it's a change of its own, a new job beside them (the
   request call decides; !switch puts it the other way). They take turns (turns.py).

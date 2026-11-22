@@ -153,7 +153,7 @@ The last step before this ships.
    is accurate (stack, run, test, deploy, gotchas).
 2. Retro: add anything a future worker on this project should know to
    `docs/lessons.md`. Add lessons that apply to every project to the golem
-   lessons file. If a playbook or skill step was wrong or missing, write the
+   lessons file. If a workflow or skill step was wrong or missing, write the
    edit you'd propose to a new file in the golem proposals directory, for
    Riggy to apply by hand.
 

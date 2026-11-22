@@ -17,7 +17,7 @@ Riggy decided and why: to keep from repeating them and to learn what he values, 
 template.
 
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
-up becomes a change job on the feature playbook, as soon as the project has no other change
+up becomes a change job (the fallback workflow for changes), as soon as the project has no other change
 under way, and that job's PR closes the proposal's issue; a thumbs down closes it with his
 reason. The issues are only a record: golem never reads anything back from GitHub.
 

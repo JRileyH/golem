@@ -41,14 +41,17 @@ phone.
   an idea ("a flashcard game for northeastern US trees"). golem names it, picks
   a slug, creates `<GITHUB_ORG>/<slug>`, and starts a conversation for that
   project. Its news (usage limits, finished jobs) shows here too.
-- **How a job runs:** as a list of steps, written into golem's database from
-  the mode's playbook when it starts (`playbooks/`). Agent steps (spec, mvp,
-  review…) are Claude Code runs that each do one piece of work and commit it.
-  Everything else is golem's own code, the same every time: pushing, opening a
-  PR, waiting for CI, merging, deploying, the MVP check-in, and telling you it's
-  done. Every playbook ends with deploy then alert, so "Done" means it's live.
-  When CI fails or the deployer refuses a commit, golem adds a fix step and
-  tries again; after four fixes it asks you for a hint.
+- **How a job runs:** it walks a workflow: blocks wired output to input, from
+  Start to End (`workflows/`, and Settings → Workflows, where each is drawn and
+  edited). Golem picks the workflow for each request by what each is for (or say
+  `!with <workflow>[:<mode>] …`), and the mode it asks for picks the workflow's tab
+  for it ("be thorough" runs the rigorous one). Agent blocks are Claude Code runs
+  that each do one piece of work and commit it, and choose the way on where a block
+  has several outputs. Golem's own blocks are its code, the same every time: setting
+  up, pushing, opening a PR, waiting for CI, merging, deploying, asking you, and
+  telling you it's done. A job's page links to its workflow drawn, lit where the job
+  is. In golem's built-ins, when CI fails or the deployer refuses a commit a fix runs
+  and it ships again; after four fixes it asks you for a hint.
 - **A project's conversation:** progress shows up here as quiet notices; questions,
   the MVP check-in and "Done" arrive as messages that notify your phone.
   - Each agent step posts "✓ step: what was done" and what's next; so do PRs

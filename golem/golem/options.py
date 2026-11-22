@@ -1,7 +1,7 @@
 """Options rounds: Riggy sees a few takes on something and picks one before it's built.
 
 A message in a project's conversation that asks to see options ("I want a new art style, show me
-three that are more chibi") starts a job on the options playbook instead of the feature
+three that are more chibi") starts a job on the Options workflow instead of the Change
 one; so does `!options`. Its `options` step mocks each option up for real (screenshots,
 and the files behind them, in docs/options/ on the job's branch) and returns them with
 its verdict. The `choose` step, golem's own, posts them in the project's conversation as A, B,

@@ -122,13 +122,13 @@ CREATE TABLE IF NOT EXISTS runs (
     output_tokens INTEGER,
     log_path TEXT
 );
--- A job's steps, in order, written from its playbook when it starts. golem works
--- through them one at a time; a step that fails gets a fix and a retry inserted after it.
+-- A job's steps, in order: each a visit to a block of its workflow (engine.py), written as the
+-- job gets there, and the output it left by. Loops come back to a block: its visits count up.
 CREATE TABLE IF NOT EXISTS steps (
     id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL REFERENCES jobs(id),
     position INTEGER NOT NULL,
-    kind TEXT NOT NULL,              -- agent, or one of golem's own (playbook.CODE_STEPS)
+    kind TEXT NOT NULL,              -- agent, script, or one of golem's own (engine.CODE, checkin, choose, counter, condition, alert)
     name TEXT NOT NULL,
     max_turns INTEGER,
     optional INTEGER NOT NULL DEFAULT 0,  -- Riggy may skip it

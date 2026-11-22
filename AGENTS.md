@@ -16,7 +16,7 @@ changing anything structural.
 | `golem/` | Python service, Dockerfile and tests: bot, SQLite queue, scheduler, web app. Also the worker image. |
 | `deployer/` | Python service, Dockerfile and tests. The only container with the Docker socket. |
 | `traefik/` | Traefik static config: `server.yml`, and `http.yml` for `compose.http.yml` |
-| `playbooks/`, `skills/`, `prompts/` | Process files baked read-only into the golem image |
+| `workflows/`, `skills/`, `prompts/` | Process files baked read-only into the golem image: golem's built-in workflows (seeded into its database, where Riggy edits them and makes his own), the skills workers read, and the prompts golem fills in |
 | `bin/bootstrap.sh` | First-time setup on a fresh box |
 | `docs/` | Runbooks |
 
@@ -33,7 +33,7 @@ changing anything structural.
   touches only what it made: its own stack, the `golem-*` networks and the
   `golem-<slug>` projects.
 - Workers run inside the golem container with no Docker access; the deployer
-  is their only way to production. Process files (`playbooks/`, `skills/`,
+  is their only way to production. Process files (`workflows/`, `skills/`,
   `prompts/`) are what workers follow: change them as carefully as code.
 - Only Riggy can push to the golem repo. The web app's upgrades (and automatic ones)
   deploy whatever is on its `main` to the box with Docker access, so no token

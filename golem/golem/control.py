@@ -1,6 +1,6 @@
 """What Riggy can change from the status page, with the rules that keep a job sound.
 
-- Skip an upcoming step the playbook marks optional (a review, docs, the MVP check-in,
+- Skip an upcoming step its workflow marks optional (a review, docs, the MVP check-in,
   picking between options), or undo that while nothing after it has started. The work itself and golem's
   push-to-deploy steps can't be skipped, so a job still always ends deployed.
 - Move a job to the front or the back of the queue. It takes the worker at the next

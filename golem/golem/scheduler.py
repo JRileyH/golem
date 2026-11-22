@@ -1,14 +1,13 @@
 """The scheduler: worker slots, each running one job's current step.
 
-A job is a list of steps, written into the database from its playbook when the job
-starts. golem works through them in order and nothing else decides what comes next.
-Agent steps are headless Claude Code runs that do one piece of work and commit it.
-Every other step is golem's own code: setting up the repo, pushing, pull requests,
-waiting for CI, merging, deploying, the MVP check-in, showing Riggy options to pick from
-(options.py) and telling him it's done. Each playbook ends with deploy and alert, so a
-finished job is a deployed one; except those that only look: a question's (refresh,
-examine, answer) and proposals' (refresh, propose, proposals). Nothing is committed,
-pushed or deployed for those.
+A job walks its own copy of a workflow (engine.py), taken when it starts: each step is a
+visit to a block, and the output the block leaves by decides the next; nothing else does.
+Agent blocks are headless Claude Code runs that do one piece of work and commit it (and,
+with several outputs, choose the way on). Every other block is golem's own code: setting
+up the repo, pushing, pull requests, waiting for CI, merging, deploying, asking Riggy,
+showing him options to pick from (options.py), scripts, counters, conditions and telling
+him it's done. Jobs that only look (a question's, proposals') commit, push and deploy
+nothing.
 
 With nothing else to do, golem looks for improvements to propose on projects that want
 them, and builds the ones Riggy accepts once their project is free (proposals.py).
@@ -16,9 +15,11 @@ them, and builds the ones Riggy accepts once their project is free (proposals.py
 An upgrade of golem itself waits for the running steps to finish, and holds new steps
 until it's done (upgrade.py).
 
-When CI fails or the deployer refuses a commit, a `fix` agent step is inserted after the
-failed one, followed by the steps from the last push again. Each step's outcome is
-saved, so a crash or a usage limit costs at most the step that was running.
+When CI fails or the deployer refuses a commit, the block leaves by its `fail` output: in
+golem's built-ins, to a fix and back to the push (workflows/ship.yml). Each step's outcome
+is saved, so a crash or a usage limit costs at most the step that was running. Catching up
+with main before a turn at building or shipping (turns.py), and merging it in when that
+conflicts, are steps golem puts in itself.
 
 Adopting a repo golem didn't make starts with `vet` (adopt.py): golem's own checks and a
 survey that changes nothing. Something blocking and golem forgets the project and says why;
