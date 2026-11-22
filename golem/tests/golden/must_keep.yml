@@ -1,0 +1,16 @@
+# What of golem's old playbook text a built-in block may say differently, and why.
+#
+# tests/test_compose.py holds every built-in agent block to its playbook step's instructions
+# (golden/playbooks.json): each sentence or list item of them must still be in what the block
+# is told (the workflow's text and its own, composed: golem/golem/compose.py), word for word,
+# unless it's listed here, by "<playbook>.<step>", under
+#
+#   carried: the start of the sentence, and the words in what it's told now that carry it
+#   dropped: the start of the sentence, and why it's let go
+#
+# And every file and skill it named (`docs/specs/mvp.md`, skills/review.md) must still be named.
+# Rebuilding a built-in on stage blocks (they say things more generally) lists what moved here,
+# for Riggy to read beside the composed diff.
+
+carried: {}
+dropped: {}

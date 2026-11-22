@@ -8,6 +8,10 @@ test:
     cd deployer && uv run pytest -q
     cd golem && uv run pytest -q
 
+# Write what each built-in agent block is told to golem/tests/golden/composed, then review the diff
+compose-builtins:
+    cd golem && uv run python -m golem.compose
+
 # First-time setup: fills in .env for this box (local or server)
 bootstrap mode:
     bin/bootstrap.sh {{mode}}
