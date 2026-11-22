@@ -113,7 +113,7 @@ Traefik gets a Let's Encrypt certificate for each host the deployer routes:
 deploy. Allow a minute.
 
 A new install starts with no projects, even on an org golem has used before: it
-takes nothing from the org on its own. `!adopt` brings back the ones you want
+takes nothing from the org on its own. Adopting brings back the ones you want
 (see [Moving to a new box](#moving-to-a-new-box)).
 
 ## 4. Verify the stack
@@ -143,11 +143,10 @@ On the phone, open `https://golem.<your domain>`, add it to the Home Screen
 with `GOLEM_WEB_PASSWORD` (tick "Keep me signed in"), then "Turn on for this
 device" and "Send a test": the phone should show a notification from golem.
 
-If golem rebuilt projects from the org, its own conversation (at the top of
-Projects) says which, and which came back up. Then describe a small idea on Home
-(or in golem's own conversation). Each project gets its own page and conversation. To stop all work
-without stopping golem, use "Pause all work" in Settings, or send `!pause` in
-golem's own conversation.
+If golem rebuilt projects from the org, its news (on top of Now) says which, and
+which came back up. Then start a small project with + New project: name it and
+say what it's for. Each project gets its own page of jobs. To stop all work
+without stopping golem, use "Pause all work" in Settings.
 
 ## Updating
 
@@ -220,13 +219,13 @@ docker compose top golem                                         # what's runnin
 docker compose logs --since 1h golem | grep -E 'WARNING|ERROR'    # failed attempts and why
 ```
 
-`!kill` in the project's conversation (or Stop in its Settings) stops the job.
+Stop job, on the job's pane (or on its project's Settings tab), stops the job.
 
 ## Adopting a repo golem didn't make
 
-Golem can take on a repo you made yourself: `!adopt <repo> [what it is]` in its
-own conversation, or "Adopt a repo golem didn't make" above it in the web app.
-From then on it's a project like any other, and workers own its code.
+Golem can take on a repo you made yourself: "Adopt a repo golem didn't make" on
+the New project page (the repo, what it is, and its name, mode and tag). From
+then on it's a project like any other, and workers own its code.
 
 - **Where it lives:** in `GITHUB_ORG`, named as its slug (lowercase letters,
   digits and hyphens), with a `main` branch, not archived. The tokens above
@@ -242,8 +241,8 @@ From then on it's a project like any other, and workers own its code.
 - **What happens:** anything only you can change (those needs, a package golem's
   image lacks, a GitHub setting) and golem leaves it alone and says what to
   change. Gaps a worker can fix, it fixes in a PR, then deploys main, as with any
-  change. Its conversation says which, and shows its settings before work starts.
-- **A repo golem worked on before** (adopted again after a `!delete`, or on a
+  change. Its job's activity says which.
+- **A repo golem worked on before** (adopted again after it was deleted, or on a
   new box) gets its past jobs back too: golem reads its issues and PRs and lists
   each job it ran there, with its request and what its steps did, under a new
   number. Only golem's own issues count. PRs that an earlier golem left open on
@@ -253,7 +252,7 @@ From then on it's a project like any other, and workers own its code.
 ## Moving to a new box
 
 Nothing needs copying but `.env`. A new install starts empty and takes nothing
-from the org on its own: you bring back the projects you want with `!adopt`.
+from the org on its own: you bring back the projects you want by adopting them.
 The rest stay in the org as they are until you do.
 
 1. **Stop the old box** if it still runs (`docker compose down` there). Two
@@ -265,20 +264,20 @@ The rest stay in the org as they are until you do.
    under the new domain.
 4. **Start it** (step 3), and turn notifications on again on each device (step
    6): sign-ups don't come along.
-5. **`!adopt <slug>`** each project you want back, in golem's own conversation
-   ("Adopting a repo golem didn't make", above). It checks each one over before
+5. **Adopt** each project you want back, on the New project page ("Adopting a
+   repo golem didn't make", above). It checks each one over before
    deploying it. If the new box has another architecture (an x86 VPS to a
    Raspberry Pi), the check finds each workflow still building for the old one,
    and a worker fixes it before the deploy.
 
 What comes back with an adopted project: its code, and its past jobs from its
-issues and PRs. What doesn't: conversations, notes, run history and cost,
-proposals, its tag and settings (a new project's, which you can change before
-work starts), lessons, and any data it kept in its volumes.
+issues and PRs. What doesn't: activity, notes, run history and cost, proposals,
+its settings (a new project's: you pick its mode and tag when you adopt it),
+lessons, and any data it kept in its volumes.
 
 ## Starting over
 
-`!delete` in a project's conversation deletes one project. To delete all of them:
+Delete, on a project's Settings tab, deletes one project. To delete all of them:
 
 ```sh
 cd ~/golem
@@ -286,13 +285,12 @@ bin/nuke.sh
 ```
 
 It lists what will go and asks you to type `nuke`. Then it stops golem, deletes
-every project the way `!delete` does (site, data, checkout, job history, run
-logs, conversation), every other site the deployer has (`hello` too; redeploy it
+every project the way deleting one does (site, data, checkout, job history, run
+logs, activity), every other site the deployer has (`hello` too; redeploy it
 with `just deploy hello <sha>` if you want it back), and golem's lessons and
-proposals, and starts golem again. The stack, golem's own conversation, and
-`.env` stay. GitHub repos stay too, until you delete them in your org's
+proposals, and starts golem again. The stack, golem's news, and `.env` stay. GitHub repos stay too, until you delete them in your org's
 repositories on GitHub (golem's token can't). Nothing brings them back on its
-own; `!adopt` brings one back, with its past jobs. If something can't be
+own; adopting one brings it back, with its past jobs. If something can't be
 deleted it says so; running it again retries.
 
 ## Removing golem
@@ -305,7 +303,7 @@ docker network rm golem-apps golem-internal golem-edge 2>/dev/null
 ```
 
 To remove it entirely, also `docker compose down --volumes` (**deletes golem's
-state**; installed again on the same org, it starts empty, and `!adopt` brings
+state**; installed again on the same org, it starts empty, and adopting brings
 projects back)
 and `rm -rf ~/golem`. To roll back just one change,
 `git checkout <previous commit>` and `docker compose up -d --build`.

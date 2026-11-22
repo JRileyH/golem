@@ -4,12 +4,11 @@ Templates the golem service fills in (`$name` placeholders, Python
 `string.Template`; write a literal dollar sign as `$$`). Baked read-only into
 the golem image.
 
-- `intake.md`: triage of a dictated idea into a brief, with its tag (one of the
-  few that exist, none, or rarely a new big-picture one), its first job's title,
-  the mode it asks for, and which workflow for new projects it's for when there's
-  more than one.
-- `adopt.md`: the same brief for a repo golem adopts (`!adopt`), from what Riggy
-  said about it, its README and its description; his words win.
+- `summary.md`: a new project's summary and its first job's title, from the name
+  Riggy gave it and what he said it's for (he names it himself, on the New
+  project form).
+- `adopt.md`: the brief for a repo golem adopts (the New project page), from what
+  Riggy said about it, its README and its description; his words win.
 - `step.md`: the wrapper around every agent block of a workflow, except in jobs
   that only look (a question's, proposals'): the project, the request, what's been
   done, the block's instructions, what comes after it, and how to finish.
@@ -26,16 +25,14 @@ the golem image.
   one project, `golem/golem/turns.py`): merge main in, keeping both intents.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
-- `request.md`: which workflow a message in a project's conversation is for (by what
-  each is for: a change, options first, a design pass, a question…), whether it asks
-  for a mode, and a title for the job it starts ("Library View Redesign").
+- `request.md`: which workflow a request on a project's page is for (by what each
+  is for: a change, options first, a design pass, a question…), whether it asks
+  for a mode, and a title for the job it starts ("Library View Redesign"). It's
+  always a job of its own; what Riggy picks in the Ask box wins over this.
 - `classify.md`: which of an Ask Riggy block's outputs his reply means.
-- `request-jobs.md`: added to `request.md` on a project that allows more than one
-  change at once, with changes under way: the changes, and which of them the
-  message is about, if any (otherwise golem starts it beside them).
 - `pick.md`: what Riggy's reply to some options says: a pick, or other options.
 - `card.md`: a live project's card on the projects page (tagline, description,
   kind), from its README and brief.
 
-`request.md`, `request-jobs.md`, `pick.md`, `classify.md` and `card.md` are filled in by plain replacement, and
-`intake.md` and `adopt.md` in one pass of it, not `string.Template`.
+`request.md`, `pick.md`, `classify.md` and `card.md` are filled in by plain replacement, and
+`summary.md` and `adopt.md` in one pass of it, not `string.Template`.

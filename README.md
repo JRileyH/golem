@@ -11,49 +11,90 @@ See `BRIEF.md` for the design and `AGENTS.md` for how to work on the repo.
 Everything happens in the web app at `https://golem.<your domain>`, made for a
 phone.
 
-- **The web app** has three tabs. Sign in under Settings with
-  `GOLEM_WEB_PASSWORD` (tick "Keep me signed in" for 90 days on that device).
-  - **Home:** what needs you, answered right there (try the site and say it
-    looks good or what to change, pick option A, B or C, answer a question);
-    what's being worked on, in words and dots, and when it's next live; what's
-    up next; what finished lately; and a box for a new idea.
-  - **Projects:** the conversations, like a messaging app: golem's own first
-    (new ideas, and its news), then each project's, latest first. Each opens
-    at its latest message, with the last 40 shown ("Show earlier messages" at
-    the top brings back more); scrolled up, a ↓ button goes back to the latest. A project's
-    page has its job as a card (where it is, what the worker's doing, and its
-    pieces of work as a checklist: plan it, build the MVP, you try it, build the
-    rest…; tap one for its details), then its whole conversation with golem and
-    a box at the bottom to write in ("Options first" asks for options rather
-    than leaving that to golem). Its **Settings** (top right) has mode, model,
-    effort, pause, its job's place in the queue and stopping it, its jobs,
-    rename, move and delete. Conversations are only shown signed in.
-  - **Settings:** signing in and out, notifications, pausing all work, links to
-    Insights and the public projects page, and the model and effort for each
-    kind of step.
+- **The web app** has four tabs: Now, Projects, Workflows and Settings, with
+  **+ New project** in the header (the sidebar, on a wide screen). Sign in under
+  Settings with `GOLEM_WEB_PASSWORD` (tick "Keep me signed in" for 90 days on
+  that device). Everywhere, a job is drawn by its **route**: a strip of the
+  blocks of its workflow, lit as each went (✓ done, ▶ running, ? waiting on
+  you, ✗ failed), a loop once with ×N, a sub-workflow like Ship as one chip that
+  fills as it goes, and the next few blocks faded. Tap a block for its details.
+  - **Now:** every job, across projects. What needs you first, answered right
+    there (try the site and say it looks good or what to change, pick option A,
+    B or C, answer a question), and golem's proposals to thumb up or down; then
+    what's running, what's up next, and what finished lately (with a question's
+    answer). golem's news (usage limits, upgrades, finished jobs) is on top.
+  - **Projects:** a card for each project: its screenshot once it's live, what
+    it is, its tag and site, and its latest job's route. A project's page has its
+    jobs on the left: **Ask for…** (a change, or a question), golem's proposals
+    for it, and its jobs, newest first. On the right, the job you picked (the
+    one waiting on you, else the one running, else the latest): where it is and
+    what it needs from you, a note for its next step, run it next or last or
+    stop it; its workflow drawn and lit where the job is (containers open in
+    place); its steps, with how long each took and what it said; its activity
+    (what each block did, notes, questions and your replies); and the request
+    and its runs. On a phone it's one side at a time, the job's steps first
+    with its graph a tap away. Its **Settings** tab has the default mode, model,
+    effort, pause, how many changes at once, proposals, tag, its jobs, rename,
+    move and delete; **History** has what was said before jobs had their own
+    activity.
+  - **Workflows:** how golem works through each kind of request, block by
+    block, drawn and edited; and the modes requests can ask for.
+  - **Settings:** signing in and out, notifications, pausing all work, workers,
+    golem's version, links to Insights and the public projects page, the tags,
+    and the model and effort for each kind of step.
   - **Notifications:** in Settings, "Turn on for this device". You get what
     wants you: questions, check-ins, options to pick from, answers, "Done" and
-    usage limits. On an iPhone, first add the site to the Home Screen (Share,
-    then Add to Home Screen) and open it from there: iOS only lets sites notify
-    that way. It's still the same site, not an app from the App Store. Golem
-    makes its own push keys; there's nothing to configure.
-- **golem's own conversation** (top of Projects; Home takes ideas too): dictate
-  an idea ("a flashcard game for northeastern US trees"). golem names it, picks
-  a slug, creates `<GITHUB_ORG>/<slug>`, and starts a conversation for that
-  project. Its news (usage limits, finished jobs) shows here too.
+    usage limits, each opening its job (and its block). On an iPhone, first add
+    the site to the Home Screen (Share, then Add to Home Screen) and open it
+    from there: iOS only lets sites notify that way. It's still the same site,
+    not an app from the App Store. Golem makes its own push keys; there's
+    nothing to configure.
+- **A new project:** + New project. Name it (its address, and its repo
+  `<GITHUB_ORG>/<slug>`, follow the name until you change them), say what it's
+  for ("a flashcard game for northeastern US trees"), and pick its workflow (the
+  fallback for new projects is picked), mode and tag; model and effort are under
+  More. golem writes its summary and its first job's title, and the job starts
+  straight away.
 - **How a job runs:** it walks a workflow: blocks wired output to input, from
-  Start to End (`workflows/`, and Settings → Workflows, where each is drawn and
-  edited). Golem picks the workflow for each request by what each is for (or say
-  `!with <workflow>[:<mode>] …`), and the mode it asks for picks the workflow's tab
-  for it ("be thorough" runs the rigorous one). Agent blocks are Claude Code runs
-  that each do one piece of work and commit it, and choose the way on where a block
-  has several outputs. Golem's own blocks are its code, the same every time: setting
-  up, pushing, opening a PR, waiting for CI, merging, deploying, asking you, and
-  telling you it's done. A job's page links to its workflow drawn, lit where the job
-  is. In golem's built-ins, when CI fails or the deployer refuses a commit a fix runs
-  and it ships again; after four fixes it asks you for a hint.
-- **A project's conversation:** progress shows up here as quiet notices; questions,
-  the MVP check-in and "Done" arrive as messages that notify your phone.
+  Start to End (`workflows/`, and the Workflows tab, where each is drawn and
+  edited). Agent blocks are Claude Code runs that each do one piece of work and
+  commit it, and choose the way on where a block has several outputs. Golem's own
+  blocks are its code, the same every time: setting up, pushing, opening a PR,
+  waiting for CI, merging, deploying, asking you, and telling you it's done. In
+  golem's built-ins, when CI fails or the deployer refuses a commit a fix runs and
+  it ships again; after four fixes it asks you for a hint.
+- **Asking for something:** on a project's page, Ask for… always starts a job
+  of its own. Leave Workflow and Mode on Auto and a quick haiku call picks them
+  from what you wrote, by what each is for (when it's not sure, it takes a
+  question, the cheap mistake), and titles the job; or pick them. Its mode picks
+  the workflow's tab ("be thorough" runs the rigorous one); otherwise the
+  project's default mode, else golem's. A change waits for one under way,
+  unless the project allows more at once.
+  - **Questions** ("why does the score reset?", "what's left on the spec?"):
+    golem looks into it (the code, the docs, the live site, its logs) and
+    answers in a few minutes, building nothing: no branch, commit, PR or
+    deploy. A question goes ahead of other work, and can come in while a job is
+    under way (it then looks at that job's work so far).
+  - **Changes** ("I don't like how the score works, count streaks instead"):
+    the job says when it starts, and again when it's live or if it needs an
+    answer.
+  - **Options first** ("I want a new art style, show me three that are more
+    chibi", or the Options workflow): the job makes them before building
+    anything. The worker mocks each option up for real, with screenshots and
+    the files behind them in `docs/options/` on the job's branch; golem shows
+    them as pictures (A, B, C…) and waits. Reply with a letter and anything
+    you'd change ("B, but bigger eyes"), or ask for other options for another
+    round. The next step builds your pick from its files.
+  - **Design pass** ("make it feel like an old field guide", or the Design
+    workflow): a worker makes a design doc (`skills/design.md`): principles, a
+    few directions with named palettes, type and the project's real screens in
+    light and dark, logo and icon choices, and its pick. Golem shows each
+    direction's pages, the doc's link and its questions, and waits. Reply with a
+    letter and your answers, or ask for another round ("A, but show me more
+    icons"). Then a worker writes the design guide, `docs/design.md`, with the
+    real assets, restyles the app from it, and every later change follows it.
+- **A job's activity:** progress shows up as quiet notices; questions, check-ins
+  and "Done" notify your phone.
   - Each agent step posts "✓ step: what was done" and what's next; so do PRs
     and deploys. Failures post "✗ …. Fixing it."
   - During an agent step, the worker posts a "▸" note at each milestone. After
@@ -61,45 +102,14 @@ phone.
     (step 9/24), 45m in…"). A run that logs nothing for 30 minutes is stopped
     and retried.
   - When golem is waiting on you, your reply is the answer ("looks good",
-    "make the photos bigger").
-  - While it's working, what you say is passed to the next step of the job.
-  - **Questions** ("why does the score reset?", "what's left on the spec?") or
-    `!question <what>`: golem looks into it (the code, the docs, the live site,
-    its logs) and answers in a few minutes, building nothing: no branch,
-    commit, PR or deploy. A question goes ahead of other work, and can come in
-    while a job is under way (it then looks at that job's work so far).
-  - Otherwise, anything you say is a change request ("I don't like how the
-    score works, count streaks instead"): it says when it starts, and again when
-    it's live or if it needs an answer. A quick haiku call tells questions,
-    options requests and changes apart, and golem says which it took; when
-    it's not sure, it takes a question, the cheap mistake.
-  - **Options first:** ask to see options ("I want a new art style, show me
-    three that are more chibi") or say `!options <what>`, and the job makes them
-    before building anything. The worker mocks each option up for
-    real, with screenshots and the files behind them in `docs/options/` on the
-    job's branch; golem posts them as pictures (A, B, C…) and waits. Reply with
-    a letter and anything you'd change ("B, but bigger eyes"), or ask for other
-    options for another round. The next step builds your pick from its files.
-  - **Design pass:** ask for a new look ("make it feel like an old field
-    guide") or say `!design [how it should feel]`. A worker makes a design doc
-    (`skills/design.md`): principles, a few directions with named palettes,
-    type and the project's real screens in light and dark, logo and icon
-    choices, and its pick. Golem posts each direction's pages, the doc's link
-    and its questions, and waits. Reply with a letter and your answers, or ask
-    for another round ("A, but show me more icons"). Then a worker writes the
-    design guide, `docs/design.md`, with the real assets, restyles the app from
-    it, and every later change follows it.
-- **golem status:** usage-limit notices and finished jobs.
-- **Settings,** per project, shown when it's created (work starts a minute later,
-  so there's time to change them). Say them while dictating ("…called Leaf
-  Peeper, rigorous, opus, max effort") or change them later in its conversation
-  (or its Settings):
-  - `!mode reckless|standard|rigorous`: one quick pass; spec, MVP check-in,
-    a design pass, review; or a reviewed spec, the check-in and design pass,
-    thorough tests and two reviews.
-  - `!model fable|opus|sonnet|haiku|default` and
-    `!effort low|medium|high|xhigh|max|default`: for all the project's agent
-    steps, from the next one; `default` goes back to each step's default.
+    "make the photos bigger"), from the job's pane or from Now.
+  - While it's working, a note (Add a note) goes to the job's next step.
+- **Settings,** per project, on its Settings tab:
+  - **Default mode:** what its requests run in unless they ask for another
+    (golem's default otherwise): reckless (one quick pass), standard, or
+    rigorous (a reviewed spec, thorough tests and two reviews). Only you set it.
+  - **Model and effort:** for all the project's agent steps, from the next
+    one; "each step's default" goes back to each step's own.
 
   The model and effort are chosen per step, the most specific choice winning:
   one step's (set in its sheet in the web app), then the project's, then
@@ -110,25 +120,23 @@ phone.
   for the rest. It fills them in once, where you haven't set one, so your
   changes on Insights stay; each kind shows its suggestion while yours differs,
   and "Reset to golem's suggestions" puts them all back (projects' and single
-  steps' own choices stay). The default mode is
-  `GOLEM_DEFAULT_MODE`.
-- **Commands,** in any conversation (in a project's they apply to that project;
-  in golem's own put its slug first): `!help`, `!queue`, `!status`, `!question`, `!options`, `!design`, `!mode`,
-  `!model`, `!effort`, `!rename <name>`, `!slug <new-slug>` (moves the repo and
-  address; the old repo stays for you to delete), `!pause`, `!resume`, `!kill`.
-- **Adopting a repo golem didn't make:** `!adopt <repo> [what it is]` in golem's
-  own conversation (or the form above it). Golem checks it over first: its CI,
-  build workflow, `deploy/compose.yml` by the deployer's own rules, the shape every
-  project has, and a worker run that builds and tests it in golem's container and
-  says what it needs that golem can't give. Anything only you can change and it
-  leaves the repo alone and says what; otherwise it fixes the gaps in a PR and
-  deploys it, and from then on it's a project like any other ("Adopting a repo"
-  in `docs/runbook.md`). It's also the only way a project comes back, after a
-  `!delete` or on a new box (which starts empty), with its past jobs read from
-  its issues and PRs.
-- **Deleting a project:** `!delete` in its conversation says what will go, then
-  `!delete <slug>` takes it all: the site and its data, the checkout, the job
-  history and logs, and the conversation. The repo stays on GitHub for you to delete
+  steps' own choices stay). golem's default mode is set in Workflows → Modes
+  (`GOLEM_DEFAULT_MODE` until then).
+- **Adopting a repo golem didn't make:** on the New project page, "Adopt a repo
+  golem didn't make": the repo, what it is (or its README says), and its name,
+  mode and tag. Golem checks it over first: its CI, build workflow,
+  `deploy/compose.yml` by the deployer's own rules, the shape every project has,
+  and a worker run that builds and tests it in golem's container and says what
+  it needs that golem can't give. Anything only you can change and it leaves the
+  repo alone and says what; otherwise it fixes the gaps in a PR and deploys it,
+  and from then on it's a project like any other ("Adopting a repo" in
+  `docs/runbook.md`). It's also the only way a project comes back, after it's
+  deleted or on a new box (which starts empty), with its past jobs read from its
+  issues and PRs.
+- **Moving and deleting a project:** its Settings tab. Moving gives it a new
+  address and repo (golem moves the code; the old repo stays for you to delete).
+  Deleting (type its slug to confirm) takes it all: the site and its data, the
+  checkout, the job history and logs. The repo stays on GitHub for you to delete
   (golem's token can't). To delete every project at once, run `bin/nuke.sh`
   on the box ("Starting over" in `docs/runbook.md`).
 - **Projects page:** `https://projects.<your domain>`, public: a card for each
@@ -138,21 +146,19 @@ phone.
   screenshot of the live site, when a project first goes live and again at the
   end of every job. Projects live before this get theirs when golem starts.
 - **Tags:** a few big-picture sorts of project, each in one color on the
-  projects page, which filters by them. golem starts with "Game". Triage
-  tags each new idea with one of them or none, and adds a new tag only for a
-  broad sort of project none of them covers ("Dev Tool", never "Gardening").
-  Settings lists them to add, rename, recolor or delete; a project's settings
-  page changes its tag.
-- **Who sees what:** anyone can see what's under way and each step's details;
-  conversations and every control need signing in. Signed in, you can skip
-  optional steps (reviews, docs, the MVP check-in, your pick) or undo that,
-  pick an option, give one upcoming step its own model, effort or context, run
-  a job next or last, pause a project or all work, stop a job, and set a
-  project's or a kind of step's model and effort. **Insights** (from Settings)
-  shows where the time and Claude usage go by kind of step, project and model,
-  and the slowest and costliest steps. Each agent step's sheet has its
-  transcript, or its live tail while it runs ("Checking on a job" in
-  `docs/runbook.md`).
+  projects page, which filters by them. golem starts with "Game". You pick a
+  project's tag when you make it, or on its Settings tab; Settings lists them
+  to add, rename, recolor or delete.
+- **Who sees what:** anyone can see what's under way, each job's route, graph
+  and steps, and each step's details; activity, asking, the Workflows tab and
+  every control need signing in. Signed in, you can skip optional steps
+  (reviews, docs, the MVP check-in, your pick) or undo that, pick an option,
+  give one upcoming step its own model, effort or context, run a job next or
+  last, pause a project or all work, stop a job, and set a project's or a kind
+  of step's model and effort. **Insights** (from Settings) shows where the time
+  and Claude usage go by kind of step, project and model, and the slowest and
+  costliest steps. Each agent step's sheet has its transcript, or its live tail
+  while it runs ("Checking on a job" in `docs/runbook.md`).
 
 ## Local mode
 

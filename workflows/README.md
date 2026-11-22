@@ -9,14 +9,15 @@ changes work under way, and lets go of the copy when it's over.
 
 ## What a workflow is
 
-- **Start type**, where it can start: `new` (a new project, from golem's own
-  conversation), `change` (a project's conversation), `look` (a question about a
+- **Start type**, where it can start: `new` (a new project, from the New project
+  form), `change` (a request on a project's page), `look` (a question about a
   project: builds and pushes nothing), `propose` (golem's own look for improvements,
-  when it's idle), `adopt` (`!adopt`), or `sub` (only ever a container inside other
-  workflows).
-- **What it's for** (its ingest prompt): every message is read for which of the
-  workflows that fit where it was said it's for, by these. One of each start type is
-  the fallback, for when golem can't tell. `!with <workflow>[:<mode>] <what>` names it.
+  when it's idle), `adopt` (adopting a repo, from the New project page), or `sub`
+  (only ever a container inside other workflows).
+- **What it's for** (its ingest prompt): a request left on Auto is read for which of
+  the workflows for a project's page it's for, by these. One of each start type is
+  the fallback, for when golem can't tell, and the one the New project form picks.
+  Riggy can pick one himself in the Ask box, or on the form.
 - **Tabs**: a default, and one for any mode that works differently. A request that asks
   for a mode ("be thorough": the modes and what each is for are on the Workflows page),
   or a project whose default mode it is, runs that mode's tab if the workflow has one,
