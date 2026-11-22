@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import adopt, engine, options, plan, proposals, teardown, turns
+from . import adopt, engine, legacy, options, plan, proposals, teardown, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -195,9 +195,13 @@ class Scheduler:
     async def run_forever(self) -> None:
         for job in self.store.requeue_interrupted():
             log.info("job %s was interrupted; it carries on from its current step", job.id)
-        for job in self.store.jobs(ACTIVE):
-            if self.store.runs(job.id):  # under way from before steps were tracked
-                self.ensure_steps(job)
+        for job in self.store.jobs(ACTIVE, limit=10_000):  # under way from before workflows: a graph of their own
+            if not job.graph and (self.store.steps(job.id) or self.store.runs(job.id)):
+                try:
+                    self.ensure_started(job)
+                except Exception:
+                    log.exception("job %s from before workflows couldn't carry on as one", job.id)
+                    self.store.update_job(job.id, state="waiting")
         self.backfill = asyncio.create_task(self.missing_cards())
         self.versions = asyncio.create_task(self.upgrades.watch_forever())
         try:
@@ -311,13 +315,20 @@ class Scheduler:
             await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state == "rejected")
 
     def ensure_started(self, job: Job) -> list[Step]:
-        """The job's steps; the first time, its own copy of its workflow and its first step."""
+        """The job's steps; the first time, its own copy of its workflow and its first step. A job
+        under way from before workflows gets a graph of its own made from its steps (legacy.py)."""
+        job = self.store.job(job.id) or job
         steps = self.store.steps(job.id)
-        if steps or job.state not in ACTIVE:
+        if job.state not in ACTIVE:
             return steps
-        if job.phase or self.store.runs(job.id):  # under way from before steps were tracked
+        if not steps and (job.phase or self.store.runs(job.id)):  # under way from before steps were tracked
             self.store.add_steps(job.id, plan.planned(self.settings, self.store, job))
-            return self.store.steps(job.id)
+            steps = self.store.steps(job.id)
+        if steps:
+            if not job.graph and not job.workflow:
+                legacy.convert(self.store, job)
+                steps = self.store.steps(job.id)
+            return steps
         job = self.pin(job)
         moved = engine.advance(plan.snapshot(job), plan.vars_of(job), [], None, None, job.id)
         return self.store.advance(job.id, None, {}, moved.rows, moved.vars)
@@ -515,7 +526,7 @@ class Scheduler:
             return False
         vars["guard"] = {**guard, "asked": True}
         self.store.update_job(job.id, vars=vars, state="waiting", attempts=0)
-        runs = sum(1 for s in self.store.steps(job.id) if s.kind == "agent" and s.started_at)
+        runs = sum(1 for s in self.store.steps(job.id) if s.kind == "agent" and s.started_at and s.id != step.id)
         await self.say(
             project,
             f"{plan.title(job)} has come round to {plan.label(step)} {step.visit} times ({runs} agent runs so far), "
