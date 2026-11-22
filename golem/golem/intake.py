@@ -1,14 +1,12 @@
-"""Intake: a cheap triage call turns dictation into a brief (name, slug, summary, title, tag).
+"""Intake: what golem writes about a new project, in cheap structured calls.
 
-The title says what it is in a few plain words ("Tree Flashcard Game") where the name is what
-it's called ("Leaf Peeper"): it names the project's first job, rather than his words.
+Riggy names a project on the New project form; `summarize` writes its summary and its first
+job's title, which says what it is in a few plain words ("Tree Flashcard Game") where the
+name is what it's called ("Leaf Peeper").
 
-The tag is one of the few big-picture sorts of project there are ("Game"), or none. Only
-rarely a new one: the prompt sets a high bar, and a new tag must look like a sort of
-project (a word or two), or the project gets none.
-
-A repo golem adopts (adopt.py) gets its brief the same way, from what Riggy said about it,
-its README and its description; his words win. Its slug is the repo's name.
+A repo golem adopts (adopt.py) gets a brief (name, summary, title) from what Riggy said
+about it, its README and its description; his words win. Its slug is the repo's name.
+Addresses (slugs) are checked and suggested here too.
 """
 
 from __future__ import annotations
@@ -43,41 +41,9 @@ class Choice:
     ingest: str = ""
 
 
-def schema(tags: list[str], modes: Iterable[str] = (), workflows: Iterable[str] = ()) -> dict:
-    """What triage returns. With more than one workflow for new projects, which one it's for."""
-    workflows = list(workflows)
-    found = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string", "description": "Short product name, 1 to 4 words"},
-            "slug": {"type": "string", "description": "Subdomain: lowercase letters, digits and hyphens, 2 to 31 chars"},
-            "summary": {"type": "string", "description": "One to three sentences: what it is and who it's for"},
-            "title": {"type": "string", "description": "What it is in 2 to 5 plain words, Title Case: 'Tree Flashcard Game'"},
-            "tag": {"enum": [*tags, "none", "new"]},
-            "new_tag": {"type": "string", "description": "Only when tag is new: its name, one or two words"},
-            "mode": {"enum": [*modes, "none"]},
-            "model": {"enum": [*MODELS, "unspecified"]},
-            "effort": {"enum": [*EFFORTS, "unspecified"]},
-        },
-        "required": ["name", "slug", "summary", "title", "tag", "mode", "model", "effort"],
-        "additionalProperties": False,
-    }
-    if len(workflows) > 1:
-        found["properties"]["workflow"] = {"enum": workflows}
-        found["required"].append("workflow")
-    return found
-
-
 def choices(found: Iterable[Choice]) -> str:
     """Workflows or modes as the prompt lists them: each by name, with what it's for."""
     return "\n".join(f"  - `{c.name}`: {' '.join(c.ingest.split()) or '(no description)'}" for c in found) or "  (none)"
-
-
-def workflow_line(workflows: list[Choice]) -> str:
-    """The prompt's line about which workflow, when there's more than one to choose from."""
-    if len(workflows) < 2:
-        return ""
-    return f"- workflow: which of these his idea is for, by what each is for:\n\n{choices(workflows)}\n\n"
 
 
 @dataclass(frozen=True)
@@ -89,7 +55,6 @@ class Brief:
     new_tag: bool = False
     # Only what the dictation asked for; None means use the default.
     mode: str | None = None
-    workflow: str | None = None  # which workflow for new projects it's for, when there's a choice
     model: str | None = None
     effort: str | None = None
     # What it is in a few plain words ("Tree Flashcard Game"), its first job's title; "" without a model.
@@ -107,34 +72,52 @@ def valid_slug(slug: str) -> bool:
     return bool(SLUG_RE.fullmatch(slug)) and not slug.endswith("-") and slug not in RESERVED
 
 
-def fallback_brief(text: str) -> Brief:
-    """No model: the first few words name the project. Used by the fake harness and if triage fails."""
-    words = re.findall(r"[A-Za-z0-9']+", text)[:4] or ["project"]
-    name = " ".join(words).title()
-    return Brief(name, slugify(name), text.strip()[:500])
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}, "title": {"type": "string"}},
+    "required": ["summary", "title"],
+    "additionalProperties": False,
+}
 
 
-async def triage(
-    harness: Harness, prompt_path: Path, text: str, cwd: Path, log_path: Path, env: dict, tags: Iterable[str] = (),
-    modes: Iterable[Choice] = (), workflows: Iterable[Choice] = (),
-) -> Brief:  # fmt: skip
-    tags, modes, workflows = list(tags), list(modes), list(workflows)
-    prompt = _fill(prompt_path.read_text(), tags=_listed(tags), dictation=text.strip(), modes=choices(modes),
-                   workflows=workflow_line(workflows))  # fmt: skip
-    v = await _ask(harness, prompt, schema(tags, [m.name for m in modes], [w.name for w in workflows]), cwd, log_path, env, "intake")
+@dataclass
+class Summary:
+    summary: str
+    title: str  # its first job's: what it is in a few words; "" for the job's request to name it
+
+
+def idea_summary(idea: str) -> str:
+    """Without a model: the idea's first paragraph, on one line."""
+    return " ".join(idea.strip().split("\n\n")[0].split())[:500]
+
+
+async def summarize(harness: Harness, prompt_path: Path, name: str, idea: str, cwd: Path, log_path: Path, env: dict) -> Summary:
+    """A new project's summary and its first job's title, from what Riggy named it and said: one
+    cheap call. Riggy names it himself; this only writes what it is. Without an answer, the idea's
+    first paragraph and no title."""
+    v = await _ask(harness, _fill(prompt_path.read_text(), name=name, idea=idea.strip()), SUMMARY_SCHEMA, cwd, log_path, env, "summary")
     if v is None:
-        return fallback_brief(text)
-    name = str(v.get("name") or "").strip()[:60] or fallback_brief(text).name
-    slug = str(v.get("slug") or "").strip().lower()
-    if not valid_slug(slug):
-        slug = slugify(slug or name)
-    return _brief(v, name, slug, text, tags, modes, workflows)
+        return Summary(idea_summary(idea), "")
+    return Summary(" ".join(str(v.get("summary") or "").split())[:1000] or idea_summary(idea), clean_title(v.get("title")))
 
 
 def adopt_schema(tags: list[str], modes: Iterable[str] = ()) -> dict:
-    """An adopted repo's brief: the intake's, but its slug is the repo's name."""
-    s = schema(tags, modes)
-    return {**s, "properties": {k: v for k, v in s["properties"].items() if k != "slug"}, "required": [r for r in s["required"] if r != "slug"]}
+    """An adopted repo's brief (its slug is the repo's name)."""
+    return {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "Short product name, 1 to 4 words"},
+            "summary": {"type": "string", "description": "One to three sentences: what it is and who it's for"},
+            "title": {"type": "string", "description": "What it is in 2 to 5 plain words, Title Case: 'Tree Flashcard Game'"},
+            "tag": {"enum": [*tags, "none", "new"]},
+            "new_tag": {"type": "string", "description": "Only when tag is new: its name, one or two words"},
+            "mode": {"enum": [*modes, "none"]},
+            "model": {"enum": [*MODELS, "unspecified"]},
+            "effort": {"enum": [*EFFORTS, "unspecified"]},
+        },
+        "required": ["name", "summary", "title", "tag", "mode", "model", "effort"],
+        "additionalProperties": False,
+    }
 
 
 def adopt_fallback(slug: str, words: str, about: About) -> Brief:
@@ -179,7 +162,7 @@ async def _ask(harness: Harness, prompt: str, wanted: dict, cwd: Path, log_path:
     return result.verdict
 
 
-def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: list[Choice] = (), workflows: list[Choice] = ()) -> Brief:
+def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: list[Choice] = ()) -> Brief:
     tag, new = _tag(v.get("tag"), v.get("new_tag"), tags)
     return Brief(
         name,
@@ -188,7 +171,6 @@ def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: 
         tag=tag,
         new_tag=new,
         mode=_pick(v.get("mode"), tuple(m.name for m in modes)),
-        workflow=_pick(v.get("workflow"), tuple(w.name for w in workflows)),
         model=_pick(v.get("model"), MODELS),
         effort=_pick(v.get("effort"), EFFORTS),
         title=clean_title(v.get("title")),

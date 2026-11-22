@@ -9,6 +9,7 @@ from dataclasses import replace
 from conftest import Golem
 from test_adopt import golem_shaped
 
+from golem import plan
 from golem.workspace import CI, About
 
 ABOUT = About("mimic", "Tabletop data in, cards out", False, True, "# Mimic\n\nTabletop data in, visual outputs out.\n")
@@ -25,10 +26,11 @@ PASSED = {"tests": {"result": "passed", "command": "uv run pytest", "detail": "5
 STEPS = ["check it over", "set up", "adopt", "push", "PR", "CI", "merge", "deploy", "done"]
 
 
-async def adopt(golem: Golem, words: str = "", brief: dict = BRIEF, about: About = ABOUT, then: list | None = None) -> None:
+async def adopt(golem: Golem, words: str = "", brief: dict = BRIEF, about: About = ABOUT, then: list | None = None, **more) -> str:
+    """Adopt mimic from the New project page; what golem says back."""
     golem.workspace.existing["mimic"] = about
     golem.harness.script = [brief, *(then or [])]
-    await golem.say(golem.inbox, f"!adopt mimic {words}".strip())
+    return (await golem.bot.adopt("mimic", words, **more))[1]
 
 
 def arm(tmp_path) -> Golem:
@@ -47,57 +49,49 @@ def states(golem: Golem, job_id: int) -> list[tuple[str, str]]:
 
 def test_github_is_checked_first_and_a_blocked_repo_makes_nothing(golem):
     async def go():
-        await golem.say(golem.inbox, "!adopt mimic")
-        assert golem.chat.texts(golem.inbox)[-1].startswith(
+        job, said = await golem.bot.adopt("mimic")
+        assert job is None and said.startswith(
             "I didn't adopt mimic. What's in the way:\n- I can't see github.com/unlaunched/mimic. Is it in unlaunched?"
         )
         golem.workspace.existing["mimic"] = replace(ABOUT, archived=True, has_main=False)
-        await golem.say(golem.inbox, "!adopt mimic")
-        said = golem.chat.texts(golem.inbox)[-1]
+        _, said = await golem.bot.adopt("mimic")
         assert "- It's archived" in said and "- It has no main branch" in said
-        assert said.endswith("Once that's changed, say !adopt mimic again.")
-        await golem.say(golem.inbox, "!adopt golem")
-        assert golem.chat.texts(golem.inbox)[-1].startswith("I didn't adopt golem. What's in the way:\n- golem is one of golem's own addresses.")
-        await golem.say(golem.inbox, "!adopt")
-        assert golem.chat.texts(golem.inbox)[-1] == "Usage: !adopt <repo> [what it is], for a repo in github.com/unlaunched that golem didn't make."
+        assert said.endswith("Once that's changed, adopt it again.")
+        _, said = await golem.bot.adopt("golem")
+        assert said.startswith("I didn't adopt golem. What's in the way:\n- golem is one of golem's own addresses.")
         assert golem.store.projects() == [] and golem.harness.calls == []  # nothing made, no model asked
 
     run(go())
 
 
-def test_an_adopted_repo_becomes_a_project_with_his_words_and_the_usual_grace(golem):
+def test_an_adopted_repo_becomes_a_project_with_his_words_and_picks(golem):
     async def go():
-        await adopt(golem, "cards for my table, rigorous", {**BRIEF, "mode": "rigorous"})
+        said = await adopt(golem, "cards for my table", mode="rigorous", tag="Game")
+        assert said == "Adopting Mimic: first golem checks it over."
         project = golem.store.project("mimic")
-        assert (project.name, project.summary, project.mode) == ("Mimic", "Printable cards for a D&D table.", "")  # its default: Riggy's to set
+        assert (project.name, project.summary, project.mode, project.tag) == ("Mimic", "Printable cards for a D&D table.", "", "Game")
         job = golem.store.active_job("mimic")
-        assert (job.workflow, job.mode) == ("adopt", "rigorous")
-        # A minute's grace (none in tests) to change the settings before anything starts, the check included.
-        assert (job.kind, job.playbook, job.state, job.request) == ("adopt", "adopt", "parked", "!adopt mimic cards for my table, rigorous")
-        assert golem.chat.texts(golem.inbox)[-1] == f"Adopting Mimic (mimic), adopt, rigorous mode. Its conversation: {PAGE}"
-        [intro] = golem.chat.texts("mimic")
-        assert intro.startswith("Mimic\n\nPrintable cards for a D&D table.\n\nYou said: “cards for my table, rigorous”")
-        assert "I'm taking on https://github.com/unlaunched/mimic, to live at https://mimic.unlaunched.dev/." in intro
-        assert intro.endswith("Adopt, rigorous mode, each step's default model and effort. Starting in a minute: to change that first, say !mode, !model or !effort here (!help for the options).")
+        # No grace: the page said everything it was for, and the check starts straight away.
+        assert (job.kind, job.playbook, job.workflow, job.mode, job.state, job.request) == ("adopt", "adopt", "adopt", "rigorous", "queued", "cards for my table")
+        assert [m.text for m in golem.store.job_messages(job.id)] == ["cards for my table"]
         [triage] = golem.harness.calls
         assert (triage.model, triage.label) == ("haiku", "adopt") and "Tabletop data in, visual outputs out." in triage.prompt
+        assert "What he said the repo is" in triage.prompt and "!adopt" not in triage.prompt
 
-        await golem.say("mimic", "!mode default")
-        assert golem.chat.texts("mimic")[-1] == "Mimic: no default mode, each step's default model and effort. Job 1 will run as adopt."
+        await golem.control.setting("mimic", "mode", "")  # not started yet: it takes the project's change too
         assert (golem.store.job(job.id).workflow, golem.store.job(job.id).mode) == ("adopt", "")
-        await golem.say(golem.inbox, "!queue")
-        assert golem.chat.texts(golem.inbox)[-1] == "#1 Mimic: adoption “Tabletop Card Printer”, starting shortly, check it over (1/9)"
-        await golem.say(golem.inbox, "!adopt mimic")
-        assert golem.chat.texts(golem.inbox)[-1] == f"Mimic (mimic) is already one of my projects: {PAGE}"
+        job_, said = await golem.bot.adopt("mimic")
+        assert job_ is None and said == "Mimic (mimic) is already one of golem's projects."
 
     run(go())
 
 
 def test_without_his_words_the_brief_comes_from_the_repo(golem):
     async def go():
-        await adopt(golem)
-        assert golem.chat.texts("mimic")[0].startswith("Mimic\n\nPrintable cards for a D&D table.\n\nFrom its README and description")
-        assert "(nothing)" in golem.harness.calls[0].prompt
+        await adopt(golem, name="Mimic Cards")
+        job = golem.store.active_job("mimic")
+        assert golem.store.project("mimic").name == "Mimic Cards" and job.request == "Adopt mimic." and plan.adopt_words(job) == ""
+        assert "(nothing)" in golem.harness.calls[0].prompt and golem.store.job_messages(job.id) == []
 
     run(go())
 
@@ -134,7 +128,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
         assert checked == (
             "I checked it over, and I'm adopting it.\n\n✓ CI on main: build: success\n✓ Dockerfile\n✓ build workflow: build.yml\n"
             "✓ repo shape\n✓ docs/brief.md\n✓ deploy/compose.yml\n✓ tests in golem's container: uv run pytest: 559 passed\n\n"
-            "Next I deploy main as it is.\n\nNo default mode, each step's default model and effort (!mode, !model or !effort here to change them)."
+            "Next I deploy main as it is.\n\nNo default mode, each step's default model and effort (its settings change them)."
         )
         # Its issue says golem worked on it: adopting it again brings it back as history (history.py). With no PR, alert closes it.
         assert golem.workspace.issues == [("mimic", "Mimic")]
@@ -166,7 +160,7 @@ def test_gaps_go_to_a_worker_and_ship_like_any_change(golem):
         assert found.startswith("- build workflow: There's no GitHub Actions workflow")
         assert "- deploy/compose.yml: There's no deploy/compose.yml" in found and "docs/brief.md" not in found  # golem's to write
         assert "→ repo shape: Missing AGENTS.md" in next(t for t in golem.chat.texts("mimic") if t.startswith("I checked it over"))
-        assert "I'll fix what's marked →, then PR, CI, merge and deploy it." in golem.chat.texts("mimic")[1]
+        assert "I'll fix what's marked →, then PR, CI, merge and deploy it." in next(t for t in golem.chat.texts("mimic") if t.startswith("I checked it over"))
 
         brief = (golem.workspace.tree_path(job.id) / "docs" / "brief.md").read_text()  # on the job's branch, in its tree
         assert brief.startswith("# Mimic\n\nPrintable cards for a D&D table.\n\n## Where it came from\n\nAdopted by golem on ")
@@ -190,8 +184,8 @@ def test_a_missing_brief_alone_needs_no_worker(tmp_path):
         assert len(golem.harness.calls) == 2  # the triage and the survey, nothing else
         assert (golem.workspace.tree_path(job.id) / "docs" / "brief.md").read_text().startswith("# Mimic\n")
         assert "open PR #1: Mimic: brief" in golem.workspace.actions
-        assert "→ docs/brief.md: I'll write it from what you said and the README.\n" in golem.chat.texts("mimic")[1]
-        assert "I'll write its brief, then deploy it." in golem.chat.texts("mimic")[1]
+        assert "→ docs/brief.md: I'll write it from what you said and the README.\n" in next(t for t in golem.chat.texts("mimic") if t.startswith("I checked it over"))
+        assert "I'll write its brief, then deploy it." in next(t for t in golem.chat.texts("mimic") if t.startswith("I checked it over"))
 
     run(go())
 
@@ -212,10 +206,10 @@ def test_something_blocking_found_in_the_check_and_golem_forgets_it(tmp_path):
         assert golem.store.projects() == [] and golem.store.jobs() == []
         assert not golem.workspace.path("mimic").exists()  # the checkout too
         assert golem.workspace.issues == [] and golem.deployer.deploys == []  # nothing written to the repo, nothing deployed
-        said = golem.chat.texts(golem.inbox)[-1]
+        said = golem.chat.texts("status")[-1]  # golem's news, on Now: the project's page went with it
         assert said.startswith("I didn't adopt mimic. What's in the way:\n- Building or testing it needs libpangoft2-1.0-0 (for WeasyPrint)")
         assert "\n- It needs a command run by hand in its container: API keys come from `mimic key` To change that: make one on first start\n" in said
-        assert said.endswith("The rest I'd have fixed myself: repo shape.\n\nOnce that's changed, say !adopt mimic again.")
+        assert said.endswith("The rest I'd have fixed myself: repo shape.\n\nOnce that's changed, adopt it again.")
 
         # Changed, and asked again: a fresh start.
         golem_shaped(golem.workspace.path("mimic"))
@@ -307,7 +301,7 @@ def test_with_the_fake_harness_golems_own_checks_still_run(tmp_path):
     async def go():
         golem_shaped(golem.workspace.path("mimic"))
         golem.workspace.existing["mimic"] = ABOUT
-        await golem.say(golem.inbox, "!adopt mimic")
+        await golem.bot.adopt("mimic")
         assert golem.store.project("mimic").name == "Mimic"  # from the README, no model asked
         await golem.step()
         checked = golem.chat.texts("mimic")[-1]

@@ -70,15 +70,22 @@ def blocked_by(store: Store, job: Job, running: set[int] = frozenset()) -> tuple
 
 
 def behind(store: Store, job: Job) -> Job | None:
-    """For a change on a project that takes one at a time: the older change still under way that
-    it waits for, if any. (With more at once, changes take turns instead: blocked_by.) Questions
-    and proposals only look, so they wait for nothing."""
-    if job.start in LOOKS:
+    """For a change that hasn't started: the older change still under way that it waits for
+    before it can, if any. A project takes one change at a time unless it allows more
+    (parallel_jobs), and a new project, an adoption or a job from before trees runs alone; with
+    room beside the others, changes take turns instead (blocked_by). Questions and proposals only
+    look, so they wait for nothing; and a change under way already carries on."""
+    if job.start in LOOKS or store.steps(job.id):
+        return None
+    older = [j for j in store.change_jobs(job.slug) if j.id < job.id]
+    if not older:
         return None
     project = store.project(job.slug)
-    if project is not None and project.parallel_jobs > 1:
-        return None
-    return next((j for j in store.change_jobs(job.slug) if j.id < job.id), None)
+    allowed = max(project.parallel_jobs, 1) if project else 1
+    alone = next((j for j in older if j.kind in ("new", "adopt") or not j.worktree), None)
+    if alone or len(older) >= allowed:
+        return alone or older[0]
+    return None
 
 
 def waiting_for(store: Store, job: Job) -> str:

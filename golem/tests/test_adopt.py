@@ -228,7 +228,7 @@ def test_refusal_says_what_to_change_and_what_golem_would_fix():
     text = adopt.refusal("mimic", [Check("needs", BLOCKING, "It needs a Stripe key."), Check("repo shape", FIXABLE, "Missing AGENTS.md.")])
     assert text == (
         "I didn't adopt mimic. What's in the way:\n- It needs a Stripe key.\n\n"
-        "The rest I'd have fixed myself: repo shape.\n\nOnce that's changed, say !adopt mimic again."
+        "The rest I'd have fixed myself: repo shape.\n\nOnce that's changed, adopt it again."
     )
 
 

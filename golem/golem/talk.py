@@ -1,9 +1,9 @@
 """The conversation: everything Riggy and golem say to each other, kept in one place.
 
-Each message is recorded by channel: a project's slug, "inbox" for new ideas, or "status"
-for golem-wide news. The web app shows those conversations and takes Riggy's messages,
-and the ones that want his attention (a question, a check-in, "done") are pushed to his
-devices (push.py).
+Each message is recorded by channel: a project's slug (and its job and step, for each job's
+activity), or "status" for golem-wide news ("inbox" was golem's own conversation, before the
+New project form). The web app shows them, and the ones that want Riggy's attention (a
+question, a check-in, "done") are pushed to his devices (push.py).
 """
 
 from __future__ import annotations

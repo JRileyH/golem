@@ -156,7 +156,7 @@ class Upgrades:
 
 
 def outcome(last: dict) -> str:
-    """How an upgrade went, for golem's own conversation."""
+    """How an upgrade went, for golem's news."""
     old, new, detail = str(last.get("from", ""))[:7], str(last.get("to", ""))[:7], last.get("detail", "")
     match last.get("state"):
         case "done":

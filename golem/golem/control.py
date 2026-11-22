@@ -33,8 +33,8 @@ from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS,
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
-MODE_RE = re.compile(r"[a-z][a-z0-9-]{0,19}")  # a mode's name: what `!with change:rigorous` says
-HANDLE_RE = re.compile(r"[a-z][a-z0-9_-]{0,29}")  # what `!with` calls a workflow
+MODE_RE = re.compile(r"[a-z][a-z0-9-]{0,19}")  # a mode's name
+HANDLE_RE = re.compile(r"[a-z][a-z0-9_-]{0,29}")  # a workflow's short name: what the request call knows it by
 INGEST_CHARS = 1000
 
 
@@ -190,9 +190,21 @@ class Control:
 
     async def setting(self, slug: str, name: str, value: str) -> str:
         """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
-        none; how often golem looks for improvements to propose, "" for never; how many proposals
-        may await Riggy before it stops; or how many changes may be under way at once (turns.py)."""
+        none; its default mode, "" for golem's; how often golem looks for improvements to propose, ""
+        for never; how many proposals may await Riggy before it stops; or how many changes may be
+        under way at once (turns.py). The page's flash says what changed."""
         project = self._project(slug)
+        if name == "mode":  # what its requests run in unless they ask for another: only Riggy sets it
+            found = self.store.mode(value) if value else None
+            if value and found is None:
+                raise ControlError(f"There's no mode called {value}.")
+            self.store.update_project(slug, mode=found.name if found else "")
+            said = f"{project.name}: requests run in {found.name if found else 'golem’s default'} mode unless they ask for another"
+            job = self.store.active_job(slug, questions=False)
+            if job and not job.graph and not self.store.steps(job.id):  # not started: it runs in that mode too
+                self.store.update_job(job.id, mode=found.name if found else plan.mode_for(self.store, None))
+                said += f"; job {job.id}, not started yet, too"
+            return said + "."
         if name == "parallel_jobs":
             if not value.isdigit() or int(value) not in CHANGES_AT_ONCE:
                 raise ControlError(f"Pick {CHANGES_AT_ONCE[0]} to {CHANGES_AT_ONCE[-1]} changes at once.")
@@ -200,14 +212,12 @@ class Control:
             said = "One change at a time" if value == "1" else f"Up to {value} changes at once, taking turns building and shipping"
             if len(under_way := self.store.change_jobs(slug)) > int(value):
                 said += f" (the {len(under_way)} under way carry on)"
-            await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
             self.scheduler.wake()
             return f"{project.name}: {said[0].lower()}{said[1:]}."
         if name == "proposals_max":
             if not value.isdigit() or int(value or 0) not in WAITING:
                 raise ControlError(f"Pick how many: {', '.join(map(str, WAITING))}.")
             self.store.update_project(slug, proposals_max=int(value))
-            await self.scheduler.say(project, f"Up to {value} proposals can wait for you, from the status page.", notice=True)
             self.scheduler.wake()
             return f"{project.name}: up to {value} proposals waiting on you."
         if name == "proposals":
@@ -216,18 +226,15 @@ class Control:
                 raise ControlError(f"Proposals can't be {value}.")
             self.store.update_project(slug, proposals=every)
             said = "No proposals now" if every == "off" else f"Proposals {every}, when there's nothing else to do"
-            await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
             self.scheduler.wake()
             return f"{project.name}: {said.lower()}."
         if name == "tag":
             tag = self._tag(value) if value else None
             self.store.update_project(slug, tag=tag.name if tag else "")
-            await self.scheduler.say(project, f"{f'Tagged {tag.name}' if tag else 'No tag now'}, from the status page.", notice=True)
             return f"{project.name}: {tag.name if tag else 'no tag'}."
         _check(name, value)
         self.store.update_project(slug, **{name: value})
         said = f"{name.title()} is now {value}" if value else f"{name.title()} is each step's default again"
-        await self.scheduler.say(project, f"{said}, from the status page.", notice=True)
         return f"{project.name}: {name} {value or 'by step'}, from the next agent step."
 
     async def proposal_kind(self, slug: str, name: str, on: bool) -> str:
@@ -288,6 +295,15 @@ class Control:
             raise ControlError(f"There's a {same.name} tag already.")
         self.store.add_tag(name)
         return f"Added the {name} tag. golem uses it from the next new idea."
+
+    def rename(self, slug: str, name: str) -> str:
+        """A project's name; its address stays (bot.move changes that)."""
+        project = self._project(slug)
+        name = " ".join(name.split())[:60]
+        if not name:
+            raise ControlError("Give it a name.")
+        self.store.update_project(slug, name=name)
+        return f"Renamed {project.name} to {name}. Its address stays {slug}."
 
     def rename_tag(self, name: str, new: str) -> str:
         tag, new = self._tag(name), _tag_name(new)
@@ -421,10 +437,10 @@ class Control:
         wf = self._workflow(workflow_id)
         handle = handle.strip().lower()
         if not HANDLE_RE.fullmatch(handle):
-            raise ControlError("Its !with name is one word: lowercase letters, digits, _ and -, at most 30 characters.")
+            raise ControlError("Its short name is one word: lowercase letters, digits, _ and -, at most 30 characters.")
         other = self.store.workflow(handle=handle)
         if other and other.id != wf.id:
-            raise ControlError(f"{other.name} is already !with {handle}.")
+            raise ControlError(f"{other.name} already has the short name {handle}.")
         if not name.strip():
             raise ControlError("Give it a name.")
         self.store.update_workflow(wf.id, name=name.strip()[:60], handle=handle, ingest=ingest.strip()[:INGEST_CHARS], edited=True)

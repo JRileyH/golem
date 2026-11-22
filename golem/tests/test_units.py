@@ -688,25 +688,19 @@ def test_structured_output_with_a_custom_schema_is_not_a_verdict():
     assert interpret(result(structured_output=brief), None, 0).outcome == "error"
 
 
-def test_triage_through_the_claude_harness(tmp_path):
+def test_a_summary_through_the_claude_harness(tmp_path):
     binary = tmp_path / "claude"
     binary.write_text(
         f"#!{sys.executable}\nimport json, sys\nsys.stdin.read()\n"
         "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'structured_output':"
-        " {'name': 'Leaf Peeper', 'slug': 'leaf-peeper', 'summary': 'Guess the tree.', 'title': 'Tree Guessing Game', 'mode': 'rigorous',"
-        " 'tag': 'Game', 'model': 'unspecified', 'effort': 'max'}}))\n"
+        " {'summary': 'Guess  the tree.', 'title': '“Tree Guessing Game.”'}}))\n"
     )
     binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
-    brief = asyncio.run(
-        intake.triage(
-            ClaudeHarness(str(binary)), REPO / "prompts" / "intake.md", "hey i would like a game called leaf peeper",
-            cwd=tmp_path / "triage", log_path=tmp_path / "triage.jsonl.gz", env={}, tags=["Game"],
-            modes=[intake.Choice("rigorous", "be thorough")], workflows=[intake.Choice("web_app", "web things"), intake.Choice("api", "APIs")],
-        )
+    about = asyncio.run(
+        intake.summarize(ClaudeHarness(str(binary)), REPO / "prompts" / "summary.md", "Leaf Peeper", "hey i would like a game where you guess the leaf",
+                         cwd=tmp_path / "triage", log_path=tmp_path / "summary.jsonl.gz", env={})
     )  # fmt: skip
-    assert brief == intake.Brief("Leaf Peeper", "leaf-peeper", "Guess the tree.", tag="Game", mode="rigorous", effort="max", title="Tree Guessing Game")
-    # Asked which workflow too, with more than one for new projects to choose from; it didn't say, so the fallback.
-    assert brief.workflow is None and intake.schema(["Game"], ["rigorous"], ["web_app", "api"])["required"][-1] == "workflow"
+    assert about == intake.Summary("Guess the tree.", "Tree Guessing Game")
 
 
 def test_older_databases_get_new_columns(tmp_path):

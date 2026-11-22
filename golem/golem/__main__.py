@@ -29,7 +29,7 @@ async def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)  # a line per request otherwise
     settings = Settings.from_env()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
-    # A new install starts empty, and takes nothing from the org unasked: !adopt brings a repo back.
+    # A new install starts empty, and takes nothing from the org unasked: adopting brings a repo back.
     store = Store(settings.state_dir / "golem.db")
     store.suggest_defaults(plan.SUGGESTED_KEY, plan.SUGGESTED)
 

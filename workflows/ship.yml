@@ -15,7 +15,7 @@ tabs:
       - checkin: hint
         reply_to: fix
         turn: ship
-        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or `!kill` to drop the job."
+        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or stop the job."
       - {agent: fix, turns: 150, turn: ship}
       - {counter: fixes, next: push}
   reckless:
@@ -28,6 +28,6 @@ tabs:
       - checkin: hint
         reply_to: fix
         turn: ship
-        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or `!kill` to drop the job."
+        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or stop the job."
       - {agent: fix, turns: 150, turn: ship}
       - {counter: fixes, next: push-main}

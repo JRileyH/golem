@@ -146,7 +146,7 @@ def _wire_rules(blocks: list[Step], ids: dict[int, str], nodes: dict, edges: dic
                 nodes[f"{loop}-hint"] = {"id": f"{loop}-hint", "ref": f"{loop}-hint", "path": "", "type": "checkin", "name": "hint",
                                          "reply_to": f"{loop}-agent", "turn": "ship",
                                          "message": "I've tried to fix $failed $fixes times and it still fails: $failure.\n\n"
-                                         "Reply with a hint and I'll try again, or `!kill` to drop the job."}  # fmt: skip
+                                         "Reply with a hint and I'll try again, or stop the job."}  # fmt: skip
                 nodes[f"{loop}-agent"] = {"id": f"{loop}-agent", "ref": f"{loop}-agent", "path": "", "type": "agent", "name": "fix",
                                           "instructions": fix_text, "turns": 150, "turn": "ship"}  # fmt: skip
                 nodes[f"{loop}-count"] = {"id": f"{loop}-count", "ref": f"{loop}-count", "path": "", "type": "counter", "counter": "fixes"}

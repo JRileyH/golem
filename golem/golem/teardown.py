@@ -1,5 +1,5 @@
 """Deleting a project: everything golem made for it (its card on the projects page too)
-but the GitHub repo, which golem's token can't delete. Used by !delete and by the nuke, and
+but the GitHub repo, which golem's token can't delete. Used by deleting a project and by the nuke, and
 (without the deployer) when golem checks over a repo and doesn't adopt it."""
 
 from __future__ import annotations

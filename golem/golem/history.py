@@ -45,7 +45,8 @@ def records(settings: Settings, slug: str, items: list[dict]) -> list[tuple[Job,
     found = []
     for issue, prs in sorted(groups.values(), key=lambda g: (g[0] or g[1][0])["created_at"]):
         request = (_request(issue["body"] or "") or issue["title"]) if issue else prs[-1]["title"]
-        kind = "change" if found else "adopt" if request.startswith("!adopt ") else "new"  # the first made it golem's
+        adopted = request.startswith("!adopt ") or bool(issue and (issue["body"] or "").lstrip().startswith("Adopted"))
+        kind = "change" if found else "adopt" if adopted else "new"  # the first made it golem's
         start, end = issue or prs[0], issue or prs[-1]
         job = Job(
             id=0, slug=slug, kind=kind, request=request, playbook={"new": "standard", "adopt": "adopt"}.get(kind, "feature"),
@@ -80,10 +81,11 @@ def _state(issue: dict | None, prs: list[dict]) -> str:
 
 
 def _request(body: str) -> str:
-    """Riggy's words from a job's issue: "Requested:\\n\\n> <words>\\n\\nWorked on by golem (job 7).\""""
+    """Riggy's words from a job's issue: "Requested:\\n\\n> <words>\\n\\nWorked on by golem (job 7)."
+    ("Adopted:" for an adoption's)."""
     text = WORKED_ON.sub("", body).strip()
     head, _, rest = text.partition("\n\n")
-    if head.startswith("Requested"):
+    if head.startswith(("Requested", "Adopted")):
         text = rest
     return "\n".join(line[2:] if line.startswith("> ") else line for line in text.splitlines()).strip()
 

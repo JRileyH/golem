@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from string import Template
 
 from . import plan
@@ -130,7 +129,7 @@ class Prompts:
 
     def survey(self, project: Project, branch: str, said: str) -> str:
         """The survey an adoption's check runs (adopt.py): build and test it here, and say what it
-        needs that golem can't give. `said`: Riggy's words after `!adopt <slug>`."""
+        needs that golem can't give. `said`: what Riggy said the repo is."""
         s = self.settings
         return self.render(
             "survey",
@@ -157,8 +156,6 @@ class Prompts:
         )
         return self.render("wrapup", made=more)
 
-    def intake_path(self) -> Path:
-        return self.dir / "intake.md"
 
 
 def format_done(steps: list[Step]) -> str:

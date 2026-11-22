@@ -37,9 +37,9 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, config, conversation, engine, flows, gallery, home, insights, options, pages, plan, pwa, turns, workflows
+from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
-from . import projectpage
+from . import newproject, projectpage
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -47,8 +47,8 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, LOOKS, Job, Project, Said, Step, Store, Workflow
-from .talk import INBOX, STATUS
+from .store import ACTIVE, EFFORTS, LOOKS, MODELS, Job, Project, Said, Step, Store, Workflow
+from .talk import STATUS
 
 if TYPE_CHECKING:
     from .bot import Bot
@@ -56,8 +56,6 @@ if TYPE_CHECKING:
 COOKIE = "golem_token"
 TOKEN_SECONDS = 24 * 3600
 KEEP_SECONDS = 90 * 24 * 3600  # on a device Riggy keeps signed in: his phone's home-screen app
-# What the project page's controls can ask the bot to do, as !commands.
-COMMANDS = {"options", "mode", "rename", "slug", "delete", "adopt"}
 MAX_FAILURES = 10  # wrong passwords in FAILURE_WINDOW before sign-in is refused for a while
 FAILURE_WINDOW = 15 * 60
 SHOWN = 40  # a conversation's latest messages on its page; "Show earlier messages" adds as many again
@@ -500,36 +498,91 @@ def create_app(
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
-    async def inbox_page(request: Request) -> Response:
+    # --- making a project (newproject.py) ------------------------------------
+
+    def new_choices() -> newproject.Choices:
+        flows_ = scheduler.library.choices(("new",))
+        fallback = scheduler.library.fallback("new")
+        return newproject.Choices([(w.key, w.name, " ".join(w.ingest.split())) for w in flows_], fallback.key if fallback else "",
+                                  [m.name for m in store.modes()], plan.mode_for(store, None), [t.name for t in store.tags()], settings.org)  # fmt: skip
+
+    def new_page(request: Request, new: newproject.Filled | None = None, adopting: newproject.Filled | None = None, status: int = 200) -> Response:
         signed = signed_in(request)
-        shown = _shown(request) + 1
-        said, earlier = _latest(request, sorted(store.messages(INBOX, shown) + store.messages(STATUS, shown), key=lambda m: m.id)) if signed else ([], "")
-        bottom = conversation.composer(INBOX, "idle") if signed and bot else ""
-        return respond(request, "golem", conversation.inbox_page(said, signed, earlier, settings.org), signed, bottom, here="inbox", up=("/p", "Projects"))
+        if not signed:
+            return _back({"back": "/settings"}, "Sign in to start a project.")
+        response = respond(request, "New project", newproject.page(new_choices(), new, adopting), signed, here="new", up=("/p", "Projects"))
+        response.status_code = status
+        return response
+
+    def picked_mode(value: str, errors: dict[str, str]) -> str | None:
+        """A form's mode: None for golem's default ("auto"), "" for none, else one of the modes."""
+        if value == "auto":
+            return None
+        if value and store.mode(value) is None:
+            errors["mode"] = f"There's no mode called {value}."
+        return value
+
+    async def new_form(request: Request) -> Response:
+        return new_page(request)
+
+    async def new_create(request: Request) -> Response:
+        """The New project form: a project as Riggy named it, and its first job (bot.new_project)."""
+        form = await _form(request)
+        if not signed_in(request) or not _same_site(request):
+            return _back({"back": "/new"}, "Sign in first.")
+        if not bot:
+            return _back({"back": "/"}, "golem can't make projects here.")
+        name, idea = " ".join(form.get("name", "").split())[:60], form.get("idea", "").strip()[:8000]
+        slug = (form.get("slug", "").strip().lower() or intake.slugify(name)) if name or form.get("slug") else ""
+        errors: dict[str, str] = {}
+        if not name:
+            errors["name"] = "Name it."
+        if not idea:
+            errors["idea"] = "Say what it's for."
+        if slug and not intake.valid_slug(slug):
+            errors["slug"] = "An address is 2 to 31 lowercase letters, digits and hyphens, and not a reserved word."
+        elif slug and await bot.slug_taken(slug):
+            errors["slug"] = f"{slug} is taken, by a project or a repo. {await intake.unique_slug(slug, bot.slug_taken)} is free."
+        mode = picked_mode(form.get("mode", "auto"), errors)
+        model, effort = form.get("model", ""), form.get("effort", "")
+        if model and model not in MODELS or effort and effort not in EFFORTS:
+            errors[""] = "Pick a model and effort from the lists."
+        if errors:
+            return new_page(request, newproject.Filled(form, errors), status=400)
+        try:
+            job = await bot.new_project(name, idea, slug=slug, workflow=form.get("workflow", ""), mode=mode, tag=form.get("tag", ""),
+                                        model=model, effort=effort)  # fmt: skip
+        except ValueError:
+            return new_page(request, newproject.Filled(form, {"slug": f"{slug} was just taken. Try another."}), status=400)
+        return _back({"back": projectpage.href(job)}, f"Started {name}: {plan.title(job)}.")
+
+    async def new_adopt(request: Request) -> Response:
+        """Adopting a repo golem didn't make (bot.adopt): what's in the way, if anything, comes back here."""
+        form = await _form(request)
+        if not signed_in(request) or not _same_site(request):
+            return _back({"back": "/new"}, "Sign in first.")
+        if not bot:
+            return _back({"back": "/"}, "golem can't adopt repos here.")
+        errors: dict[str, str] = {}
+        repo = form.get("repo", "").strip().lower()
+        if not repo:
+            errors["repo"] = "Which repo?"
+        mode = picked_mode(form.get("mode", "auto"), errors)
+        if errors:
+            return new_page(request, adopting=newproject.Filled(form, errors), status=400)
+        job, said = await bot.adopt(repo, form.get("words", ""), name=form.get("name", ""), mode=mode, tag=form.get("tag", ""))
+        if job is None:
+            return new_page(request, adopting=newproject.Filled(form, {"": said}), status=400)
+        return _back({"back": projectpage.href(job)}, said)
+
+    async def inbox_page(request: Request) -> Response:
+        """Where golem's own conversation was: what it says now is on Now."""
+        return RedirectResponse("/", 302)
 
     async def say(request: Request) -> Response:
-        """Something written in a conversation, handed to the bot."""
+        """Where writing to golem went: requests are a project page's Ask box, new projects the New project form."""
         form = await _form(request)
-        channel, command, text = form.get("channel", ""), form.get("command", ""), form.get("text", "").strip()
-        back = "/inbox" if channel == INBOX else f"/p/{channel}"
-        form["back"] = _safe(form.get("back", "")) or back + "#end"
-        if not signed_in(request) or not _same_site(request):
-            return _back(form, "Sign in first.")
-        if not bot or (channel != INBOX and store.project(channel) is None):
-            return _back({"back": "/"}, "golem can't take that here.")
-        if not text or (command and command not in COMMANDS):
-            return _back(form, "Write something first.")
-        if command == "delete" and text != channel:
-            return _back({"back": back}, f"To delete it, type {channel} exactly.")
-        before = {p.slug for p in store.projects()}
-        await bot.handle(channel, f"!{command} {text}" if command else text[:8000])
-        made = [p for p in store.projects() if p.slug not in before]
-        if channel == INBOX and made:  # a new idea became a project: on to its page
-            return RedirectResponse(f"/p/{made[0].slug}#end", status_code=303)
-        if store.project(channel) is None and channel != INBOX:  # deleted, or moved to a new slug
-            moved = store.project(text.lower()) if command == "slug" else None
-            return RedirectResponse(f"/p/{moved.slug}#end" if moved else "/inbox#end", status_code=303)
-        return RedirectResponse(form["back"], status_code=303)
+        return _back({"back": _safe(form.get("back", "")) or "/"}, "Ask on a project's page, or start a project with New project.")
 
     # --- the installable app and its notifications (pwa.py, push.py) ---------
 
@@ -765,6 +818,22 @@ def create_app(
                     message = control.drop_tab(_int(form.get("workflow")), value)
                 case "note":
                     message = await control.note(job, value, step, position)
+                case "rename":
+                    message = control.rename(slug, value)
+                case "project-slug" | "project-delete":
+                    project = store.project(slug)
+                    if project is None or bot is None:
+                        raise ControlError("That project isn't there.")
+                    if action == "project-slug":
+                        message = await bot.move(project, value)
+                        if moved := store.project(value.strip().lower()) if store.project(slug) is None else None:
+                            return _back({"back": f"/p/{moved.slug}/settings"}, message)
+                    elif value.strip().lower() != slug:
+                        raise ControlError(f"To delete it, type {slug} exactly.")
+                    else:
+                        message = await bot.delete(project)
+                        if store.project(slug) is None:
+                            return _back({"back": "/p"}, message)
                 case "upgrade":
                     message = control.upgrade()
                 case "check-version":
@@ -812,7 +881,9 @@ def create_app(
             Route("/p/{slug}/jobs/{job_id:int}", project_job_page),
             Route("/p/{slug}/ask", project_ask, methods=["POST"]),
             Route("/p/{slug}/history", project_history),
-            Route("/new", lambda request: RedirectResponse("/inbox", 302)),  # until the New project form
+            Route("/new", new_form),
+            Route("/new", new_create, methods=["POST"]),
+            Route("/new/adopt", new_adopt, methods=["POST"]),
             Route("/settings", settings_page),
             Route("/inbox", inbox_page),
             Route("/say", say, methods=["POST"]),

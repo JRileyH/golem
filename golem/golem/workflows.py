@@ -407,7 +407,7 @@ class Library:
 
 
     def create(self, name: str, start: str) -> Workflow:
-        """A new workflow of Riggy's: a key that never changes, a handle for `!with`, a blank graph."""
+        """A new workflow of Riggy's: a key that never changes, a short name (handle), a blank graph."""
         base = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:30] or "workflow"
         handle, n = base, 1
         while self.store.workflow(handle=handle) or self.store.workflow(key=handle):

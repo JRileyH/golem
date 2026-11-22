@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from conftest import REPO, Golem
 
-from golem import nuke, plan, scheduler
+from golem import nuke, plan, scheduler, turns
 from golem.harness import WRAPUP_SCHEMA, RunResult
 from golem.workspace import CI
 
@@ -29,10 +29,10 @@ def verdict(kind: str, message: str = "ok", link: str = "") -> dict:
 
 
 async def new_project(golem: Golem, script_after: list) -> str:
-    """Dictate the trees idea in the inbox; returns the project's channel, its slug."""
-    golem.harness.script = [TREES, *script_after]
-    await golem.say(golem.inbox, "a flashcard game for identifying northeastern us trees")
-    return golem.store.projects()[0].slug
+    """Start the trees idea on the New project form; returns the project's slug."""
+    golem.harness.script = [TREES, *script_after]  # TREES answers the summary call
+    await golem.new_project("a flashcard game for identifying northeastern us trees")
+    return "tree-cards"
 
 
 def current(golem: Golem, job_id: int):
@@ -42,70 +42,45 @@ def current(golem: Golem, job_id: int):
 # --- new projects -------------------------------------------------------------
 
 
-def test_inbox_idea_becomes_a_project_with_its_own_conversation(golem):
+def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     async def go():
         room = await new_project(golem, [])
         project = golem.store.project("tree-cards")
-        assert project.name == "Tree Cards" and room == "tree-cards"
+        assert (project.name, project.summary, project.mode, room) == ("Tree Cards", "A flashcard game for northeastern US trees.", "", "tree-cards")
         job = golem.store.active_job("tree-cards")
-        # A minute's grace (none in tests) to change the settings before work starts.
-        assert (job.kind, job.workflow, job.mode, job.state) == ("new", "web_app", "", "parked")
+        # No grace: the form said everything it was for.
+        assert (job.kind, job.workflow, job.mode, job.state, job.title) == ("new", "web_app", "", "queued", "Tree Flashcard Game")
         assert job.request == "a flashcard game for identifying northeastern us trees"
-        [reply] = golem.chat.texts(golem.inbox)
-        assert reply.startswith("New project: Tree Cards (tree-cards), web app.")
-        assert reply.endswith("Its conversation: https://golem.unlaunched.dev/p/tree-cards")
-        [intro] = golem.chat.texts(room)
-        assert "A flashcard game for northeastern US trees." in intro
-        assert "https://tree-cards.unlaunched.dev/" in intro
-        assert "Web app, each step's default model and effort. Starting in a minute" in intro
-        # Triage is a cheap structured call.
-        triage = golem.harness.calls[0]
-        assert (triage.model, triage.label) == ("haiku", "intake")
-        assert "GOLEM_WEB_PASSWORD" not in triage.env
+        assert [m.text for m in golem.store.job_messages(job.id)] == [job.request]  # its activity starts with what he said
+        # golem only writes the summary and the job's title: a cheap structured call.
+        call = golem.harness.calls[0]
+        assert (call.model, call.label) == ("haiku", "summary") and "GOLEM_WEB_PASSWORD" not in call.env
+        assert "Its name: Tree Cards" in call.prompt and "a flashcard game for identifying northeastern us trees" in call.prompt
 
     run(go())
 
 
-def test_slug_clashes_get_a_suffix(golem):
+def test_a_new_project_takes_the_workflow_mode_tag_and_engine_riggy_picked(golem):
     async def go():
-        golem.workspace.repos.add("tree-cards")  # a repo by that name already exists
-        await new_project(golem, [])
-        assert golem.store.project("tree-cards") is None
-        assert golem.store.project("tree-cards-2").name == "Tree Cards"
+        golem.harness.script = [TREES]
+        job = await golem.new_project("trees, quickly", workflow="web_app", mode="reckless", tag="Game", model="opus", effort="max")
+        project = golem.store.project("tree-cards")
+        assert (job.workflow, job.mode, project.tag, project.model, project.effort, project.mode) == ("web_app", "reckless", "Game", "opus", "max", "")
+        golem.harness.script = [{"summary": "s", "title": "t"}]
+        other = await golem.new_project("birds", name="Birds", mode="", tag="Nope")
+        assert other.mode == "" and golem.store.project("birds").tag == ""  # no mode, and only a tag there is
+        golem.workspace.repos.add("fish")  # a repo by that name already exists: the form says so first
+        with pytest.raises(ValueError):
+            await golem.new_project("fish", name="Fish")
 
     run(go())
 
 
-def test_a_bad_triage_falls_back_to_the_dictation(golem):
+def test_a_bad_summary_call_falls_back_to_the_idea(golem):
     async def go():
         golem.harness.script = [RunResult("error", error="boom")]
-        await golem.say(golem.inbox, "Pomodoro timer with sounds")
-        assert golem.store.project("pomodoro-timer-with-sounds").name == "Pomodoro Timer With Sounds"
-
-    run(go())
-
-
-def test_triage_tags_a_new_idea_and_only_rarely_makes_a_tag(golem):
-    async def go():
-        golem.harness.script = [{**TREES, "tag": "Game"}]
-        await golem.say(golem.inbox, "a flashcard game for identifying northeastern us trees")
-        assert golem.store.project("tree-cards").tag == "Game"
-        triage = golem.harness.calls[0]
-        assert "- Game\n" in triage.prompt and "Pixel Art" in triage.prompt  # the tags there are, and what isn't one
-        assert triage.schema["properties"]["tag"]["enum"] == ["Game", "none", "new"]
-
-        # A new one, when triage picks it: said in the inbox, and offered to the next idea.
-        golem.harness.script = [{"name": "Lint Bot", "slug": "lint-bot", "summary": "s", "tag": "new", "new_tag": "dev tool"}]
-        await golem.say(golem.inbox, "a bot that lints my repos")
-        assert golem.store.project("lint-bot").tag == "Dev Tool" and [t.name for t in golem.store.tags()] == ["Game", "Dev Tool"]
-        assert golem.chat.texts(golem.inbox)[-1].endswith("/p/lint-bot. It's the first Dev Tool: a new tag (Settings has them)")
-        # A new one that's an old one is the old one; one that's more than a sort of project is none.
-        for slug, new_tag, tag in (("hoops", "Games", "Game"), ("garden", "Gardening Tips For Kids", ""), ("x-tool", "Dev Tools", "Dev Tool")):
-            golem.harness.script = [{"name": slug, "slug": slug, "summary": "s", "tag": "new", "new_tag": new_tag}]
-            await golem.say(golem.inbox, slug)
-            assert golem.store.project(slug).tag == tag
-        assert golem.harness.calls[-1].schema["properties"]["tag"]["enum"] == ["Game", "Dev Tool", "none", "new"]
-        assert len(golem.store.tags()) == 2
+        job = await golem.new_project("Pomodoro timer with sounds\n\nand a dark mode", name="Pomodoro")
+        assert golem.store.project("pomodoro").summary == "Pomodoro timer with sounds" and job.title == "Pomodoro"  # its name
 
     run(go())
 
@@ -154,8 +129,8 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
         # Nothing runs while the job waits on Riggy.
         assert golem.store.next_job(at="9999") is None
 
-        await golem.say(room, "looks good but make the photos bigger")
-        assert golem.chat.texts(room)[-1] == "Thanks, picking it back up. Starting now."
+        assert await golem.reply(room, "looks good but make the photos bigger") == "Sent. Picking the job back up."
+        assert golem.store.job(job.id).state == "queued"
         golem.harness.script = by_label({
             "design": [three_looks], "pick": [{"decision": "pick", "picked": ["A"]}],
             "docs": [verdict("done", "Ten trees a round, with streaks.")],
@@ -166,7 +141,7 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
         assert "- your check-in: You said: “looks good but make the photos bigger”" in design.prompt
         assert "> looks good but make the photos bigger" not in design.prompt  # his reply is for the buildout
         assert golem.store.job(job.id).state == "waiting" and plan.label(current(golem, job.id)) == "your pick"
-        await golem.say(room, "A")
+        await golem.reply(room, "A")
         await golem.finish()
 
         guide, apply = (next(c for c in golem.harness.calls if c.label == name) for name in ("guide", "apply"))
@@ -328,7 +303,6 @@ def test_waiting_for_ci_frees_the_worker_and_checks_again(golem):
         step = current(golem, job.id)
         assert (job.state, plan.label(step), step.summary) == ("parked", "CI", "Waiting for CI on PR #1: build: in_progress")
         assert golem.store.next_job() is None  # checked again in 20 seconds
-        assert "waiting for CI, CI (6/33)" in golem.bot.job_line(job)
         await golem.step()
         assert golem.store.step(step.id).state == "done"
 
@@ -373,7 +347,7 @@ def test_fixing_in_circles_asks_riggy_for_a_hint(golem):
         job = golem.store.jobs()[0]
         assert job.state == "waiting"
         assert golem.chat.texts(room)[-1].startswith("I've tried to fix deploy 1 times and it still fails")
-        await golem.say(room, "use port 8080")
+        await golem.reply(room, "use port 8080")
         golem.harness.script = [verdict("done")]
         await golem.until("fix")
         await golem.step()
@@ -404,7 +378,7 @@ def test_a_message_in_an_idle_project_room_is_a_change_request(golem):
         golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
 
         said = len(golem.chat.texts(room))
-        await golem.say(room, "i dont like how the score works, count streaks instead")
+        await golem.ask(room, "i dont like how the score works, count streaks instead")
         job = golem.store.active_job("tree-cards")
         assert (job.kind, job.workflow) == ("change", "change")
         assert len(golem.chat.texts(room)) == said  # no "Got it": "Working on it" follows at once
@@ -427,7 +401,7 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         room = await idle_project(golem)
         words = "I'd like you to redo the library page so it's a grid of covers instead of a list"
         golem.harness.script = by_label({"request": [{"workflow": "change", "title": "“Library View Redesign.”"}]})
-        await golem.say(room, words)
+        await golem.ask(room, words)
         job = golem.store.active_job("tree-cards")
         assert (job.title, job.request) == ("Library View Redesign", words)  # tidied; his words kept as they were
         ask = next(c for c in golem.harness.calls if c.label == "request")
@@ -441,7 +415,7 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         assert golem.workspace.issues[-1] == ("tree-cards", "Library View Redesign")  # its body still quotes his words
         await golem.finish()
         assert any(a.startswith("open PR #1: Library View Redesign: ") for a in golem.workspace.actions)
-        assert golem.bot.job_line(golem.store.job(job.id)).startswith(f"#{job.id} Tree Cards: change “Library View Redesign”, done")
+        assert plan.title(golem.store.job(job.id)) == "Library View Redesign" and golem.store.job(job.id).state == "done"
         # Every later change keeps to the project's design guide, and keeps it up to date.
         prompts = {c.label: c.prompt for c in golem.harness.calls}
         assert "If the project has a design guide, `docs/design.md`,\n  everything you make that can be seen follows it" in prompts["change"]
@@ -456,7 +430,7 @@ def test_a_change_in_reckless_mode_skips_the_review(golem):
         await new_project(golem, [])
         golem.store.update_project("tree-cards", mode="reckless")
         golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
-        await golem.say("tree-cards", "bigger photos")
+        await golem.ask("tree-cards", "bigger photos")
         await golem.finish()
         job = golem.store.jobs()[0]
         assert golem.labels(job.id) == ["set up", "change", "docs", "push", "PR", "CI", "merge", "deploy", "done"]
@@ -471,8 +445,7 @@ def test_messages_while_a_job_runs_are_notes_for_its_next_step(golem):
         await golem.until("spec")
         job = golem.store.active_job("tree-cards")
         golem.store.update_job(job.id, state="running")
-        await golem.say(room, "use oak and maple first")
-        assert golem.chat.texts(room)[-1] == "Noted. I'll work that in at the next step of the current job."
+        assert await golem.note(room, "use oak and maple first") == "Sent. The next agent step gets it."
         assert golem.store.active_job("tree-cards").id == job.id  # no second job
         golem.store.update_job(job.id, state="queued")
         golem.harness.script = [verdict("done")]
@@ -493,7 +466,7 @@ def test_blocked_resumes_the_same_session_with_the_answer(golem):
         assert current(golem, job.id).summary == "Asked you: Photos or drawings?"
         assert golem.chat.texts(room)[-1].startswith("Question: Photos or drawings?")
 
-        await golem.say(room, "photos")
+        await golem.reply(room, "photos")
         golem.harness.script = [verdict("done")]
         await golem.step()
         call = golem.harness.calls[-1]
@@ -572,12 +545,11 @@ def test_asking_to_see_options_shows_them_then_builds_the_pick(golem):
         golem.harness.script = by_label(
             {"request": [{"workflow": "options"}], "options": [three_styles], "pick": [{"decision": "pick", "picked": ["B"]}]}
         )
-        await golem.say(room, "i want a new art style, show me 3 that are more chibi")
+        await golem.ask(room, "i want a new art style, show me 3 that are more chibi")
         job = golem.store.active_job("tree-cards")
         assert (job.kind, job.playbook) == ("change", "options")
         ask = golem.harness.calls[-1]
         assert (ask.label, ask.model) == ("request", "haiku") and "show me 3 that are more chibi" in ask.prompt
-        assert golem.chat.texts(room)[-1].startswith("Got it: I'll make some options for you to pick from first")
 
         await golem.until("your pick")
         assert golem.chat.texts(room)[-2:] == [
@@ -599,7 +571,7 @@ def test_asking_to_see_options_shows_them_then_builds_the_pick(golem):
         )
         assert (golem.store.job(job.id).state, choose.state, choose.summary) == ("waiting", "waiting", "Waiting for your pick.")
 
-        await golem.say(room, "b but bigger eyes")
+        await golem.reply(room, "b but bigger eyes")
         await golem.step()  # reads the reply
         pick = golem.harness.calls[-1]
         assert pick.label == "pick" and "B: Pastel. The hero, pastel." in pick.prompt and pick.prompt.rstrip().endswith("b but bigger eyes")
@@ -627,11 +599,11 @@ def test_asking_for_other_options_makes_another_round(golem):
                 "pick": [{"decision": "more", "picked": []}, {"decision": "pick", "picked": ["C"]}],
             }
         )
-        await golem.say(room, "show me some logo options")
+        await golem.ask(room, "show me some logo options")
         job = golem.store.active_job("tree-cards")
         await golem.until("your pick")
         await golem.step()
-        await golem.say(room, "none of these, try something more pastel")
+        await golem.reply(room, "none of these, try something more pastel")
         await golem.step()
         assert golem.chat.texts(room)[-1] == (
             "✓ your pick: You asked for other options: “none of these, try something more pastel”\nNext: options."
@@ -642,7 +614,7 @@ def test_asking_for_other_options_makes_another_round(golem):
         await golem.step()
         second = [s for s in golem.store.steps(job.id) if s.name == "options"][1]
         assert golem.chat.images[-1][1] == f"{second.id}-c-1.png"
-        await golem.say(room, "C")
+        await golem.reply(room, "C")
         await golem.finish()
         assert golem.labels(job.id)[:6] == ["set up", "options", "your pick", "options", "your pick", "change"]
         picks = [s.summary for s in golem.store.steps(job.id) if s.kind == "choose"]
@@ -651,17 +623,15 @@ def test_asking_for_other_options_makes_another_round(golem):
     run(go())
 
 
-def test_options_on_command_and_never_beside_another_job(golem):
+def test_options_picked_on_the_ask_box_and_never_beside_another_job(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!options a new logo")
-        job = golem.store.active_job("tree-cards")
-        assert (job.playbook, job.request) == ("options", "a new logo")
-        assert all(call.label != "request" for call in golem.harness.calls)  # no need to ask the model
-        await golem.say(room, "!options a new font")
-        assert golem.chat.texts(room)[-1] == f"Tree Cards has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
-        await golem.say(golem.inbox, "!options")
-        assert golem.chat.texts(golem.inbox)[-1].startswith("Usage: !options")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "New Logo"}]})
+        job = await golem.ask(room, "a new logo", workflow="options")
+        assert (job.playbook, job.request, job.title) == ("options", "a new logo", "New Logo")  # his pick over the call's
+        font = await golem.ask(room, "a new font", workflow="options")
+        assert font.state == "queued" and turns.behind(golem.store, font).id == job.id  # it waits its turn
+        assert golem.scheduler.pick(at="9999").id == job.id
 
     run(go())
 
@@ -669,8 +639,7 @@ def test_options_on_command_and_never_beside_another_job(golem):
 def test_the_fake_harness_walks_an_options_job_with_placeholders(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!options a new logo")
-        job = golem.store.active_job("tree-cards")
+        job = await golem.ask(room, "a new logo", workflow="options")
         golem.harness.script = None  # nothing scripted, as in local mode with HARNESS=fake
         await golem.until("your pick")
         made = next(s for s in golem.store.steps(job.id) if s.name == "options")
@@ -740,7 +709,7 @@ def test_a_design_pass_shows_its_doc_and_builds_the_pick(golem):
         )
         assert (golem.store.job(job.id).state, choose.state) == ("waiting", "waiting")
 
-        await golem.say(room, "a, 1 oxanium, leaf icon")
+        await golem.reply(room, "a, 1 oxanium, leaf icon")
         await golem.step()
         ask = golem.harness.calls[-1]
         assert ask.label == "pick" and "1. Wordmark: Fraunces or Oxanium?" in ask.prompt and "A: Field guide." in ask.prompt
@@ -763,7 +732,7 @@ def test_a_design_pass_shows_its_doc_and_builds_the_pick(golem):
 def test_another_design_round_keeps_what_he_settled(golem):
     async def go():
         room, job = await design_up(golem, [{"decision": "more", "picked": ["A"]}, {"decision": "pick", "picked": ["B"]}])
-        await golem.say(room, "a but show me more icons")
+        await golem.reply(room, "a but show me more icons")
         await golem.step()
         assert golem.chat.texts(room)[-1] == (
             f"✓ your pick: You settled on A (Field guide) (docs/design/rounds/job-{job.id}/round-1/a/) "
@@ -777,7 +746,7 @@ def test_another_design_round_keeps_what_he_settled(golem):
         second = [s for s in golem.store.steps(job.id) if s.name == "design"][1]
         assert golem.chat.images[-1] == (room, f"{second.id}-p-2.png", "Shared (2)")
         assert second.design["source"] == f"docs/design/rounds/job-{job.id}/round-2/doc.html"
-        await golem.say(room, "B")
+        await golem.reply(room, "B")
         await golem.finish()
         assert golem.labels(job.id)[:6] == ["set up", "design", "your pick", "design", "your pick", "guide"]
 
@@ -824,7 +793,7 @@ def test_a_change_request_is_not_options(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "show the score bigger")
+        await golem.ask(room, "show the score bigger")
         assert golem.store.active_job("tree-cards").workflow == "change"
 
     run(go())
@@ -834,10 +803,9 @@ def test_asking_for_a_new_look_starts_a_design_pass(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "design", "title": "Field Guide Redesign"}]})
-        await golem.say(room, "it looks generic, make it feel like an old field guide")
+        await golem.ask(room, "it looks generic, make it feel like an old field guide")
         job = golem.store.active_job("tree-cards")
         assert (job.kind, job.playbook, job.title) == ("change", "design", "Field Guide Redesign")
-        assert golem.chat.texts(room)[-1].startswith("Got it: a design pass. I'll make a doc with a few directions")
         await golem.step()
         assert golem.chat.texts(room)[-1] == "Making design directions: Field Guide Redesign"
         assert plan.label(current(golem, job.id)) == "design"
@@ -845,21 +813,14 @@ def test_asking_for_a_new_look_starts_a_design_pass(golem):
     run(go())
 
 
-def test_a_design_pass_on_command_and_never_beside_another_job(golem):
+def test_a_design_pass_picked_on_the_ask_box_and_never_beside_another_job(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!design")
-        job = golem.store.active_job("tree-cards")
-        assert (job.playbook, job.request, job.title) == ("design", "A design pass: give it a look of its own.", "Design Pass")
-        assert all(call.label != "request" for call in golem.harness.calls)  # no need to ask the model
-        await golem.say(room, "!design warmer")
-        assert golem.chat.texts(room)[-1] == f"Tree Cards has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
-        golem.store.update_job(job.id, state="killed")
-        await golem.say(golem.inbox, "!design tree-cards cozy, like a cabin")
-        job = golem.store.active_job("tree-cards")
-        assert (job.playbook, job.request, plan.title(job)) == ("design", "cozy, like a cabin", "cozy, like a cabin")
-        await golem.say(golem.inbox, "!design")
-        assert golem.chat.texts(golem.inbox)[-1].startswith("Usage: !design")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Cozy Redesign"}]})
+        job = await golem.ask(room, "cozy, like a cabin", workflow="design")
+        assert (job.playbook, job.request, job.title) == ("design", "cozy, like a cabin", "Cozy Redesign")
+        warmer = await golem.ask(room, "warmer", workflow="design")
+        assert turns.behind(golem.store, warmer).id == job.id  # it waits its turn
 
     run(go())
 
@@ -878,7 +839,7 @@ def test_a_question_is_answered_without_building_anything(golem):
         room = await idle_project(golem)
         before = len(golem.workspace.actions)
         golem.harness.script = by_label({"request": [{"workflow": "question"}], "examine": [verdict("done", answer, link)]})
-        await golem.say(room, "why does my score reset")
+        await golem.ask(room, "why does my score reset")
         job = newest_job(golem)
         assert (job.playbook, job.priority) == ("question", QUESTION_PRIORITY)
         assert golem.store.active_job("tree-cards", questions=False) is None  # no change under way
@@ -899,7 +860,7 @@ def test_a_question_while_a_job_is_under_way_comes_first_and_is_not_a_note(golem
         job = golem.store.active_job("tree-cards")
         await golem.until("scaffold")
         golem.harness.script = by_label({"request": [{"workflow": "question"}]})
-        await golem.say(room, "what stack did you pick?")
+        await golem.ask(room, "what stack did you pick?")
         question = newest_job(golem)
         assert question.playbook == "question" and golem.store.pending_notes(job.id) == []
         await golem.step()  # the question goes ahead of the job's next step
@@ -913,21 +874,18 @@ def test_a_question_while_a_job_is_under_way_comes_first_and_is_not_a_note(golem
     run(go())
 
 
-def test_question_on_command_and_its_question_back(golem):
+def test_a_question_picked_on_the_ask_box_and_its_question_back(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"examine": [verdict("blocked", "Which score: the streak or the total?"), verdict("done", "The streak.")]})
-        await golem.say(room, "!question which score resets")
-        assert all(call.label != "request" for call in golem.harness.calls)  # no need to ask the model
-        question = newest_job(golem)
+        question = await golem.ask(room, "which score resets", workflow="question")
+        assert question.playbook == "question"
         await golem.finish()
         assert golem.store.job(question.id).state == "waiting" and "Which score" in golem.chat.texts(room)[-1]
-        await golem.say(room, "the streak one")  # his reply to it, not a change
+        await golem.reply(room, "the streak one")  # his reply to it, not a change
         assert golem.store.job(question.id).state == "queued" and golem.store.active_job("tree-cards", questions=False) is None
         await golem.finish()
         assert golem.chat.texts(room)[-1] == "The streak." and golem.harness.calls[-1].resume == "s"
-        await golem.say(golem.inbox, "!question")
-        assert golem.chat.texts(golem.inbox)[-1].startswith("Usage: !question")
 
     run(go())
 
@@ -1044,7 +1002,6 @@ def test_proposals_skip_the_kinds_riggy_turned_off(golem):
 
 
 def test_proposals_wait_until_golem_and_the_project_are_free(golem):
-    from golem import proposals
     from golem.control import Control
 
     async def go():
@@ -1080,7 +1037,7 @@ def test_proposals_wait_until_golem_and_the_project_are_free(golem):
 
         # Accepted while a change is under way: built once it's done.
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "make the cards flip faster")
+        await golem.ask(room, "make the cards flip faster")
         change = golem.store.active_job("tree-cards")
         await Control(golem.store, golem.scheduler).decide(open_[0].id, True, "yes please")
         assert golem.store.proposal(open_[0].id).built_by is None
@@ -1179,8 +1136,7 @@ def test_requests_phrased_as_questions_are_changes():
 def test_an_options_step_without_options_tries_again(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!options a new logo")
-        job = golem.store.active_job("tree-cards")
+        job = await golem.ask(room, "a new logo", workflow="options")
         await golem.until("options")
         golem.harness.script = by_label({"options": [verdict("done", "Here are some ideas.")]})
         await golem.step()
@@ -1258,8 +1214,7 @@ def test_running_out_of_turns_gets_a_wrapup_in_the_same_session(golem):
 def test_an_options_step_that_finishes_as_its_turns_run_out_keeps_its_options(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!options a new hero")
-        job = golem.store.active_job("tree-cards")
+        job = await golem.ask(room, "a new hero", workflow="options")
         await golem.until("options")
 
         def script(call):
@@ -1321,8 +1276,7 @@ def test_kill_stops_the_running_step(golem):
         loop = asyncio.create_task(golem.scheduler.run_forever())
         await asyncio.wait_for(started.wait(), 5)
         job = golem.store.active_job("tree-cards")
-        await golem.say("tree-cards", "!kill")
-        assert golem.chat.sent[-1][1] == f"Killed job {job.id} (Tree Cards)."
+        assert await golem.control.kill(job.id) == f"Stopped job {job.id}."
         for _ in range(50):
             if not golem.scheduler.running:
                 break
@@ -1404,43 +1358,18 @@ def test_a_step_that_stops_doing_anything_is_restarted(golem, monkeypatch):
 # --- commands -----------------------------------------------------------------
 
 
-def test_commands(golem):
+def test_pausing_a_project_or_all_work(golem):
     async def go():
-        room = await new_project(golem, [])
-        inbox = golem.inbox
-
-        await golem.say(inbox, "!queue")
+        await new_project(golem, [])
         job = golem.store.active_job("tree-cards")
-        assert golem.chat.sent[-1] == (inbox, f"#{job.id} Tree Cards: new project “Tree Flashcard Game”, starting shortly, set up (1/33)", True)
-
-        await golem.say(room, "!status")
-        assert golem.chat.texts(room)[-1].startswith("Tree Cards (tree-cards)\nNo default mode, each step's default model and effort\n#")
-
-        await golem.say(room, "!pause")
-        assert golem.store.project("tree-cards").paused
-        assert golem.store.next_job() is None
-        await golem.say(inbox, "!resume tree-cards")
+        await golem.control.pause("tree-cards", True)
+        assert golem.store.project("tree-cards").paused and golem.store.next_job() is None
+        await golem.control.pause("tree-cards", False)
         assert golem.store.next_job().id == job.id
-
-        await golem.say(inbox, "!pause")
+        golem.control.pause_all(True)
         assert golem.scheduler.paused
-        await golem.say(inbox, "!queue")
-        assert golem.chat.texts(inbox)[-1].startswith("Work is paused.")
-        await golem.say(inbox, "!resume")
+        golem.control.pause_all(False)
         assert not golem.scheduler.paused
-
-        await golem.say(inbox, "!kill")
-        assert golem.chat.texts(inbox)[-1] == "Which job? !kill <number> (see !queue)."
-        await golem.say(inbox, "!nope")
-        assert golem.chat.texts(inbox)[-1].startswith("Unknown command !nope.")
-
-    run(go())
-
-
-def test_golem_news_is_not_an_inbox(golem):
-    async def go():
-        await golem.say("status", "a todo app")
-        assert golem.store.projects() == [] and golem.store.messages("status") == []
 
     run(go())
 
@@ -1448,10 +1377,10 @@ def test_golem_news_is_not_an_inbox(golem):
 # --- settings, names and slugs ------------------------------------------------
 
 
-def test_dictated_settings_pick_the_playbook_model_and_effort(golem):
+def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem):
     async def go():
-        golem.harness.script = [{**TREES, "name": "Leaf Peeper", "slug": "leaf-peeper", "mode": "rigorous", "model": "fable", "effort": "max"}]
-        await golem.say(golem.inbox, "make a game called Leaf Peeper, rigorous, fable, max effort")
+        golem.harness.script = [{**TREES, "title": "Leaf Guessing Game"}]
+        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", mode="rigorous", model="fable", effort="max")
         project = golem.store.project("leaf-peeper")
         assert (project.name, project.mode, project.model, project.effort) == ("Leaf Peeper", "", "fable", "max")  # its default is Riggy's to set
         job = golem.store.active_job("leaf-peeper")
@@ -1469,12 +1398,12 @@ def test_dictated_settings_pick_the_playbook_model_and_effort(golem):
     run(go())
 
 
-def test_unspecified_settings_use_the_defaults(tmp_path):
+def test_unpicked_settings_use_the_defaults(tmp_path):
     golem = Golem(tmp_path, default_mode="reckless", default_model="sonnet", default_effort="xhigh")
 
     async def go():
-        golem.harness.script = [{**TREES, "mode": "unspecified", "model": "unspecified", "effort": "nonsense"}]
-        await golem.say(golem.inbox, "trees")
+        golem.harness.script = [TREES]
+        await golem.new_project("trees")
         project = golem.store.project("tree-cards")
         assert (project.mode, project.model, project.effort) == ("", "", "")  # each step's default; golem's default mode
         assert golem.store.active_job("tree-cards").mode == "reckless"
@@ -1485,24 +1414,21 @@ def test_unspecified_settings_use_the_defaults(tmp_path):
     run(go())
 
 
-def test_settings_commands(golem):
+def test_a_projects_settings(golem):
+    from golem.control import ControlError
+
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         job = golem.store.active_job("tree-cards")
-
-        await golem.say(room, "!mode rigorous")
-        assert golem.chat.texts(room)[-1] == (
-            "Tree Cards: default mode rigorous, each step's default model and effort. Job 1 will run as web app, rigorous mode."
-        )
+        said = await golem.control.setting("tree-cards", "mode", "rigorous")
+        assert said == f"Tree Cards: requests run in rigorous mode unless they ask for another; job {job.id}, not started yet, too."
         assert golem.store.job(job.id).mode == "rigorous" and golem.store.project("tree-cards").mode == "rigorous"
-
-        await golem.say(golem.inbox, "!effort tree-cards max")
-        assert golem.store.project("tree-cards").effort == "max"
-        await golem.say(room, "!model sonnet")
-        await golem.say(room, "!model gpt")
-        assert golem.chat.texts(room)[-1] == "Usage: !model fable|opus|sonnet|haiku|default"
-        await golem.say(golem.inbox, "!mode rigorous")
-        assert golem.chat.texts(golem.inbox)[-1] == "Usage: !mode <project> rigorous|reckless|default"
+        await golem.control.setting("tree-cards", "effort", "max")
+        await golem.control.setting("tree-cards", "model", "sonnet")
+        assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").effort) == ("sonnet", "max")
+        for name, value in (("model", "gpt"), ("mode", "fancy")):
+            with pytest.raises(ControlError):
+                await golem.control.setting("tree-cards", name, value)
 
         await golem.until("spec")
         golem.harness.script = [verdict("done")]
@@ -1510,40 +1436,32 @@ def test_settings_commands(golem):
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "max")
 
         # Once the job has started, it carries on as it is.
-        await golem.say(room, "!mode reckless")
-        assert golem.store.job(job.id).mode == "rigorous"
-        assert "carries on as it is" in golem.chat.texts(room)[-1]
-
-        await golem.say(room, "!status")
-        assert "Default mode reckless, model sonnet, max effort" in golem.chat.texts(room)[-1]
-        await golem.say(room, "!model default")
-        assert golem.store.project("tree-cards").model == ""
-        assert golem.chat.texts(room)[-1] == "Tree Cards: each step's default model, max effort. Takes effect from the next step."
-        await golem.say(room, "!mode default")
-        assert golem.store.project("tree-cards").mode == ""
+        await golem.control.setting("tree-cards", "mode", "reckless")
+        assert golem.store.job(job.id).mode == "rigorous" and golem.store.project("tree-cards").mode == "reckless"
+        await golem.control.setting("tree-cards", "model", "")
+        await golem.control.setting("tree-cards", "mode", "")
+        assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").mode) == ("", "")
+        assert golem.chat.texts("tree-cards") == [m for m in golem.chat.texts("tree-cards") if "from the status page" not in m]  # the page says it
 
     run(go())
 
 
 def test_rename(golem):
     async def go():
-        room = await new_project(golem, [])
-        await golem.say(room, "!rename Leaf Peeper")
+        await new_project(golem, [])
+        assert golem.control.rename("tree-cards", "  Leaf   Peeper ") == "Renamed Tree Cards to Leaf Peeper. Its address stays tree-cards."
         assert golem.store.project("tree-cards").name == "Leaf Peeper"
-        await golem.say(golem.inbox, "!rename tree-cards Canopy Quiz")
-        assert golem.store.project("tree-cards").name == "Canopy Quiz"
 
     run(go())
 
 
 def test_slug_moves_the_project_and_queues_the_reference_fixes(golem):
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         old_job = golem.store.jobs()[0]
         golem.store.update_job(old_job.id, state="done")
 
-        await golem.say(room, "!slug leaf-peeper")
-        reply = golem.chat.texts("leaf-peeper")[-1]  # the conversation moves with it
+        reply = await golem.bot.move(golem.store.project("tree-cards"), "leaf-peeper")
         assert reply.startswith("Moved Tree Cards to leaf-peeper: https://github.com/unlaunched/leaf-peeper")
         assert "https://github.com/unlaunched/tree-cards is still there" in reply
         assert golem.store.project("tree-cards") is None
@@ -1567,7 +1485,7 @@ async def a_run(golem: Golem) -> None:
     await golem.step()
 
 
-def test_delete_asks_first_then_takes_everything_but_the_repo(golem):
+def test_deleting_takes_everything_but_the_repo(golem):
     async def go():
         room = await new_project(golem, [])
         await a_run(golem)  # a log and a checkout
@@ -1576,41 +1494,18 @@ def test_delete_asks_first_then_takes_everything_but_the_repo(golem):
         logs = golem.settings.job_logs(job.id)
         assert logs.is_dir() and golem.workspace.path("tree-cards").is_dir()
 
-        await golem.say(room, "!delete")
-        assert golem.chat.texts(room)[-1] == (
-            "This deletes Tree Cards for good: the site and its data, the code checkout, every job and its logs, "
-            "and this conversation. The repo stays on GitHub for you to delete. To go ahead, say !delete tree-cards"
-        )
-        assert golem.store.project("tree-cards") is not None and golem.deployer.deleted == []
-
-        await golem.say(room, "!delete tree-cards")
+        said = await golem.bot.delete(golem.store.project("tree-cards"))
         assert golem.deployer.deleted == ["tree-cards"]
         assert not golem.workspace.path("tree-cards").exists() and not logs.exists()
         assert golem.store.project("tree-cards") is None
         assert golem.store.jobs() == [] and golem.store.runs() == [] and golem.store.pending_notes(job.id) == []
         assert golem.store.steps(job.id) == []
         assert golem.store.messages(room) == []
-        # The conversation is gone, so the answer comes in the inbox.
-        assert golem.chat.texts(golem.inbox)[-1] == (
-            "Deleted Tree Cards: its site and data, checkout, jobs, logs and conversation are gone. Delete the repo yourself "
+        assert said == (
+            "Deleted Tree Cards: its site and data, checkout, jobs, logs and history are gone. Delete the repo yourself "
             "on GitHub (Settings, at the bottom): https://github.com/unlaunched/tree-cards/settings"
         )
         assert golem.store.next_job() is None
-
-    run(go())
-
-
-def test_delete_from_the_inbox_needs_the_slug(golem):
-    async def go():
-        await new_project(golem, [])
-        await golem.say(golem.inbox, "!delete")
-        assert golem.chat.texts(golem.inbox)[-1] == "Usage: !delete <slug>. It deletes the project for good."
-        await golem.say(golem.inbox, "!delete trees")
-        assert golem.chat.texts(golem.inbox)[-1] == "No project called trees."
-        assert golem.store.project("tree-cards") is not None
-        await golem.say(golem.inbox, "!delete tree-cards")
-        assert golem.store.project("tree-cards") is None
-        assert golem.chat.texts(golem.inbox)[-1].startswith("Deleted Tree Cards:")
 
     run(go())
 
@@ -1624,13 +1519,13 @@ def test_delete_stops_a_running_step_first(golem):
             await asyncio.sleep(3600)
 
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         golem.scheduler.harness = Hangs()
         loop = asyncio.create_task(golem.scheduler.run_forever())
         await asyncio.wait_for(started.wait(), 5)
         [running] = golem.scheduler.running.values()
         task = running.task
-        await golem.say(room, "!delete tree-cards")
+        await golem.bot.delete(golem.store.project("tree-cards"))
         assert task.done()  # stopped before anything was deleted
         assert golem.store.project("tree-cards") is None and golem.store.runs() == []
         assert golem.deployer.deleted == ["tree-cards"]
@@ -1641,18 +1536,17 @@ def test_delete_stops_a_running_step_first(golem):
 
 def test_a_failed_delete_keeps_the_project_and_can_be_retried(golem):
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         golem.deployer.fail = "deleting is off: DEPLOYER_ADMIN_SECRET is not set"
-        await golem.say(room, "!delete tree-cards")
-        assert golem.chat.texts(room)[-1] == (
+        assert await golem.bot.delete(golem.store.project("tree-cards")) == (
             "Couldn't delete all of Tree Cards: deleting is off: DEPLOYER_ADMIN_SECRET is not set. "
-            "Its jobs are stopped; say !delete tree-cards to try again."
+            "Its jobs are stopped; delete it again to try again."
         )
         assert golem.store.project("tree-cards") is not None
         assert golem.store.jobs()[0].state == "killed"
 
         golem.deployer.fail = None
-        await golem.say(room, "!delete tree-cards")
+        await golem.bot.delete(golem.store.project("tree-cards"))
         assert golem.store.project("tree-cards") is None
 
     run(go())
@@ -1660,7 +1554,7 @@ def test_a_failed_delete_keeps_the_project_and_can_be_retried(golem):
 
 def test_nuke_says_what_will_go_then_deletes_it_all(golem):
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         await a_run(golem)
         golem.deployer.deployed = ["hello", "tree-cards", "zz-old"]
         lessons = golem.settings.state_dir / "lessons.md"
@@ -1673,7 +1567,7 @@ def test_nuke_says_what_will_go_then_deletes_it_all(golem):
             "    tree-cards (Tree Cards)\n"
             "- 2 more site(s) the deployer has, with their data: hello, zz-old\n"
             f"- everything in {golem.settings.workspace_dir}, golem's run logs, triage log, lessons.md and proposals\n"
-            "Kept: the stack, golem's own conversation, and .env.\n"
+            "Kept: the stack, golem's news, and .env.\n"
             "Not touched: the GitHub repos. Delete them at https://github.com/orgs/unlaunched/repositories"
         )
         assert golem.store.project("tree-cards") and golem.deployer.deleted == []  # planning deletes nothing
@@ -1686,8 +1580,8 @@ def test_nuke_says_what_will_go_then_deletes_it_all(golem):
         assert golem.store.projects() == [] and golem.store.jobs() == [] and golem.store.runs() == []
         assert list(golem.settings.workspace_dir.iterdir()) == []
         assert not lessons.exists() and not (golem.settings.state_dir / "jobs").exists()
-        # The bot itself carries on as before, with golem's own conversation.
-        assert golem.chat.texts(golem.inbox) and (golem.settings.state_dir / "golem.db").exists()
+        # golem itself carries on as before.
+        assert (golem.settings.state_dir / "golem.db").exists()
         assert await nuke.plan(golem.settings, golem.store, golem.deployer) == nuke.NOTHING
 
     run(go())
@@ -1710,15 +1604,13 @@ def test_nuke_reports_what_it_could_not_delete(golem):
 
 def test_slug_refuses_bad_or_taken_slugs_and_running_jobs(golem):
     async def go():
-        room = await new_project(golem, [])
+        await new_project(golem, [])
         golem.workspace.repos.add("taken")
-        await golem.say(room, "!slug Golem")
-        assert "won't work as an address" in golem.chat.texts(room)[-1]
-        await golem.say(room, "!slug taken")
-        assert golem.chat.texts(room)[-1] == "taken is taken (by a project or an existing repo)."
+        project = golem.store.project("tree-cards")
+        assert "won't work as an address" in await golem.bot.move(project, "Golem!")
+        assert await golem.bot.move(project, "taken") == "taken is taken (by a project or an existing repo)."
         golem.store.update_job(golem.store.active_job("tree-cards").id, state="running")
-        await golem.say(room, "!slug oaks")
-        assert golem.chat.texts(room)[-1].startswith("A step is running.")
+        assert (await golem.bot.move(project, "oaks")).startswith("A step is running.")
         assert golem.store.project("tree-cards") is not None
 
     run(go())
@@ -1727,27 +1619,21 @@ def test_slug_refuses_bad_or_taken_slugs_and_running_jobs(golem):
 # --- the conversation -----------------------------------------------------------
 
 
-def test_everything_said_is_kept_by_channel(golem):
+def test_everything_said_is_kept_by_project_and_job(golem):
     async def go():
         room = await new_project(golem, [])
-        inbox = [(m.who, m.text[:30]) for m in golem.store.messages("inbox")]
-        assert inbox == [("riggy", "a flashcard game for identifyi"), ("golem", "New project: Tree Cards (tree-")]
-        intro = golem.store.messages("tree-cards")[0]
-        assert (intro.who, intro.notify) == ("golem", True) and intro.text.startswith("Tree Cards\n\nA flashcard game")
-
-        await golem.say(room, "!status")
-        said = golem.store.messages("tree-cards")[-2:]
-        assert [(m.who, m.notify) for m in said] == [("riggy", False), ("golem", False)]  # a notice: not pushed
-
-        golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
+        first = golem.store.active_job("tree-cards")
+        assert [(m.who, m.job_id) for m in golem.store.messages(room)] == [("riggy", first.id)]  # the idea, the job's first words
+        golem.store.update_job(first.id, state="done")
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "make the cards bigger")
+        job = await golem.ask(room, "make the cards bigger")
         said = golem.store.messages("tree-cards")[-1]
-        assert (said.who, said.text) == ("riggy", "make the cards bigger")
-        assert golem.store.active_job("tree-cards").request == "make the cards bigger"
+        assert (said.who, said.text, said.job_id) == ("riggy", "make the cards bigger", job.id)
+        assert job.request == "make the cards bigger"
+        assert [m.text for m in golem.store.job_messages(job.id)] == ["make the cards bigger"]
 
         golem.store.move_project("tree-cards", "trees")
-        assert golem.store.messages("tree-cards") == [] and len(golem.store.messages("trees")) == 4
+        assert golem.store.messages("tree-cards") == [] and len(golem.store.messages("trees")) == 2
 
     run(go())
 
@@ -1897,30 +1783,23 @@ def test_an_upgrade_waits_for_every_running_step_and_starts_nothing_new(golem):
     run(go())
 
 
-def test_what_golem_says_about_the_queue_with_several_workers(golem):
-    from golem.bot import STARTING
-
+def test_with_two_workers_a_second_project_runs_beside_the_first_and_a_third_waits(golem):
     async def go():
         gate = golem.scheduler.harness = Gate()
         golem.store.put("workers", "2")
         a_change(golem, "trees")
         loop = asyncio.create_task(golem.scheduler.run_forever())
         await soon(lambda: len(gate.started) == 1)
-        fish = a_change(golem, "fish")
-        assert golem.bot.queue_position(fish) == STARTING  # a worker is free for it
+        a_change(golem, "fish")  # a worker is free for it
         golem.scheduler.wake()
         await soon(lambda: len(gate.started) == 2)
 
         birds = a_change(golem, "birds")
-        assert golem.bot.queue_position(birds) == "Queued: I'm on Trees and Fish first."
+        golem.scheduler.wake()
+        await asyncio.sleep(0.05)
+        assert len(gate.started) == 2 and golem.store.job(birds.id).state == "queued"  # both workers are busy
         trees = golem.store.project("trees")
-        assert golem.bot.start_question(trees, "how big are the cards?") == (
-            "Good question. I'll look into it as soon as the step I'm on for Trees finishes."
-        )
-        assert golem.bot.start_question(golem.store.project("birds"), "what is it?") == (
-            "Good question. I'll look into it as soon as one of the steps I'm on (for Trees and Fish) finishes."
-        )
-        assert await golem.bot.move(trees, "tree-cards") == "A step is running. Try again when it finishes, or !pause the project first."
+        assert await golem.bot.move(trees, "tree-cards") == "A step is running. Try again when it finishes, or pause the project first."
         loop.cancel()
 
     run(go())
@@ -1953,19 +1832,19 @@ def test_a_job_works_in_a_tree_of_its_own_and_a_question_in_another(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "change"}], "change": [verdict("blocked", "Which trees?")]})
-        await golem.say(room, "make the cards bigger")
+        await golem.ask(room, "make the cards bigger")
         job = golem.store.active_job("tree-cards", questions=False)
         await golem.until("change")
         await golem.step()
         assert golem.store.job(job.id).state == "waiting"
-        await golem.say(room, "oaks and maples")  # his answer resumes the same session, in the same tree
+        await golem.reply(room, "oaks and maples")  # his answer resumes the same session, in the same tree
         await golem.step()
         runs = [c for c in golem.harness.calls if c.label == "change"]
         assert [c.cwd for c in runs] == [golem.workspace.tree_path(job.id)] * 2 and runs[1].resume == "s"
 
         # A question while the change is under way looks at its work so far, in a tree of its own.
         golem.harness.script = by_label({"request": [{"workflow": "question"}]})
-        await golem.say(room, "how big are the cards now?")
+        await golem.ask(room, "how big are the cards now?")
         question = newest_job(golem)
         await golem.step()
         await golem.step()
@@ -1985,18 +1864,18 @@ def test_trees_go_with_a_killed_job_and_a_deleted_project(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "make the cards bigger")
+        await golem.ask(room, "make the cards bigger")
         job = golem.store.active_job("tree-cards", questions=False)
         await golem.until("change")
         assert golem.workspace.tree_path(job.id).is_dir()
-        await golem.say(room, "!kill")
+        await golem.control.kill(job.id)
         await golem.scheduler.tidy()
         assert not golem.workspace.tree_path(job.id).exists()
 
-        await golem.say(room, "make the cards smaller")
+        await golem.ask(room, "make the cards smaller")
         again = golem.store.active_job("tree-cards", questions=False)
         await golem.until("change")
-        await golem.say(room, "!delete tree-cards")
+        await golem.bot.delete(golem.store.project("tree-cards"))
         assert golem.store.project("tree-cards") is None and not golem.workspace.tree_path(again.id).exists()
 
     run(go())
@@ -2006,7 +1885,7 @@ def test_a_job_from_before_trees_finishes_in_the_projects_checkout(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "make the cards bigger")
+        await golem.ask(room, "make the cards bigger")
         job = golem.store.update_job(golem.store.active_job("tree-cards", questions=False).id, worktree=0)
         await golem.finish()
         assert [c.cwd for c in golem.harness.calls if c.label == "change"] == [golem.workspace.path("tree-cards")]
@@ -2148,7 +2027,7 @@ def test_one_change_at_a_time_never_catches_up_by_itself(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "change"}]})
-        await golem.say(room, "make the cards bigger")
+        await golem.ask(room, "make the cards bigger")
         await golem.finish()
         job = golem.store.jobs()[0]
         assert "catch up with main" not in golem.labels(job.id) and not any(a.startswith("sync") for a in golem.workspace.actions)
@@ -2161,73 +2040,39 @@ async def two_at_once(golem: Golem) -> tuple[str, object]:
     room = await idle_project(golem)
     golem.store.update_project("tree-cards", parallel_jobs=2)
     golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Bigger Cards"}]})
-    await golem.say(room, "make the cards bigger")
-    first = golem.store.active_job("tree-cards", questions=False)
+    first = await golem.ask(room, "make the cards bigger")
     await golem.until("change")
     return room, first
 
 
-def test_a_change_of_its_own_starts_beside_the_one_under_way_and_a_follow_up_is_a_note(golem):
+def test_asking_beside_a_change_under_way_starts_one_beside_it_while_there_is_room(golem):
     async def go():
         room, first = await two_at_once(golem)
-        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Round Timer", "to": 0}]})
-        await golem.say(room, "add a timer to each round")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Round Timer"}]})
+        timer = await golem.ask(room, "add a timer to each round")
         asked = golem.harness.calls[-1]
-        assert asked.schema["properties"]["to"]["type"] == "integer" and asked.schema["required"] == ["workflow", "mode", "title", "to"]
-        assert f"- #{first.id} Bigger Cards: “make the cards bigger”" in asked.prompt
-        timer = newest_job(golem)
+        assert "to" not in asked.schema["properties"] and "$under_way" not in asked.prompt  # always a job of its own
         assert (timer.title, timer.workflow, timer.state) == ("Round Timer", "change", "queued")
-        assert golem.chat.texts(room)[-1].startswith(
-            f"Started a change of its own as job {timer.id}, “Round Timer”, beside job {first.id}, “Bigger Cards”: they take turns"
-        )
-        assert golem.chat.texts(room)[-1].endswith(f"If it belongs with job {first.id}, say !switch.")
-
-        # Now there's no room for a third: what he says goes to the job it's about.
-        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "x", "to": timer.id}]})
-        await golem.say(room, "make the timer red when it's nearly up")
+        assert turns.behind(golem.store, timer) is None  # room for two: it starts beside the first, and they take turns
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Card Backs"}]})
+        backs = await golem.ask(room, "nicer card backs")
+        assert turns.behind(golem.store, backs).id == first.id  # not a third at once: it waits
+        # A note goes to the job it's for, from that job's pane.
+        await golem.note(room, "make the timer red when it's nearly up", job=timer.id)
         assert golem.store.pending_notes(timer.id) and not golem.store.pending_notes(first.id)
-        assert golem.chat.texts(room)[-1] == f"Noted for job {timer.id}, “Round Timer”: I'll include that when it starts."
-        assert golem.store.room_for_change("tree-cards") is False
 
     run(go())
 
 
-def test_with_one_change_at_a_time_a_message_is_a_note_as_ever(golem):
+def test_with_one_change_at_a_time_asking_queues_behind_it(golem):
     async def go():
         room = await idle_project(golem)
-        golem.harness.script = by_label({"request": [{"workflow": "change"}, {"workflow": "change", "to": 0}]})
-        await golem.say(room, "make the cards bigger")
+        golem.harness.script = by_label({"request": [{"workflow": "change"}, {"workflow": "change"}]})
+        first = await golem.ask(room, "make the cards bigger")
         await golem.until("change")
-        await golem.say(room, "and a timer")
-        asked = golem.harness.calls[-1]
-        assert "to" not in asked.schema["properties"] and "under way" not in asked.prompt and "$under_way" not in asked.prompt
-        assert golem.chat.texts(room)[-1] == "Noted. I'll work that in at the next step of the current job."
-        assert len(golem.store.change_jobs("tree-cards")) == 1
-
-    run(go())
-
-
-def test_switch_puts_the_last_message_the_other_way(golem):
-    async def go():
-        room, first = await two_at_once(golem)
-        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Round Timer", "to": first.id}]})
-        await golem.say(room, "add a timer to each round")
-        assert golem.chat.texts(room)[-1].endswith("Rather it was a change of its own? Say !switch.")
-        await golem.say(room, "!switch")  # the note becomes a change of its own
-        timer = newest_job(golem)
-        assert golem.chat.texts(room)[-1] == f"Started it as job {timer.id}, “Round Timer”, a change of its own beside job {first.id}."
-        assert timer.request == "add a timer to each round" and not golem.store.pending_notes(first.id)
-        await golem.say(room, "!switch")
-        assert golem.chat.texts(room)[-1].startswith("Nothing to switch")
-
-        golem.store.update_job(timer.id, state="killed")
-        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Card Backs", "to": 0}]})
-        await golem.say(room, "and nicer card backs")
-        backs = newest_job(golem)
-        await golem.say(room, "!switch")  # the new change goes back to being a note
-        assert golem.store.job(backs.id).state == "killed"
-        assert golem.store.pending_notes(first.id)[-1][1] == "and nicer card backs"
-        assert golem.chat.texts(room)[-1] == f"Dropped job {backs.id}: what you said goes to job {first.id}, “Bigger Cards”, at its next step."
+        timer = await golem.ask(room, "and a timer")
+        assert len(golem.store.change_jobs("tree-cards")) == 2 and turns.behind(golem.store, timer).id == first.id
+        assert turns.waiting_for(golem.store, timer) == f"waiting for job {first.id} to finish"
 
     run(go())
 
@@ -2251,9 +2096,10 @@ def test_a_new_project_allows_nothing_beside_it(golem):
         room = await new_project(golem, [])
         golem.store.update_project("tree-cards", parallel_jobs=3)
         assert not golem.store.room_for_change("tree-cards")
-        golem.harness.script = by_label({"request": [{"workflow": "change", "to": 0}]})
-        await golem.say(room, "and a timer")
-        assert len(golem.store.change_jobs("tree-cards")) == 1 and golem.chat.texts(room)[-1].startswith("Noted.")
+        golem.harness.script = by_label({"request": [{"workflow": "change"}]})
+        timer = await golem.ask(room, "and a timer")
+        assert turns.behind(golem.store, timer).id == golem.store.active_job("tree-cards").id  # it runs alone
+        assert golem.scheduler.pick(at="9999").id != timer.id
 
     run(go())
 
@@ -2264,25 +2110,23 @@ def test_with_two_changes_waiting_a_reply_goes_to_the_one_asked_first(golem):
         second = golem.store.add_job("tree-cards", "change", "add a timer", "feature", title="Round Timer")
         for job in (second, first):
             golem.store.update_job(job.id, state="waiting")
-        await golem.say(room, "oaks and maples")
+        await golem.reply(room, "oaks and maples")
         assert golem.store.job(first.id).state == "queued" and golem.store.job(second.id).state == "waiting"
-        assert golem.chat.texts(room)[-1].startswith(f"Thanks, picking it back up (job {first.id}, “Bigger Cards”).")
 
     run(go())
 
 
 def test_beside_a_running_change_a_question_starts_now_and_a_change_says_what_it_waits_for(golem):
-    from golem.bot import STARTING
-
     async def go():
         a, b = side_by_side(golem)
         gate = golem.scheduler.harness = JobGate((a.id, "change"))
         loop = asyncio.create_task(golem.scheduler.run_forever())
         await soon(lambda: (a.id, "change") in gate.started)
         await soon(lambda: plan.label(current(golem, b.id)) == "change" and golem.store.job(b.id).state == "queued")
-        assert golem.bot.queue_position(golem.store.job(b.id)) == f"Queued: waiting for job {a.id} to finish building."
-        assert golem.bot.start_question(golem.store.project("trees"), "how big are the cards?") == ""  # starts beside it
-        assert golem.bot.queue_position(newest_job(golem)) == STARTING
+        assert turns.waiting_for(golem.store, golem.store.job(b.id)) == f"waiting for job {a.id} to finish building"
+        golem.harness.script = by_label({"request": [{"workflow": "question"}]})
+        question = await golem.ask("trees", "how big are the cards?")
+        await soon(lambda: golem.store.steps(question.id) and golem.store.steps(question.id)[0].started_at)  # starts beside it
         loop.cancel()
 
     run(go())

@@ -2,7 +2,7 @@ key: adopt
 name: Adopt
 start: adopt
 fallback: true
-ingest: Taking on a repo golem didn't make, from !adopt.
+ingest: Taking on a repo golem didn't make, from the New project page.
 tabs:
   default:
     md: adopt.md

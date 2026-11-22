@@ -18,15 +18,9 @@ from . import plan
 from .pages import LaneData, _hidden, _pause, job_controls, select_form
 from .proposals import LENSES, WAITING, kinds
 from .store import CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
-from .talk import INBOX, STATUS
+from .talk import STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
-# What the box at the bottom does, by what the project's job is doing.
-COMPOSE = {
-    "idle": ("Ask for a change, or to see some options first…", "Send"),
-    "waiting": ("Your answer…", "Reply"),
-    "busy": ("A note for the job's next step…", "Send"),
-}
 
 
 def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = (),
@@ -92,28 +86,6 @@ def proposals_settings(project: Project, decided: list[Proposal]) -> str:
     )
 
 
-def inbox_page(said: list[Said], signed_in: bool, earlier: str = "", org: str = "") -> str:
-    head = (
-        "<p class=sub>New ideas go here. golem names each one, gives it a page and its own conversation, "
-        "and starts on it a minute later. Its news, like usage limits and finished jobs, shows here too.</p>"
-    )
-    if not signed_in:
-        return head + "<p class=hint>Sign in (Settings) to see the inbox and write to golem.</p>"
-    return head + adopt_form(org) + thread(said, "Nothing yet. Describe an idea below.", earlier)
-
-
-def adopt_form(org: str) -> str:
-    """!adopt as a control: a repo's name, then what it is if he likes (bot.py, adopt.py)."""
-    return (
-        "<details class='card settings adopt'><summary>Adopt a repo golem didn't make</summary>"
-        f"<form method=post action=/say class=row-form>{_hidden(channel=INBOX, command='adopt', back='/inbox#end')}"
-        "<input name=text placeholder='repo-name, then what it is (optional)' required aria-label='The repo, and what it is'>"
-        "<button>Adopt</button>"
-        f"<p class=hint>A repo in github.com/{escape(org)}. golem checks it over first, takes it on if it can, "
-        "and says what's in the way if it can't.</p></form></details>"
-    )
-
-
 def thread(said: list[Said], empty: str, earlier: str = "") -> str:
     """Messages oldest first, Riggy's on the right; the page's script dates them on the viewer's clock.
     Only the latest are shown; `earlier`, when there are more, is the address that shows more of them."""
@@ -132,33 +104,11 @@ def thread(said: list[Said], empty: str, earlier: str = "") -> str:
     return f"<section class=talk>{more}<ol class=messages>{''.join(items)}</ol></section>"
 
 
-def composer(channel: str, state: str) -> str:
-    """The box at the bottom. With nothing under way, it can also ask for options first rather
-    than leaving that to golem to work out from the words."""
-    if channel == INBOX:
-        placeholder, label, extra = "Describe a new idea…", "Start it", ""
-    else:
-        placeholder, label = COMPOSE[state]
-        extra = "<button name=command value=options class=quiet-button>Options first</button>" if state == "idle" else ""
-    return (
-        "<form method=post action=/say class=composer data-send>"
-        + _hidden(channel=channel)
-        + f"<textarea name=text rows=1 placeholder='{escape(placeholder)}' required aria-label='{escape(placeholder)}'></textarea>"
-        + f"<div class=send>{extra}<button class=primary>{escape(label)}</button></div></form>"
-    )
-
-
 def settings_html(project: Project, tags: list[str], modes: list[str] = ()) -> str:
-    """What the !commands do, as controls, and its tag. Each change is said in the conversation.
-    Its default mode is the mode its requests run in unless they ask for another: only Riggy sets it."""
+    """How golem works on it, and its tag. Its default mode is the mode its requests run in unless
+    they ask for another: only Riggy sets it."""
     slug, back = project.slug, f"/p/{project.slug}/settings"
-    choices = [("default", "golem's default"), *((m, m) for m in modes)]
-    mode = (
-        f"<form method=post action=/say class=inline>{_hidden(channel=slug, command='mode', back=back)}"
-        f"<select name=text aria-label='default mode' onchange='this.form.submit()'>"
-        + "".join(f"<option value='{escape(v)}'{' selected' if (project.mode or 'default') == v else ''}>{escape(label)}</option>" for v, label in choices)
-        + "</select></form>"
-    )
+    mode = select_form("mode", project.mode, tuple(modes), "golem's default", action="setting", slug=slug, back=back)
     engine = "".join(
         f"<span>{name.title()}</span>"
         + select_form(name, getattr(project, name), values, "each step's default", action="setting", slug=slug, back=back)
@@ -195,10 +145,10 @@ def _danger(project: Project) -> str:
     slug = project.slug
     return (
         "<section class='card settings'><h2>Name and address</h2>"
-        + _command(slug, "rename", "New name", project.name, "Rename")
-        + _command(slug, "slug", "new-address", project.slug, "Move", note="A new address and repo; golem moves the code.")
+        + _control(slug, "rename", "New name", project.name, "Rename")
+        + _control(slug, "project-slug", "new-address", project.slug, "Move", note="A new address and repo; golem moves the code.")
         + "</section><section class='card settings'><h2>Delete</h2>"
-        + _command(slug, "delete", f"Type {slug} to confirm", "", "Delete for good", danger=True,
+        + _control(slug, "project-delete", f"Type {slug} to confirm", "", "Delete for good", danger=True,
                    note="The site and its data, the checkout, every job and its logs, and the conversation. "
                    "The repo stays on GitHub.")  # fmt: skip
         + "</section>"
@@ -208,14 +158,14 @@ def _danger(project: Project) -> str:
 def jobs_html(jobs: list[Job]) -> str:
     if not jobs:
         return ""
-    rows = "".join(f"<li><a href='/jobs/{j.id}'>#{j.id}</a> {escape(_job_words(j))}</li>" for j in jobs[:20])
+    rows = "".join(f"<li><a href='/p/{escape(j.slug)}/jobs/{j.id}'>#{j.id}</a> {escape(_job_words(j))}</li>" for j in jobs[:20])
     return f"<section class='card jobs'><h2>Jobs ({len(jobs)})</h2><ol>{rows}</ol></section>"
 
 
-def _command(slug: str, command: str, placeholder: str, value: str, label: str, danger: bool = False, note: str = "") -> str:
+def _control(slug: str, action: str, placeholder: str, value: str, label: str, danger: bool = False, note: str = "") -> str:
     return (
-        f"<form method=post action=/say class=row-form>{_hidden(channel=slug, command=command, back=f'/p/{slug}/settings')}"
-        f"<input name=text placeholder='{escape(placeholder)}' value='{escape(value)}' required aria-label='{escape(label)}'>"
+        f"<form method=post action=/act class=row-form>{_hidden(action=action, slug=slug, back=f'/p/{slug}/settings')}"
+        f"<input name=value placeholder='{escape(placeholder)}' value='{escape(value)}' required aria-label='{escape(label)}'>"
         f"<button{' class=danger' if danger else ''}>{escape(label)}</button>"
         + (f"<p class=hint>{escape(note)}</p>" if note else "")
         + "</form>"

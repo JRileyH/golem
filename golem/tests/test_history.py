@@ -82,10 +82,13 @@ def test_an_adopted_repos_first_job_is_its_adoption(golem):
     assert (jobs[1][0].kind, jobs[1][0].playbook, jobs[1][0].request) == ("adopt", "adopt", "!adopt mimic cards for my D&D table")
     assert [s.name for s in jobs[1][1]] == ["setup", "adopt", "pr", "merge"]
     assert (jobs[3][0].kind, jobs[3][0].playbook) == ("change", "feature")
+    # One adopted from the New project page says so at the top of its issue.
+    jobs = by_issue(records(golem, [issue(1, 4, "cards for my D&D table", head="Adopted:")]))
+    assert (jobs[1][0].kind, jobs[1][0].request) == ("adopt", "cards for my D&D table")
 
 
 def test_a_job_is_its_issue_whatever_number_an_earlier_golem_gave_it(golem):
-    """Two golems (or one, before and after a !delete) can both have had a job 7 on a repo."""
+    """Two golems (or one, before and after deleting the project) can both have had a job 7 on a repo."""
     twice = [issue(1, 7, "First go"), issue(2, 7, "Second go"), pr(3, "Closes #2\n\nOpened by golem (job 7).")]
     jobs = by_issue(records(golem, twice))
     assert [j.request for j, _ in jobs.values()] == ["First go", "Second go"]

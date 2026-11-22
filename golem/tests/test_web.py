@@ -262,7 +262,7 @@ def options_up(golem) -> str:
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"options": [three_styles]})
-        await golem.say(room, "!options a chibi hero")
+        await golem.ask(room, "a chibi hero", workflow="options")
         await golem.until("your pick")
         await golem.step()
         return room
@@ -527,7 +527,7 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     assert "👎 Offline &lt;mode&gt;<span class=sub>“always online”</span>" in html and f"👍 Bigger cards <a href='/jobs/{built.id}'>" in html
     act(page, action="setting", slug="trees", name="proposals", value="hourly")
     assert golem.store.project("trees").proposals == "hourly" and "<option selected>hourly</option>" in page.get("/p/trees/settings").text
-    assert "Proposals hourly, when there's nothing else to do, from the status page." in [m.text for m in golem.store.messages("trees")]
+    assert golem.store.messages("trees")[-1].text != "Proposals hourly, when there's nothing else to do, from the status page."  # the flash says it
     assert "can%27t%20be%20yearly" in act(page, action="setting", slug="trees", name="proposals", value="yearly")
     assert "<option selected>5</option>" in page.get("/p/trees/settings").text  # waiting on him at most: 5 unless he says
     act(page, action="setting", slug="trees", name="proposals_max", value="10")
@@ -570,7 +570,6 @@ def test_how_many_changes_at_once_is_a_project_setting(golem, page):
     assert "<h2>Changes at once</h2>" in html and "<option selected>1</option>" in html and "<option>4</option>" in html
     assert "up%20to%202%20changes%20at%20once" in act(page, action="setting", slug="trees", name="parallel_jobs", value="2")
     assert golem.store.project("trees").parallel_jobs == 2 and "<option selected>2</option>" in page.get("/p/trees/settings").text
-    assert "Up to 2 changes at once, taking turns building and shipping, from the status page." in golem.chat.texts("trees")
     for bad in ("0", "5", "x", ""):
         assert "Pick%201%20to%204%20changes%20at%20once." in act(page, action="setting", slug="trees", name="parallel_jobs", value=bad)
     assert "one%20change%20at%20a%20time" in act(page, action="setting", slug="trees", name="parallel_jobs", value="1")
@@ -596,7 +595,6 @@ def test_a_project_with_two_changes_shows_each_and_who_waits_for_whom(golem, pag
     assert "<h2>Bigger Cards</h2>" in talk
     settings = page.get("/p/trees/settings").text
     assert f"name=job value='{a.id}'" in settings and f"name=job value='{b.id}'" in settings  # controls for each
-    assert f"waiting for job {a.id} to finish building" in golem.bot.status_text(golem.store.project("trees"))
 
 
 
@@ -634,7 +632,6 @@ def test_tags_in_settings_and_on_a_project(golem, page):
 
     act(page, action="setting", slug="trees", name="tag", value="dev tool")
     assert golem.store.project("trees").tag == "Dev Tool"
-    assert "Tagged Dev Tool, from the status page." in [m.text for m in golem.store.messages("trees")]
     assert "<option selected>Dev Tool</option>" in page.get("/p/trees/settings").text
     assert "<b><span class=swatch></span>Dev Tool</b><span class=uses>1 project</span>" in page.get("/settings").text
 
@@ -647,8 +644,7 @@ def test_tags_in_settings_and_on_a_project(golem, page):
     assert "1%20project%20has%20none" in act(page, action="tag-delete", name="Developer Tool")
     assert golem.store.project("trees").tag == "" and [t.name for t in golem.store.tags()] == ["Game"]
     assert "No%20tag%20called" in act(page, action="setting", slug="trees", name="tag", value="Nope")
-    act(page, action="setting", slug="trees", name="tag", value="")
-    assert "No tag now, from the status page." in [m.text for m in golem.store.messages("trees")]
+    assert "no%20tag" in act(page, action="setting", slug="trees", name="tag", value="")
 
 
 def test_public_view_keeps_what_it_is_doing_but_not_how():
@@ -679,14 +675,14 @@ def test_projects_get_a_card_when_they_go_live_and_again_when_a_job_ends(golem):
         await golem.until("your check-in")  # the MVP deployed too, but the card stays until the job ends
         assert len(golem.card_calls) == 1
         await golem.step()  # asks Riggy to try it
-        await golem.say("tree-cards", "looks good")
+        await golem.reply("tree-cards", "looks good")
         await golem.finish()
         assert len(golem.card_calls) == 2 and len(golem.shots) == 2
 
         # Deleting the project takes its card and screenshot with it.
         image = golem.settings.state_dir / "cards" / "tree-cards.jpg"
         assert image.exists()
-        await golem.say("tree-cards", "!delete tree-cards")
+        await golem.bot.delete(golem.store.project("tree-cards"))
         assert golem.store.card("tree-cards") is None and not image.exists()
 
     asyncio.run(go())
@@ -752,41 +748,54 @@ def app(golem):
     return TestClient(create_app(golem.settings, golem.store, golem.scheduler, golem.bot), base_url="https://golem.unlaunched.dev")
 
 
-def say(client, channel, text, **more):
-    r = client.post("/say", data={"channel": channel, "text": text, **more}, follow_redirects=False)
-    assert r.status_code == 303
-    return r.headers["location"]
+def new(client, path="/new", **form):
+    r = client.post(path, data=form, follow_redirects=False)
+    return r
 
 
-def test_the_inbox_takes_new_ideas(golem, app):
+def test_a_new_project_is_named_on_its_form(golem, app):
     from test_flow import TREES
 
-    assert "Sign in (Settings) to see the inbox" in app.get("/inbox").text
-    assert say(app, "inbox", "a tree game") == "/inbox?msg=Sign%20in%20first.#end"
-    r = app.post("/login", data={"password": "pw", "keep": "1", "back": "/inbox"}, follow_redirects=False)
+    assert "Sign%20in" in app.get("/new", follow_redirects=False).headers["location"]
+    assert "Sign%20in%20first" in new(app, name="Trees", idea="x").headers["location"]
+    r = app.post("/login", data={"password": "pw", "keep": "1", "back": "/new"}, follow_redirects=False)
     cookie = r.headers["set-cookie"].lower()
     assert "max-age=7776000" in cookie and "samesite=lax" in cookie
+    html = app.get("/new").text
+    assert "<option value='web_app' selected" in html and "golem&#x27;s default (none)" in html and "<option>Game</option>" in html
+    assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
+
+    r = new(app, name="", slug="Bad Slug!", idea="", mode="nope", model="gpt")  # what's wrong comes back with what he wrote
+    html = r.text
+    assert r.status_code == 400 and "Name it." in html and "Say what it&#x27;s for." in html and "An address is 2 to 31" in html
+    assert "There&#x27;s no mode called nope." in html and "value='Bad Slug!'" in html and golem.store.projects() == []
+    golem.workspace.repos.add("tree-cards")
+    html = new(app, name="Tree Cards", idea="trees").text
+    assert "tree-cards is taken, by a project or a repo. tree-cards-2 is free." in html and "value='Tree Cards'" in html
+
     golem.harness.script = [TREES]
-    assert say(app, "inbox", "a flashcard game for identifying northeastern us trees") == "/p/tree-cards#end"  # on to its page
-    assert golem.store.project("tree-cards") is not None
-    assert "href=/new" in app.get("/").text  # Now has the way to a new project
-    html = app.get("/inbox").text
-    assert "a flashcard game for identifying northeastern us trees" in html and "New project: Tree Cards" in html
-    assert "Describe a new idea" in html  # the box to write more
+    r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for identifying northeastern us trees", workflow="web_app",
+            mode="reckless", tag="Game", model="opus", effort="")  # fmt: skip
+    job = golem.store.active_job("trees")
+    assert r.headers["location"] == f"/p/trees/jobs/{job.id}?msg=" + quote("Started Tree Cards: Tree Flashcard Game.")  # on to its page
+    project = golem.store.project("trees")
+    assert (project.name, project.tag, project.model, job.mode, job.state) == ("Tree Cards", "Game", "opus", "reckless", "queued")
+    assert app.get("/inbox", follow_redirects=False).headers["location"] == "/"  # golem's own conversation is no more
+    assert "Ask%20on%20a%20project" in app.post("/say", data={"channel": "inbox", "text": "hi"}, follow_redirects=False).headers["location"]
 
 
-def test_the_inbox_adopts_a_repo(golem, app):
+def test_the_new_project_page_adopts_a_repo(golem, app):
     from test_adopting import ABOUT, BRIEF
 
     sign_in(app)
-    html = app.get("/inbox").text
-    assert "Adopt a repo golem didn't make" in html and "A repo in github.com/unlaunched." in html
-    assert say(app, "inbox", "mimic", command="adopt") == "/inbox#end"  # golem can't see it: says so, makes nothing
-    assert golem.chat.texts("inbox")[-1].startswith("I didn't adopt mimic.") and golem.store.projects() == []
+    r = new(app, "/new/adopt", repo="mimic")  # golem can't see it: says so, makes nothing
+    assert r.status_code == 400 and "I didn&#x27;t adopt mimic." in r.text and "<details class='card adopt' open>" in r.text
+    assert golem.store.projects() == []
     golem.workspace.existing["mimic"] = ABOUT
     golem.harness.script = [BRIEF]
-    assert say(app, "inbox", "mimic cards for my table", command="adopt") == "/p/mimic#end"  # on to its page
-    assert golem.store.active_job("mimic").request == "!adopt mimic cards for my table"
+    r = new(app, "/new/adopt", repo="mimic", words="cards for my table", name="", mode="auto", tag="")
+    job = golem.store.active_job("mimic")
+    assert r.headers["location"].startswith(f"/p/mimic/jobs/{job.id}?msg=Adopting%20Mimic") and job.request == "cards for my table"
 
 
 def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
@@ -796,7 +805,7 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
 
     golem.harness.script = [TREES]
     sign_in(app)
-    say(app, "inbox", "a flashcard game for identifying northeastern us trees")
+    new(app, name="Tree Cards", idea="a flashcard game for identifying northeastern us trees")
     job = golem.store.active_job("tree-cards")
     html = app.get("/p/tree-cards").text
     assert "Tree Cards" in html and "class=route-list" in html and "href='/p/tree-cards/settings'" in html
@@ -830,24 +839,27 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     act(app, action="note", job=logo.id, value="B")
     assert golem.store.job(logo.id).state == "queued" and golem.store.job_messages(logo.id)[-1].text == "B"
 
-    say(app, "tree-cards", "Leaf Cards", command="rename")
+    # Its settings, as controls.
+    html = app.get("/p/tree-cards/settings").text
+    assert "name=action value='rename'" in html and "name=action value='project-slug'" in html and "action=/say" not in html
+    act(app, action="rename", slug="tree-cards", value="Leaf Cards")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
-    say(app, "tree-cards", "rigorous", command="mode")
-    assert "default mode rigorous" in golem.store.messages("tree-cards")[-1].text
-    assert "type%20tree-cards%20exactly" in say(app, "tree-cards", "trees", command="delete")
-    assert "golem can" in unquote(say(app, "status", "hello"))
-    assert "Write something first" in unquote(say(app, "tree-cards", "x", command="kill"))
-    for j in golem.store.project_jobs("tree-cards"):
+    assert "rigorous%20mode" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")
+    assert golem.store.project("tree-cards").mode == "rigorous"
+    assert "type%20tree-cards%20exactly" in act(app, action="project-delete", slug="tree-cards", value="trees")
+    location = act(app, action="project-slug", slug="tree-cards", value="leaf-cards", back="/p/tree-cards/settings")
+    assert location.startswith("/p/leaf-cards/settings?msg=Moved%20Leaf%20Cards%20to%20leaf-cards")
+    for j in golem.store.project_jobs("leaf-cards"):
         golem.store.update_job(j.id, state="done")
-    assert say(app, "tree-cards", "tree-cards", command="delete") == "/inbox#end"
-    assert golem.store.project("tree-cards") is None and app.get("/p/tree-cards").status_code == 404
+    assert act(app, action="project-delete", slug="leaf-cards", value="leaf-cards").startswith("/p?msg=Deleted%20Leaf%20Cards")
+    assert golem.store.project("leaf-cards") is None and app.get("/p/leaf-cards").status_code == 404
 
 
 def test_every_page_is_a_click_from_anywhere(golem, page):
     golem.store.add_project("birds", "Birds", "")
     golem.store.update_job(page.job.id, state="waiting")
     sign_in(page)
-    for path in ("/", "/p", "/settings", "/insights", "/inbox", "/p/trees", "/p/trees/settings", f"/jobs/{page.job.id}"):
+    for path in ("/", "/p", "/settings", "/insights", "/new", "/p/trees", "/p/trees/settings", f"/jobs/{page.job.id}"):
         html = page.get(path).text
         assert "<nav class=tabs" in html and "<nav class=side" in html, path  # the tab bar, and the sidebar on a wide screen
         assert "href='/p/birds/settings'" in html and "href='/settings'" in html, path  # another project's settings, golem's
@@ -877,8 +889,8 @@ def test_a_long_conversation_shows_its_latest_messages_first(golem, app):
     assert "note 0." in html and "Show earlier" not in html
     for n in range(SHOWN + 1):
         golem.store.add_message("status", "golem", f"news {n}.")
-    html = app.get("/inbox").text  # golem's own conversation: new ideas and news, together
-    assert f"news {SHOWN}." in html and "news 0." not in html and "Show earlier messages" in html
+    html = app.get("/").text  # golem's news, its latest, on Now
+    assert f"news {SHOWN}." in html and "news 0." not in html
 
 
 def test_conversations_are_private_and_writing_needs_this_site(golem, app):
@@ -886,10 +898,12 @@ def test_conversations_are_private_and_writing_needs_this_site(golem, app):
 
     golem.harness.script = [TREES]
     sign_in(app)
-    say(app, "inbox", "a flashcard game for identifying northeastern us trees")
-    r = app.post("/say", data={"channel": "tree-cards", "text": "delete everything"}, headers={"origin": "https://evil.example"},
-                 follow_redirects=False)  # fmt: skip
-    assert "Sign%20in%20first" in r.headers["location"] and golem.store.messages("tree-cards")[-1].text != "delete everything"
+    new(app, name="Tree Cards", idea="a flashcard game for identifying northeastern us trees")
+    evil = {"origin": "https://evil.example"}
+    r = app.post("/act", data={"action": "project-delete", "slug": "tree-cards", "value": "tree-cards"}, headers=evil, follow_redirects=False)
+    assert "Sign%20in%20first" in r.headers["location"] and golem.store.project("tree-cards") is not None
+    r = app.post("/new", data={"name": "Evil", "idea": "x"}, headers=evil, follow_redirects=False)
+    assert "Sign%20in%20first" in r.headers["location"] and golem.store.project("evil") is None
     app.post("/logout", follow_redirects=False)
     html = app.get("/p/tree-cards").text
     assert "Sign in (Settings) to see what golem and you said" in html and "class='card ask-form'" not in html
@@ -1066,7 +1080,7 @@ def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
     assert page.get("/workflows/1.json").status_code == 403
     sign_in(page)
     html = page.get("/workflows").text
-    assert "Starts a new project" in html and "Web app" in html and "<code>!with web_app</code>" in html
+    assert "Starts a new project" in html and "Web app" in html and "!with" not in html
     assert "fallback</span>" in html and "Starts a sub-workflow" in html
     assert "id=modes" in html and "He wants extra care taken" in html and "When golem can&#x27;t tell which" not in html.split("Starts a new project")[1].split("Starts a change")[0]
     assert "When golem can't tell which" in html  # changes have several workflows to fall back between

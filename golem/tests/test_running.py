@@ -10,7 +10,6 @@ from pathlib import Path
 from test_flow import by_label, idle_project, new_project, three_styles, verdict
 
 from golem import plan, workflows
-from golem.harness import RunResult
 from golem.store import Step
 from golem.workspace import CI
 
@@ -90,10 +89,10 @@ def test_a_job_that_goes_round_too_often_asks_before_going_on(golem):
         assert golem.store.job(job.id).state == "waiting"
         assert golem.chat.texts(room)[-1] == (
             "make the score right has come round to build 3 times (4 agent runs so far), more than I'll go without asking. "
-            "Reply to let it carry on (with a hint, if you have one), or `!kill` to stop it."
+            "Reply to let it carry on (with a hint, if you have one), or stop the job."
         )
         assert [c.label for c in golem.harness.calls].count("build") == 2  # it asked before the third
-        await golem.say(room, "try a different approach")
+        await golem.reply(room, "try a different approach")
         await golem.step()
         build = [c for c in golem.harness.calls if c.label == "build"]
         assert len(build) == 3 and "> try a different approach" in build[-1].prompt
@@ -161,7 +160,7 @@ def test_a_job_waiting_at_its_checkin_from_before_workflows_carries_on(golem):
         assert golem.store.job(job.id).state == "waiting"
         as_before(golem, job, "standard", "standard")
         assert plan.snapshot(golem.store.job(job.id)) is None
-        await golem.say(room, "looks good but make the photos bigger")
+        await golem.reply(room, "looks good but make the photos bigger")
         golem.harness.script = by_label({"design": [{**verdict("done", "Keep it."), "skip": "He likes the look."}]})
         await golem.finish()
         job = golem.store.job(job.id)
@@ -204,13 +203,13 @@ def test_a_pick_waiting_from_before_workflows_builds_what_he_picks(golem):
     async def go():
         room = await idle_project(golem)
         golem.harness.script = by_label({"request": [{"workflow": "options"}], "options": [three_styles], "pick": [{"decision": "pick", "picked": ["B"]}]})
-        await golem.say(room, "show me 3 art styles")
+        await golem.ask(room, "show me 3 art styles")
         await golem.until("your pick")
         await golem.step()
         job = golem.store.active_job("tree-cards")
         assert job.state == "waiting"
         as_before(golem, job, "options", "standard")
-        await golem.say(room, "B please")
+        await golem.reply(room, "B please")
         await golem.finish()
         change = next(c for c in golem.harness.calls if c.label == "change")
         assert "You picked B (Pastel)" in change.prompt and golem.store.job(job.id).state == "done"
@@ -236,15 +235,10 @@ from test_flow import TREES  # noqa: E402
 from golem.control import Control, ControlError  # noqa: E402
 
 
-def test_a_new_idea_that_asks_for_care_runs_the_rigorous_tab(golem):
+def test_a_new_project_in_rigorous_mode_runs_the_rigorous_tab(golem):
     async def go():
-        golem.harness.script = [{**TREES, "mode": "rigorous"}]
-        await golem.say(golem.inbox, "a flashcard game for trees, take your time and be thorough")
-        triage = golem.harness.calls[0]
-        assert triage.schema["properties"]["mode"]["enum"] == ["rigorous", "reckless", "none"]
-        assert "workflow" not in triage.schema["properties"]  # one workflow for new projects: nothing to choose
-        assert "- `rigorous`: He wants extra care taken" in triage.prompt
-        job = golem.store.active_job("tree-cards")
+        golem.harness.script = [TREES]
+        job = await golem.new_project("a flashcard game for trees", mode="rigorous")
         assert (job.workflow, job.mode) == ("web_app", "rigorous") and golem.store.project("tree-cards").mode == ""
         steps = golem.scheduler.ensure_started(job)
         assert "spec-review" in [s.name for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id))]
@@ -256,48 +250,37 @@ def test_a_new_idea_that_asks_for_care_runs_the_rigorous_tab(golem):
 def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!mode rigorous")
+        await Control(golem.store, golem.scheduler).setting(room, "mode", "rigorous")
         golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
-        await golem.say(room, "make the cards bigger")
-        job = golem.store.active_job("tree-cards")
+        job = await golem.ask(room, "make the cards bigger")
         assert (job.workflow, job.mode) == ("change", "rigorous")
         names = [s.name for s in plan.planned(golem.settings, golem.store, job)]
         assert "second-pass" in names  # Change's rigorous tab
         # A request that asks for another mode runs in that one, this once.
         golem.store.update_job(job.id, state="done")
         golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "reckless", "title": "Quick Fix"}]})
-        await golem.say(room, "quick and dirty: fix the typo")
-        job = golem.store.active_job("tree-cards")
+        job = await golem.ask(room, "quick and dirty: fix the typo")
         assert job.mode == "reckless" and golem.store.project("tree-cards").mode == "rigorous"
         assert "review" not in [s.name for s in plan.planned(golem.settings, golem.store, job)]
 
     run(go())
 
 
-def test_with_names_the_workflow_and_mode(golem):
+def test_a_request_can_pick_its_workflow_and_mode(golem):
     async def go():
         room = await idle_project(golem)
-        await golem.say(room, "!with change:reckless fix the typo on the about page\nand the one in the footer")
-        job = golem.store.active_job("tree-cards")
-        assert (job.workflow, job.mode) == ("change", "reckless")
+        golem.harness.script = by_label({"request": [{"workflow": "options", "mode": "rigorous", "title": "Typo Fixes"}]})
+        job = await golem.ask(room, "fix the typo on the about page\nand the one in the footer", workflow="change", mode="reckless")
+        assert (job.workflow, job.mode, job.title) == ("change", "reckless", "Typo Fixes")  # his picks over the call's
         assert job.request == "fix the typo on the about page\nand the one in the footer"  # his lines kept
-        assert not any(c.label == "request" for c in golem.harness.calls)  # no call to work out which
-        golem.store.update_job(job.id, state="done")
-
-        await golem.say(room, "!with nope do it")
-        assert golem.chat.texts(room)[-1].startswith("There's no workflow called nope for a project's conversation. These are: change, design, options, question.")
-        await golem.say(room, "!with change:careful do it")
-        assert golem.chat.texts(room)[-1] == "There's no mode called careful. The modes are: rigorous, reckless."
-        await golem.say(room, "!with question how big are the cards?")
-        asked = golem.store.active_job("tree-cards")
-        assert (asked.workflow, asked.start, asked.request) == ("question", "look", "how big are the cards?")
-        await golem.say(golem.inbox, "!with change make a thing")
-        assert "for golem's conversation. These are: web_app" in golem.chat.texts(golem.inbox)[-1]
-
-        golem.harness.script = [{**TREES, "slug": "leaves", "name": "Leaves", "mode": "none"}]
-        await golem.say(golem.inbox, "!with web_app:reckless a leaf game")
-        job = golem.store.active_job("leaves")
-        assert (job.workflow, job.mode, job.request) == ("web_app", "reckless", "a leaf game")
+        ask = next(c for c in golem.harness.calls if c.label == "request")
+        assert ask.schema["properties"]["workflow"]["enum"] == ["change", "design", "options", "question"]
+        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none"}]})
+        asked = await golem.ask(room, "how big are the cards?", workflow="question", mode="")
+        assert (asked.workflow, asked.start, asked.mode) == ("question", "look", "")
+        golem.harness.script = by_label({"request": [{"workflow": "question", "mode": "none"}]})
+        odd = await golem.ask(room, "make a thing", workflow="web_app")  # not one for a request: the call's pick
+        assert odd.workflow == "question"
 
     run(go())
 
@@ -328,7 +311,7 @@ def test_modes_are_made_renamed_and_deleted_in_settings(golem):
 
 def test_what_golem_says_about_a_job_is_that_jobs_activity(golem):
     async def go():
-        room = await new_project(golem, [verdict("done", "MVP plan."), verdict("done"), verdict("done", "Try the quiz.")])
+        await new_project(golem, [verdict("done", "MVP plan."), verdict("done"), verdict("done", "Try the quiz.")])
         await golem.until("your check-in")
         await golem.step()
         job = golem.store.jobs()[0]

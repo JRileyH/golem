@@ -585,8 +585,8 @@ def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallb
         rows.append(f"<li><div><b>{escape(name)}</b> <span class=muted>{escape(how)}</span></div><div class=picks>{picks}</div></li>")
     return (
         "<section class=defaults id=defaults><h2>Defaults for each kind of step</h2>"
-        "<p class=hint>The model and effort each kind of agent step runs on. A project's own choice (from your dictation, "
-        "!model, or its settings) wins over these, and a single step's choice wins over both.</p>"
+        "<p class=hint>The model and effort each kind of agent step runs on. A project's own choice (in its settings) "
+        "wins over these, and a single step's choice wins over both.</p>"
         f"<ol class=kinds>{''.join(rows)}</ol>"
         + (
             action_form("reset-defaults", "Reset to golem's suggestions", back="/settings#defaults",
@@ -1267,6 +1267,19 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .rl.todo .what > a b { font-weight:500; color:var(--muted); } .rl.skipped .what > a b { text-decoration:line-through; color:var(--muted); }
 .job-details { margin:0 0 1rem; } .job-details > summary { cursor:pointer; color:var(--muted); font-size:.9rem; padding:.3rem 0; }
 .job-pane .talk { margin-top:.2rem; }
+/* The New project page (newproject.py) */
+.new-form { display:flex; flex-direction:column; gap:.75rem; }
+.new-form h2 { margin:0; font:700 1.15rem var(--display); } .new-form > .sub { margin:-.4rem 0 0; }
+.new-form .field { display:flex; flex-direction:column; gap:.3rem; min-width:0; }
+.new-form .field > span { font-size:.85rem; font-weight:600; }
+.new-form input, .new-form textarea { font:inherit; font-size:16px; padding:.55rem .75rem; border-radius:var(--radius); border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); width:100%; box-sizing:border-box; }
+.new-form textarea { resize:vertical; line-height:1.4; min-height:3rem; }
+.slug-row { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .6rem; } .slug-row input { max-width:18rem; } .slug-row .muted { font-size:.82rem; }
+.new-row { display:flex; flex-wrap:wrap; gap:.75rem; } .new-row .field { flex:1 1 10rem; } .new-row select { max-width:none; width:100%; }
+.new-more > summary { cursor:pointer; color:var(--muted); font-size:.9rem; } .new-more .new-row { margin-top:.6rem; }
+.new-form .error { color:var(--critical); font-weight:600; margin:0; font-size:.85rem; }
+.card.adopt > summary { cursor:pointer; font-weight:700; } .card.adopt .new-form { margin-top:.75rem; }
 /* The header's way to a new project; on a wide screen the sidebar has it */
 .top .new-project { grid-column:3; justify-self:end; display:inline-flex; align-items:center; gap:.2rem; padding:.3rem .7rem; border-radius:var(--radius);
   background:var(--rust, var(--accent)); color:#fff; font-weight:700; font-size:.88rem; white-space:nowrap; text-decoration:none; }

@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE TABLE IF NOT EXISTS workflows (
     id INTEGER PRIMARY KEY,
     key TEXT NOT NULL UNIQUE,        -- how containers name it; never changes
-    handle TEXT NOT NULL UNIQUE,     -- what `!with` calls it
+    handle TEXT NOT NULL UNIQUE,     -- its short name: what the request call knows it by
     name TEXT NOT NULL,
     start TEXT NOT NULL,             -- new | change | look | propose | adopt | sub (store.STARTS, and sub)
     ingest TEXT NOT NULL DEFAULT '', -- what it's for, in his words: what the request call chooses by
@@ -302,7 +302,7 @@ class Workflow:
 
     id: int
     key: str  # how containers name it; never changes
-    handle: str  # what `!with` calls it
+    handle: str  # its short name: what the request call knows it by
     name: str
     start: str
     ingest: str

@@ -48,7 +48,7 @@ from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import VERDICT_SCHEMA, VERDICTS, WRAPUP_SCHEMA, Harness, RunResult, wrapup_schema
 from .history import records
-from .talk import INBOX, STATUS, Talk
+from .talk import STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
 from .store import ACTIVE, LOOKS, MAX_WORKERS, Job, Project, Proposal, Step, Store, later, now
@@ -84,7 +84,7 @@ HEARTBEAT_SECONDS = 20 * 60  # no news from an agent step this long: say what it
 # Nothing logged this long and the run is stopped and retried. Claude Code logs while it
 # thinks, and its commands time out after ten minutes, so a live run is never this quiet.
 STUCK_SECONDS = 30 * 60
-# Never handed to workers: only Riggy's !delete deletes a project's data, and only he
+# Never handed to workers: only Riggy deleting a project deletes its data, and only he
 # changes jobs on the status page.
 WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # Golem's own steps whose results are posted in the project's conversation (for a pick, how his
@@ -233,12 +233,12 @@ class Scheduler:
         step needs (turns.py); otherwise a project's steps run one at a time."""
         busy = {r.slug for r in self.running.values()}
         for job in self.store.ready_jobs(at):
-            if job.id in self.running:
+            if job.id in self.running or turns.behind(self.store, job) is not None:  # it waits to start: in order
                 continue
             if self.side_by_side(job):
                 if turns.blocked_by(self.store, job, set(self.running)) is None:
                     return job
-            elif job.slug not in busy and turns.behind(self.store, job) is None:  # one change at a time: in order
+            elif job.slug not in busy:
                 return job
         return None
 
@@ -460,7 +460,7 @@ class Scheduler:
                     await self.say(
                         project,
                         f"I've tried to merge main into {plan.title(job)} {tries} times and it still conflicts: "
-                        f"{outcome.summary}.\n\nReply with a hint and I'll try again, or `!kill` to drop the job.",
+                        f"{outcome.summary}.\n\nReply with a hint and I'll try again, or stop the job.",
                     )
             case "checkin":
                 self.store.update_step(step.id, state="waiting", summary=outcome.summary or "Waiting for your reply.")
@@ -479,7 +479,7 @@ class Scheduler:
                 self.store.update_step(step.id, state="pending", error=outcome.problem, started_at=None)
                 await self.retry_or_ask(job, outcome.problem)
             case "refused":  # nothing was written to the repo: golem forgets it was ever asked
-                await self.chat.send(INBOX, outcome.problem)  # where he asked, as his conversation goes
+                await self.status(outcome.problem)  # golem's news, on Now: the project's page goes with it
                 await teardown.forget_project(project, self.settings, self.store, self.workspace)
                 log.info("didn't adopt %s: %s", project.slug, outcome.summary)
                 return
@@ -543,7 +543,7 @@ class Scheduler:
         await self.say(
             project,
             f"{plan.title(job)} has come round to {plan.label(step)} {step.visit} times ({runs} agent runs so far), "
-            "more than I'll go without asking. Reply to let it carry on (with a hint, if you have one), or `!kill` to stop it.",
+            "more than I'll go without asking. Reply to let it carry on (with a hint, if you have one), or stop the job.",
         )
         return True
 
@@ -568,7 +568,7 @@ class Scheduler:
         await self.say(
             project,
             f"I'm stuck on {name} after {MAX_ATTEMPTS} tries: {error[:400]}\n\n"
-            "Reply with a hint and I'll try again, or `!kill` to drop the job.",
+            "Reply with a hint and I'll try again, or stop the job.",
         )
 
     # --- agent steps ----------------------------------------------------------
@@ -831,7 +831,7 @@ class Scheduler:
         await self.say(
             project,
             f"I checked it over, and I'm adopting it.\n\n{adopt.report(checks)}\n\n{nxt}\n\n"
-            f"{plan.settings_line(self.store.project(slug))} (!mode, !model or !effort here to change them).",
+            f"{plan.settings_line(self.store.project(slug))} (its settings change them).",
         )
         summary = f"Adopting it: {fixing} thing(s) to fix." if fixing else "Adopting it as it is."
         return Outcome("done", summary, links, counters={"gaps": max(gaps, 1) if context else 0}, context=context)
@@ -844,7 +844,7 @@ class Scheduler:
         tree = self.tree(job)
         branch = await self.workspace.current_branch(project.slug, job=tree)
         was_clean = await self.workspace.clean(project.slug, job=tree)
-        prompt = self.prompts.survey(project, branch, _adopt_words(job))
+        prompt = self.prompts.survey(project, branch, plan.adopt_words(job))
         result = await self.execute(job, project, step, "survey", SURVEY_TURNS, prompt, None, adopt.SURVEY_SCHEMA, kind="survey")
         if was_clean:
             await self.workspace.discard(project.slug, job=tree)
@@ -876,7 +876,8 @@ class Scheduler:
                 )
         if job.issue is None:
             title = project.name if job.kind in ("new", "adopt") else plan.title(job)
-            body = f"Requested:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
+            head = "Adopted" if job.kind == "adopt" else "Requested"  # so a later golem can tell (history.py)
+            body = f"{head}:\n\n> {job.request}\n\nWorked on by golem (job {job.id})."
             issue = await self.workspace.open_issue(slug, title, body)
             job = self.store.update_job(job.id, issue=issue)
         if job.kind == "adopt":
@@ -912,13 +913,13 @@ class Scheduler:
 
     async def write_brief(self, job: Job, project: Project) -> None:
         """docs/brief.md for an adopted repo without one, committed on the job's branch so it ships
-        with the rest: the brief, and what Riggy said after `!adopt <slug>`."""
+        with the rest: the brief, and what Riggy said the repo is."""
         await self.workspace.start_branch(project.slug, self.branch(job), job=self.tree(job))
         path = self.checkout(project, job) / adopt.BRIEF
         if path.exists():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(adopt.brief(project.name, project.summary, _adopt_words(job), self.settings.repo_url(project.slug), now()[:10]))
+        path.write_text(adopt.brief(project.name, project.summary, plan.adopt_words(job), self.settings.repo_url(project.slug), now()[:10]))
         await self.workspace.commit_all(project.slug, "Brief: what golem was asked to adopt", job=self.tree(job))
 
     async def do_refresh(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -1318,12 +1319,6 @@ def _since_last(steps: list[Step], step: Step, kind: str) -> list[Step]:
         elif s.kind == "agent" and s.state == "done":
             work.append(s)
     return work
-
-
-def _adopt_words(job: Job) -> str:
-    """What Riggy said after `!adopt <slug>`, from an adopt job's request."""
-    words = job.request.split(maxsplit=2)[2:]
-    return words[0] if words else ""
 
 
 def _first_line(text: str, limit: int = 80) -> str:

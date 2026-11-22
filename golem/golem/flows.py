@@ -270,7 +270,7 @@ def workflows_page(store: Store, signed: bool) -> str:
             modes = ", ".join(m for m in tabs if m) or "default only"
             rows.append(
                 f"<li><a href='/workflows/{wf.id}'><b>{escape(wf.name)}</b></a>{marks}"
-                f"<p class=muted><code>!with {escape(wf.handle)}</code> · tabs: {escape(modes)}</p>"
+                f"<p class=muted>Tabs: {escape(modes)}</p>"
                 + (f"<p>{escape(wf.ingest)}</p>" if wf.ingest else "") + "</li>"
             )
         if rows:
@@ -308,7 +308,7 @@ def modes_card(store: Store) -> str:
     return (
         "<section class='card settings' id=modes><h2>Modes</h2><p class=sub>Ways of working a request can ask for (“be thorough”). "
         "Golem reads each request for one of these, by what each is for; a workflow with a tab for that mode runs it, any other its "
-        "default tab. A project's settings can give it a default mode. Say <code>!with change:rigorous …</code> to choose.</p>"
+        "default tab. A project's settings can give it a default mode, and a request can pick one in its Mode.</p>"
         + (f"<ul class=workflows>{''.join(rows)}</ul>" if rows else "<p class=empty>No modes yet.</p>")
         + f"<form method=post action=/act class=reply>{hidden(action='mode-add')}<input name=value placeholder='A new mode, like careful' required maxlength=20 "
         "pattern='[a-z][a-z0-9-]*' aria-label='New mode'><textarea name=ingest rows=2 maxlength=1000 placeholder='What to look for in a request: “he wants extra care taken”' "
@@ -342,7 +342,7 @@ def workflow_page(store: Store, wf: Workflow, mode: str) -> str:
         f"{hidden(action='tab-delete', value=mode)}<button class=danger>Delete this tab</button></form>"
         if mode else ""
     )
-    meta = f"<p class=muted>Starts a {escape(START_NAMES.get(wf.start, wf.start))} · <code>!with {escape(wf.handle)}</code>"
+    meta = f"<p class=muted>Starts a {escape(START_NAMES.get(wf.start, wf.start))}"
     meta += " · golem's own" + (" (you've changed it)" if wf.edited else "") if wf.builtin else ""
     meta += "</p>"
     problems = tabs.get(mode).problems if tabs.get(mode) else []
@@ -358,7 +358,7 @@ def workflow_page(store: Store, wf: Workflow, mode: str) -> str:
     settings = (
         f"<details class=workflow-settings><summary>Settings</summary><form method=post action=/act class=stack>{hidden(action='workflow-settings')}"
         f"<label>Name <input name=name value='{escape(wf.name)}' required maxlength=60></label>"
-        f"<label><code>!with</code> name <input name=handle value='{escape(wf.handle)}' required maxlength=30 pattern='[a-z][a-z0-9_-]*'></label>"
+        f"<label>Short name <span class=muted>(what golem's request call knows it by)</span> <input name=handle value='{escape(wf.handle)}' required maxlength=30 pattern='[a-z][a-z0-9_-]*'></label>"
         f"<label>What it's for <span class=muted>(golem picks a workflow for a request by this)</span>"
         f"<textarea name=ingest rows=3 maxlength=1000>{escape(wf.ingest)}</textarea></label><button>Save settings</button></form>"
         f"<div class=row-form><form method=post action=/act class=inline>{hidden(action='workflow-archive', value='off' if wf.archived else 'on')}"

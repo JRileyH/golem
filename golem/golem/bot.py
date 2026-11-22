@@ -1,76 +1,41 @@
-"""What Riggy's messages turn into, written in the web app (web.py hands them to `handle`).
+"""What Riggy starts from the web app (web.py): projects, jobs, and the few changes to a project
+that need more than its settings.
 
-- In golem's own conversation (the inbox), free text is a new idea: it's triaged into a
-  brief, gets a project, its own conversation and a job. `!adopt <repo>` takes on a repo
-  in the org that golem didn't make the same way, once it's checked it over (adopt.py).
-- In a project's conversation, free text is about that project: feedback for the job that's
-  waiting on him, a question (answered by a quick look, not a job that builds anything,
-  even while a job is under way), a note for the job that's running, or else a new job:
-  a change, or, if he asks to see options first, options to pick from and then his pick
-  (options.py), or, if he asks for a new look, a design pass (workflows/design.yml). On a
-  project that allows more than one change at once, a message with changes under way is a
-  note for the one it's about or, if it's a change of its own, a new job beside them (the
-  request call decides; !switch puts it the other way). They take turns (turns.py).
-- `!commands` work anywhere; in a project's conversation they default to that project.
+- A new project, from the New project form: Riggy names it and says what it's for, which
+  workflow and mode it starts with, and its tag; golem only writes its summary and its first
+  job's title (intake.summarize), and the job starts straight away.
+- Adopting a repo in the org that golem didn't make, from the same page: the quick checks
+  answer at once (adopt.py); then it's a project like any other, its job checking it over.
+- A request on a project's page: always a job of its own, queued behind any change under way
+  (turns.py). The request call titles it and, unless Riggy picked them, says which workflow it's
+  for (a change, options first, a design pass, only an answer…) and whether it asks for a mode.
+- Moving a project to a new address, and deleting one.
 
-One message is handled at a time, so two can't both start a job.
+One at a time, so two can't both take the same address.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
-from datetime import timedelta
 
-from . import adopt, intake, options, plan, teardown, turns
+from . import adopt, intake, options, plan, teardown
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
 from .prompts import Prompts
 from .scheduler import WORKER_ENV_DENY, Scheduler
-from .store import ACTIVE, EFFORTS, MODELS, Job, Project, Store, Workflow, later
-from .talk import INBOX, STATUS, Talk
+from .store import Job, Project, Store, Workflow
+from .talk import Talk
 from .workspace import About, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
 
-HELP = """Commands (in a project's conversation they apply to that project; elsewhere, put the project's slug first):
-!queue — what's queued, running and waiting
-!status [project] — a project's state, settings and links
-!with <workflow>[:<mode>] <what> — run it with that workflow (and mode), not the one golem would pick; Settings lists the workflows
-!question <what> — just an answer: golem looks into it (the code, the site, its logs) and replies, building nothing; asking a question does the same
-!options <what> — mock up a few options (A, B, C) to pick from before building any; asking to see options does the same
-!design [how it should feel] — a design pass: a doc with a few directions for its look, logo and icons; you pick, golem builds it and writes a design guide later work follows. Asking for a redesign does the same
-!mode <mode>|default — the mode its requests run in unless they ask for another (Settings lists the modes)
-!model fable|opus|sonnet|haiku|default — the Claude model for all its steps, or each step's default
-!effort low|medium|high|xhigh|max|default — how hard they think
-!rename <name> — change the project's name
-!slug <new-slug> — move it to a new address and repo
-!pause / !resume — hold a project while you tinker; with no project, in golem's own conversation, all work
-!kill [job] — drop a job
-!switch — put your last message the other way: from a note for a change under way to a change of its own beside it, or back (projects that allow more than one change at once)
-!delete — delete a project for good: site, data, checkout and history (asks you to confirm)
-!adopt <repo> [what it is] — in golem's own conversation: take on a repo in the org that golem didn't make. It checks it over, fixes what's missing and deploys it, or says what's in the way
-
-With a new idea you can also say the settings ("be thorough, opus, max effort"), and with !adopt too.
-Each kind of step has a default model and effort, set in Settings.
-Anything else: in golem's own conversation, a new idea; in a project's, feedback, a question, a change, or a request to see options."""
-
-STARTING = "Starting now."
 QUESTION_PRIORITY = 1000  # questions go ahead of other work: an answer shouldn't wait behind a build
-SETTINGS = {"model": (*MODELS, "default"), "effort": (*EFFORTS, "default")}
-# `!with <workflow>[:<mode>] <what>`: the workflow (and mode) for a request, not golem's pick.
-WITH_RE = re.compile(r"^!with\s+([\w-]+)(?::([\w-]*))?(?:\s+(.*))?$", re.S | re.I)
-NO_MODE = ("default", "none", "")
 
 
 class Bot:
-    # New projects wait this long before work starts, so Riggy can change their settings.
-    start_delay = timedelta(minutes=1)
-
     def __init__(
         self,
         settings: Settings,
@@ -95,186 +60,69 @@ class Bot:
         if store.get("fallback_mode") is None and settings.default_mode:  # GOLEM_DEFAULT_MODE, until Settings says
             store.put("fallback_mode", settings.default_mode)
 
-    async def handle(self, channel: str, text: str) -> None:
-        """Something Riggy said in a conversation: a project's slug, or the inbox."""
-        text = text.strip()
-        if not text or channel == STATUS:
-            return
+    # --- new projects ---------------------------------------------------------
+
+    async def new_project(self, name: str, idea: str, *, slug: str, workflow: str = "", mode: str | None = None, tag: str = "",
+                          model: str = "", effort: str = "") -> Job:  # fmt: skip
+        """A project as Riggy named it on the New project form, and its first job, which starts
+        straight away: the form already said all a minute's grace was for. `workflow`: one for new
+        projects by key, else the fallback; `mode` None for golem's default, "" for none. The
+        project's own default mode stays unset: only Riggy sets that, in its settings. Raises
+        ValueError if the address can't be had (web.py checks first, and says why)."""
         async with self.lock:
-            await self.respond(channel, text)
+            if not intake.valid_slug(slug) or await self.slug_taken(slug):
+                raise ValueError(f"{slug} can't be had.")
+            wf = self.store.workflow(key=workflow) if workflow else None
+            if wf is None or wf.archived or wf.start != "new":
+                wf = self.library.fallback("new")
+            about = await self.summarize(name, idea)
+            project = self.store.add_project(slug, name.strip()[:60], about.summary, mode="", model=model, effort=effort)
+            if tag and (found := self.store.tag(tag)):
+                project = self.store.update_project(slug, tag=found.name)
+            title = about.title or project.name  # without a model: what he called it, not his first line cut short
+            job = self.start_job(project, wf, self.fallback_mode() if mode is None else mode, idea.strip(), title, kind="new")
+            await self.chat.heard(slug, idea.strip(), job=job.id)
+            return job
 
-    async def respond(self, channel: str, text: str) -> None:
-        await self.chat.heard(channel, text)
-        if forced := WITH_RE.match(text):  # matched as written: the rest keeps its lines
-            if reply := await self.with_workflow(channel, *forced.groups()):
-                await self.chat.send(channel, reply, notice=True)
-            return
-        if text.startswith("!"):
-            await self.command(channel, text)
-            return
-        project = self.store.project(channel) if channel != INBOX else None
-        if project:
-            await self.project_message(project, text)
-        elif channel == INBOX:
-            await self.new_idea(text)
-
-    # --- new ideas ------------------------------------------------------------
-
-    async def new_idea(self, text: str, forced: Workflow | None = None, forced_mode: str | None = None) -> None:
-        """A new project for an idea: triage names it and says which workflow for new projects and
-        which mode it's for (by what each is for), unless `!with` said. The project's own default
-        mode stays unset: only Riggy sets that."""
-        brief = await self.triage(text)
-        slug = await intake.unique_slug(brief.slug, self.slug_taken)
-        wf = forced or (self.store.workflow(handle=brief.workflow) if brief.workflow else None) or self.library.fallback("new")
-        mode = forced_mode if forced_mode is not None else brief.mode or self.fallback_mode()
-        project = self.store.add_project(
-            slug,
-            brief.name,
-            brief.summary,
-            mode="",
-            model=brief.model or "",  # unless named, each step's default
-            effort=brief.effort or "",
+    async def summarize(self, name: str, idea: str) -> intake.Summary:
+        if self.settings.harness == "fake":
+            return intake.Summary(intake.idea_summary(idea), "")
+        return await intake.summarize(
+            self.harness,
+            self.prompts.dir / "summary.md",
+            name,
+            idea,
+            cwd=self.settings.state_dir / "triage",
+            log_path=self.settings.state_dir / "triage" / "summary.jsonl.gz",
+            env={k: v for k, v in os.environ.items() if k not in WORKER_ENV_DENY},
         )
-        project, tagged = self.tag_project(project, brief)
-        url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
-        job = self.start_job(project, wf, mode, text, brief.title, kind="new")
-        self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
-
-        await self.chat.send(
-            slug,
-            f"{brief.name}\n\n{brief.summary}\n\nYou said: “{text}”\n\n"
-            f"It'll live at {url} (code: {repo}). I'll post progress here and check in when there's "
-            "an MVP worth looking at. Reply here any time with feedback or changes.\n\n"
-            f"{plan.running(job, wf)}, {plan.engine_words(project)}. Starting in a minute: to change that first, say "
-            "!mode, !model or !effort here (!help for the options).",
-        )
-        await self.chat.send(
-            INBOX,
-            f"New project: {brief.name} ({slug}), {plan.running(job, wf).lower()}. "
-            f"Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}",
-        )
-        self.scheduler.wake()
-
-    # --- workflows and modes (workflows.py) -------------------------------------
-
-    def modes(self) -> list[intake.Choice]:
-        return [intake.Choice(m.name, m.ingest) for m in self.store.modes()]
-
-    def fallback_mode(self) -> str:
-        """The mode a request runs in when nothing says otherwise: golem's setting, else none."""
-        return plan.mode_for(self.store, None)
-
-    def mode_for(self, project: Project, asked: str) -> str:
-        """The mode a project's request runs in: what it asked for, else the project's default
-        (Riggy's setting), else golem's."""
-        return plan.mode_for(self.store, project, asked)
-
-    def kinds(self) -> list[options.Kind]:
-        """The workflows a project's message can be for: changes, and those that only look."""
-        return [options.Kind(w.key, w.handle, w.start == "look", w.ingest) for w in self.library.choices(("change", "look"))]
-
-    def builtin(self, key: str, start: str) -> Workflow | None:
-        """One of golem's own workflows by key, if it's there to use, else the start type's fallback."""
-        wf = self.store.workflow(key=key)
-        return wf if wf and not wf.archived and wf.start == start else self.library.fallback(start)
-
-    def start_job(self, project: Project, wf: Workflow, mode: str, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
-        """A job for a request, running a workflow in a mode."""
-        kind = kind or {"new": "new", "adopt": "adopt"}.get(wf.start, "change")
-        job = self.store.add_job(project.slug, kind, request, wf.key, priority=priority, title=title, start=wf.start)
-        job = self.store.update_job(job.id, workflow=wf.key, mode=mode)
-        self.scheduler.wake()
-        return job
-
-    async def with_workflow(self, channel: str, handle: str, mode: str | None, rest: str | None) -> str:
-        """`!with <workflow>[:<mode>] <what>`: the request, run with that workflow (and mode)."""
-        project = self.store.project(channel) if channel != INBOX else None
-        starts = ("change", "look") if project else ("new",)
-        usable = self.library.choices(starts)
-        wf = next((w for w in usable if w.handle.lower() == handle.lower()), None)
-        where = "a project's conversation" if project else "golem's conversation"
-        if wf is None:
-            names = ", ".join(w.handle for w in usable) or "none"
-            return f"There's no workflow called {handle} for {where}. These are: {names}. Usage: !with <workflow>[:<mode>] <what>"
-        if mode is not None and mode.lower() not in NO_MODE and self.store.mode(mode) is None:
-            names = ", ".join(m.name for m in self.store.modes()) or "none yet (Settings)"
-            return f"There's no mode called {mode}. The modes are: {names}."
-        mode = None if mode is None else ("" if mode.lower() in NO_MODE else self.store.mode(mode).name)
-        text = (rest or "").strip()
-        if not text and wf.start != "change":
-            return "Say what it's for after the workflow: !with <workflow>[:<mode>] <what>"
-        if project is None:
-            await self.new_idea(text, wf, mode)
-            return ""
-        mode = self.mode_for(project, mode or "")
-        if wf.start == "look":
-            return self.start_question(project, text, "", wf, mode)
-        under = self.store.active_job(project.slug, questions=False)
-        if under and not self.store.room_for_change(project.slug):
-            return f"{project.name} has a job under way (#{under.id}). Ask again when it's done, or !kill it first."
-        return self.started(project, wf, mode, text or f"{wf.name}.", "")
-
-    def started(self, project: Project, wf: Workflow, mode: str, request: str, title: str) -> str:
-        """Start a change job and say what it'll do: golem's own workflows say it their way."""
-        job = self.start_job(project, wf, mode, request, title)
-        position = self.queue_position(job)
-        later_ = "" if position == STARTING else f" {position}"
-        if wf.key == "options":
-            return ("Got it: I'll make some options for you to pick from first, then build the one you pick. "
-                    "(Rather I just built it? !kill, then say it again.)" + later_)  # fmt: skip
-        if wf.key == "design":
-            return ("Got it: a design pass. I'll make a doc with a few directions for how it could look, for you to pick "
-                    "from, then build the one you pick and write it down so later changes keep to it." + later_)  # fmt: skip
-        if wf.builtin and wf.key == "change":
-            return f"Got it. {position}" if position != STARTING else ""
-        return f"Got it: {wf.name}{f', {mode} mode' if mode else ''}.{later_}"
-
-    def tag_project(self, project: Project, brief: intake.Brief) -> tuple[Project, str]:
-        """The project with triage's tag, and what to add to the news if it's a new tag."""
-        tag, tagged = self.store.tag(brief.tag) if brief.tag else None, ""
-        if tag is None and brief.new_tag:  # triage's bar for a new tag is high: say so when it's met
-            tag, tagged = self.store.add_tag(brief.tag), f". It's the first {brief.tag}: a new tag (Settings has them)"
-        if tag:
-            project = self.store.update_project(project.slug, tag=tag.name)
-        return project, tagged
 
     async def slug_taken(self, slug: str) -> bool:
         return self.store.project(slug) is not None or await self.workspace.repo_exists(slug)
 
     # --- adopting a repo golem didn't make (adopt.py) ---------------------------
 
-    async def adopt(self, args: list[str]) -> str:
-        """`!adopt <slug> [what it is]`. The quick checks answer at once; then the repo becomes a
-        project like a new idea does, and its job checks it over (vet) after the same grace."""
-        if not args:
-            return f"Usage: !adopt <repo> [what it is], for a repo in github.com/{self.settings.org} that golem didn't make."
-        slug, words = args[0].lower(), " ".join(args[1:])
-        if existing := self.store.project(slug):
-            return f"{existing.name} ({slug}) is already one of my projects: {self.settings.url('golem')}/p/{slug}"
-        about = await self.workspace.about(slug) if intake.valid_slug(slug) else None
-        if blocked := adopt.preflight(slug, about, False, self.settings.org):
-            return adopt.refusal(slug, blocked)
-        brief = await self.adopt_brief(slug, words, about)
-        project = self.store.add_project(slug, brief.name, brief.summary, mode="", model=brief.model or "", effort=brief.effort or "")
-        project, tagged = self.tag_project(project, brief)
-        wf = self.builtin("adopt", "adopt")
-        job = self.start_job(project, wf, brief.mode or self.fallback_mode(), f"!adopt {slug} {words}".strip(), brief.title, kind="adopt")
-        self.store.update_job(job.id, state="parked", retry_at=later(self.start_delay))
-        url, repo = self.settings.project_url(slug), self.settings.repo_url(slug)
-        said = f"You said: “{words}”" if words else "From its README and description: you didn't say what it is."
-        await self.chat.send(
-            slug,
-            f"{brief.name}\n\n{brief.summary}\n\n{said}\n\n"
-            f"I'm taking on {repo}, to live at {url}. First I'll check it over: that it builds and its tests pass "
-            "here, its CI, the deployer's rules, and the shape every project of mine has. If something's in the way "
-            "I'll say what in golem's conversation and leave it alone. If it only needs tidying I'll do that, then "
-            "deploy it, and it's mine from then on, like any project I built.\n\n"
-            f"{plan.running(job, wf)}, {plan.engine_words(project)}. Starting in a minute: to change that first, say !mode, !model or !effort "
-            "here (!help for the options).",
-        )
-        self.scheduler.wake()
-        return f"Adopting {brief.name} ({slug}), {plan.running(job, wf).lower()}. Its conversation: {self.settings.url('golem')}/p/{slug}{tagged}"
+    async def adopt(self, repo: str, words: str = "", *, name: str = "", mode: str | None = None, tag: str = "") -> tuple[Job | None, str]:
+        """A repo in the org golem didn't make, taken on: the quick checks answer at once (a
+        refusal says what's in the way, and nothing's made); then it's a project like a new one,
+        its job checking it over (vet), tidying what's missing and deploying it. `name` "" names
+        it from its README; what Riggy says it is (`words`) wins over its README for the summary."""
+        slug, words = repo.strip().lower(), words.strip()
+        async with self.lock:
+            if existing := self.store.project(slug):
+                return None, f"{existing.name} ({slug}) is already one of golem's projects."
+            about = await self.workspace.about(slug) if intake.valid_slug(slug) else None
+            if blocked := adopt.preflight(slug, about, False, self.settings.org):
+                return None, adopt.refusal(slug, blocked)
+            brief = await self.adopt_brief(slug, words, about)
+            project = self.store.add_project(slug, (name.strip() or brief.name)[:60], brief.summary, mode="")
+            if tag and (found := self.store.tag(tag)):
+                project = self.store.update_project(slug, tag=found.name)
+            wf = self.builtin("adopt", "adopt")
+            job = self.start_job(project, wf, self.fallback_mode() if mode is None else mode, words or plan.adopting(slug), brief.title, kind="adopt")
+            if words:
+                await self.chat.heard(slug, words, job=job.id)
+            return job, f"Adopting {project.name}: first golem checks it over."
 
     async def adopt_brief(self, slug: str, words: str, about: About) -> intake.Brief:
         if self.settings.harness == "fake":
@@ -292,22 +140,38 @@ class Bot:
             modes=self.modes(),
         )
 
-    async def triage(self, text: str) -> intake.Brief:
-        if self.settings.harness == "fake":
-            return intake.fallback_brief(text)
-        return await intake.triage(
-            self.harness,
-            self.prompts.intake_path(),
-            text,
-            cwd=self.settings.state_dir / "triage",
-            log_path=self.settings.state_dir / "triage" / "last.jsonl.gz",
-            env={k: v for k, v in os.environ.items() if k not in WORKER_ENV_DENY},
-            tags=[t.name for t in self.store.tags()],
-            modes=self.modes(),
-            workflows=[intake.Choice(w.handle, w.ingest) for w in self.library.choices(("new",))],
-        )
+    # --- workflows and modes (workflows.py) -------------------------------------
 
-    # --- projects' conversations ----------------------------------------------
+    def modes(self) -> list[intake.Choice]:
+        return [intake.Choice(m.name, m.ingest) for m in self.store.modes()]
+
+    def fallback_mode(self) -> str:
+        """The mode a request runs in when nothing says otherwise: golem's setting, else none."""
+        return plan.mode_for(self.store, None)
+
+    def mode_for(self, project: Project, asked: str) -> str:
+        """The mode a project's request runs in: what it asked for, else the project's default
+        (Riggy's setting), else golem's."""
+        return plan.mode_for(self.store, project, asked)
+
+    def kinds(self) -> list[options.Kind]:
+        """The workflows a project's request can be for: changes, and those that only look."""
+        return [options.Kind(w.key, w.handle, w.start == "look", w.ingest) for w in self.library.choices(("change", "look"))]
+
+    def builtin(self, key: str, start: str) -> Workflow | None:
+        """One of golem's own workflows by key, if it's there to use, else the start type's fallback."""
+        wf = self.store.workflow(key=key)
+        return wf if wf and not wf.archived and wf.start == start else self.library.fallback(start)
+
+    def start_job(self, project: Project, wf: Workflow, mode: str, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
+        """A job for a request, running a workflow in a mode."""
+        kind = kind or {"new": "new", "adopt": "adopt"}.get(wf.start, "change")
+        job = self.store.add_job(project.slug, kind, request, wf.key, priority=priority, title=title, start=wf.start)
+        job = self.store.update_job(job.id, workflow=wf.key, mode=mode)
+        self.scheduler.wake()
+        return job
+
+    # --- requests on a project's page -------------------------------------------
 
     async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None) -> Job:
         """What Riggy asked for on a project's page: always a job of its own, queued behind any
@@ -315,329 +179,21 @@ class Bot:
         says which workflow it's for and whether it asks for a mode; `mode` "" is none."""
         fallback = self.library.fallback("change")
         asked = await options.read_request(self.harness, self.settings, text, self.kinds(), [(m.name, m.ingest) for m in self.store.modes()],
-                                           [], fallback.key if fallback else "")  # fmt: skip
+                                           fallback.key if fallback else "")  # fmt: skip
         picked = self.store.workflow(key=workflow) if workflow else None
         if picked is None or picked.archived or picked.start not in ("change", "look"):
             picked = self.store.workflow(key=asked.workflow) or fallback
         mode = self.mode_for(project, asked.mode) if mode is None else mode
-        job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
+        async with self.lock:
+            job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
         await self.chat.heard(project.slug, text, job=job.id)
         return job
 
-    async def project_message(self, project: Project, text: str) -> None:
-        changes = self.store.change_jobs(project.slug)
-        job = changes[0] if changes else None
-        asked = next((j for j in self.store.jobs(("waiting",)) if j.slug == project.slug and j.start == "look"), None)
-        for waiting in (j for j in (*changes, asked) if j and j.state == "waiting"):  # his reply to what golem asked
-            self.store.add_note(waiting.id, text)
-            self.store.update_job(waiting.id, state="queued")
-            which = f" (job {waiting.id}, “{plan.title(waiting)}”)" if len(changes) > 1 else ""
-            await self.chat.send(project.slug, f"Thanks, picking it back up{which}. {self.queue_position(waiting)}", notice=True)
-            self.scheduler.wake()
-            return
-        # With room for another change beside those under way, the call also says which one (if
-        # any) the message belongs to; without, it's a note for the change under way, as ever.
-        room = self.store.room_for_change(project.slug)
-        under_way = changes if changes and (room or len(changes) > 1) else []
-        fallback = self.library.fallback("change")
-        asked = await options.read_request(self.harness, self.settings, text, self.kinds(), [(m.name, m.ingest) for m in self.store.modes()],
-                                           under_way, fallback.key if fallback else "")  # fmt: skip
-        wf = self.store.workflow(key=asked.workflow) or fallback
-        mode = self.mode_for(project, asked.mode)
-        if wf.start == "look":
-            said = self.start_question(project, text, asked.title, wf, mode)
-            if said:
-                await self.chat.send(project.slug, said, notice=True)
-            return
-        if job is None:
-            said = self.started(project, wf, mode, text, asked.title)
-            if said:  # otherwise "Working on it" follows straight away
-                await self.chat.send(project.slug, said, notice=True)
-            return
-        if asked.to == 0 and room:  # a change of its own, beside those under way
-            new = self.start_change(project, text, wf.key, asked.title, mode)
-            other = changes[-1]  # the one asked for last: the likeliest it was meant for
-            self.remember_switch(project, text, asked, new=new.id, other=other.id)
-            what = {"options": "options to pick from first", "design": "a design pass"}.get(wf.key, "a change of its own")
-            beside = " and ".join(f"job {j.id}" for j in changes) if len(changes) > 1 else f"job {other.id}, “{plan.title(other)}”"
-            said = f"Started {what} as job {new.id}, “{plan.title(new)}”, beside {beside}: they take turns building and shipping."
-            position = self.queue_position(new)
-            said += ("" if position == STARTING else f" {position}") + f" If it belongs with job {other.id}, say !switch."
-            await self.chat.send(project.slug, said, notice=True)
-            return
-        target = next((j for j in changes if j.id == asked.to), job)
-        note = self.store.add_note(target.id, text)
-        under = target.state == "running" or self.store.steps(target.id)  # under way, maybe waiting on CI
-        if not under_way:
-            said = "Noted. I'll work that in at the next step of the current job." if under else "Noted. I'll include that when the job starts."
-        else:
-            self.remember_switch(project, text, asked, note=note, other=target.id)
-            said = f"Noted for job {target.id}, “{plan.title(target)}”: " + ("I'll work that in at its next step." if under else "I'll include that when it starts.")
-            said += " Rather it was a change of its own? Say !switch." if room else ""
-        await self.chat.send(project.slug, said, notice=True)
-
-    def start_change(self, project: Project, text: str, workflow: str, title: str, mode: str | None = None) -> Job:
-        """A new change job for what he said, with the workflow it's for (by key)."""
-        wf = self.store.workflow(key=workflow)
-        if wf is None or wf.archived or wf.start != "change":
-            wf = self.library.fallback("change")
-        return self.start_job(project, wf, self.mode_for(project, "") if mode is None else mode, text, title)
-
-    def remember_switch(self, project: Project, text: str, asked: options.Request, note: int = 0, new: int = 0, other: int = 0) -> None:
-        """Where the last message went, for !switch to put it the other way: a note for job
-        `other`, or a new job `new` beside it."""
-        self.store.put(f"switch_{project.slug}", json.dumps({"text": text, "workflow": asked.workflow, "mode": asked.mode, "title": asked.title,
-                                                              "note": note, "new": new, "other": other}))  # fmt: skip
-
-    def switch(self, project: Project) -> str:
-        """!switch: the last message the other way. A note for a change under way becomes a change
-        of its own, if it hasn't been passed on; a new change becomes a note, if it hasn't started building."""
-        key = f"switch_{project.slug}"
-        last = json.loads(self.store.get(key) or "{}")
-        if not last:
-            return "Nothing to switch: !switch puts your last message the other way, from a note for a change under way to a change of its own, or back."
-        self.store.put(key, "")
-        other = self.store.job(last["other"])
-        if last["note"]:
-            found = self.store.note(last["note"])
-            if found is None or found[2]:
-                return f"Job {last['other']} has already worked that in."
-            if not self.store.room_for_change(project.slug):
-                return f"{project.name} has as many changes under way as it allows ({project.parallel_jobs}): !kill one, or allow more in its settings."
-            self.store.drop_note(last["note"])
-            new = self.start_change(project, last["text"], last.get("workflow") or last.get("kind", ""), last["title"],
-                                    self.mode_for(project, last.get("mode", "")))  # fmt: skip
-            return f"Started it as job {new.id}, “{plan.title(new)}”, a change of its own beside job {last['other']}."
-        new = self.store.job(last["new"])
-        if new is None or new.state not in ACTIVE:
-            return f"Job {last['new']} has finished already."
-        if other is None or other.state not in ACTIVE:
-            return f"Job {last['other']} has finished, so job {new.id} carries on as its own change."
-        steps = self.store.steps(new.id)
-        if any(s.started_at and plan.turn_of(steps, s) == "build" for s in steps):
-            return f"Job {new.id} has started building: !kill {new.id} if you'd rather it went with job {other.id}."
-        self.scheduler.kill(new.id)
-        self.store.add_note(other.id, last["text"])
-        return f"Dropped job {new.id}: what you said goes to job {other.id}, “{plan.title(other)}”, at its next step."
-
-    def start_question(self, project: Project, question: str, title: str = "", wf: Workflow | None = None, mode: str | None = None) -> str:
-        """A question: a quick look and an answer, ahead of other work. Says so only if it has to wait."""
-        wf = wf or self.builtin("question", "look")
-        job = self.start_job(project, wf, self.mode_for(project, "") if mode is None else mode, question, title, priority=QUESTION_PRIORITY)
-        position = self.queue_position(job)
-        if position == STARTING:  # "Looking into it" follows straight away
-            return ""
-        running = self.scheduler.running_jobs()
-        if not running or self.scheduler.paused or project.paused:
-            return position
-        mine = next((j for j in running if j.slug == project.slug), None)
-        if mine or len(running) == 1:  # its project's step, or the only one
-            return f"Good question. I'll look into it as soon as the step I'm on for {self.store.project((mine or running[0]).slug).name} finishes."
-        return f"Good question. I'll look into it as soon as one of the steps I'm on (for {self.project_names(running)}) finishes."
-
-    def start_options(self, project: Project, request: str, title: str = "") -> str:
-        """!options: golem's Options workflow (or the fallback for changes, if it's gone)."""
-        return self.started(project, self.builtin("options", "change"), self.mode_for(project, ""), request, title)
-
-    def start_design(self, project: Project, request: str, title: str = "") -> str:
-        """!design: golem's Design pass workflow (or the fallback for changes, if it's gone)."""
-        return self.started(project, self.builtin("design", "change"), self.mode_for(project, ""), request, title)
-
-    def queue_position(self, job: Job) -> str:
-        if self.scheduler.paused:
-            return "Work is paused (!resume to start again)."
-        if self.store.project(job.slug).paused:
-            return "This project is paused (!resume to start again)."
-        running = self.scheduler.running_jobs()
-        busy = {j.slug for j in running}
-        if not running or job.id in {j.id for j in running}:
-            return STARTING
-        free = len(running) < self.scheduler.workers
-        if free and (job.slug not in busy or self.scheduler.side_by_side(job) and not turns.blocked_by(self.store, job)):
-            return STARTING  # a worker is free for it, and its project lets it go
-        if waiting := turns.waiting_for(self.store, job):
-            return f"Queued: {waiting}."
-        ahead = [j for j in self.store.jobs(("queued",)) if j.id != job.id and (j.priority, -j.id) >= (job.priority, -job.id)]
-        others = f" and {len(ahead)} more queued" if ahead else ""
-        return f"Queued: I'm on {self.project_names(running)}{others} first."
-
-    def project_names(self, jobs: list[Job]) -> str:
-        """The jobs' projects by name: "Trees", "Trees and Birds", "Trees, Birds and Fish"."""
-        names = list(dict.fromkeys(p.name for p in map(self.store.project, (j.slug for j in jobs)) if p))
-        return " and ".join(names) if len(names) < 3 else f"{', '.join(names[:-1])} and {names[-1]}"
-
-    # --- commands -------------------------------------------------------------
-
-    async def command(self, channel: str, text: str) -> None:
-        name, *args = text[1:].split() or [""]
-        here = self.store.project(channel) if channel != INBOX else None
-        reply = await self.run_command(name.lower(), args, here)
-        if here and self.store.project(channel) is None:  # deleted, or moved to a new slug
-            moved = self.store.project(args[-1].lower()) if name.lower() in ("slug", "move") and args else None
-            channel = moved.slug if moved else INBOX
-        if reply:  # "" when there's nothing to say yet (a question that starts straight away)
-            await self.chat.send(channel, reply, notice=True)
-
-    async def run_command(self, name: str, args: list[str], here: Project | None) -> str:
-        match name:
-            case "help":
-                return HELP
-            case "queue":
-                return self.queue_text()
-            case "status":
-                project = self.pick_project(args, here)
-                if project:
-                    return self.status_text(project)
-                return self.queue_text() if not args else f"No project called {args[0]}."
-            case "pause" | "resume":
-                paused = name == "pause"
-                if not args and not here:
-                    self.scheduler.set_paused(paused)
-                    return "Paused all work. The current step finishes first." if paused else "Resumed."
-                project = self.pick_project(args, here)
-                if not project:
-                    return f"No project called {args[0]}."
-                self.store.set_paused(project.slug, paused)
-                self.scheduler.wake()
-                if paused:
-                    return f"Paused {project.name}. A step already running finishes first; nothing new starts until !resume."
-                return f"Resumed {project.name}."
-            case "kill":
-                if not args and here and len(changes := self.store.change_jobs(here.slug)) > 1:
-                    return "Which one? !kill <number>:\n" + "\n".join(self.job_line(j) for j in changes)
-                job = self.pick_job(args, here)
-                if job is None:
-                    return "Which job? !kill <number> (see !queue)."
-                if not self.scheduler.kill(job.id):
-                    return f"Job {job.id} has already finished."
-                return f"Killed job {job.id} ({self.store.project(job.slug).name})."
-            case "mode":
-                return self.set_mode(args, here)
-            case "model" | "effort":
-                return self.set_setting(name, args, here)
-            case "question":
-                project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
-                if not project or not words:
-                    return "Usage: !question <what> in the project's conversation, or !question <slug> <what>."
-                return self.start_question(project, " ".join(words)) or ""
-            case "options":
-                project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
-                if not project or not words:
-                    return "Usage: !options <what to pick between> in the project's conversation, or !options <slug> <what>."
-                job = self.store.active_job(project.slug, questions=False)
-                if job and not self.store.room_for_change(project.slug):
-                    return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
-                return self.start_options(project, " ".join(words))
-            case "design":
-                project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
-                if not project:
-                    return "Usage: !design [how it should feel] in the project's conversation, or !design <slug> [how it should feel]."
-                job = self.store.active_job(project.slug, questions=False)
-                if job and not self.store.room_for_change(project.slug):
-                    return f"{project.name} has a job under way (#{job.id}). Ask again when it's done, or !kill it first."
-                request = " ".join(words) or "A design pass: give it a look of its own."
-                return self.start_design(project, request, "" if words else "Design Pass")
-            case "rename":
-                project, words = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
-                if not project or not words:
-                    return "Usage: !rename <new name> in the project's conversation, or !rename <slug> <new name>."
-                new = " ".join(words)[:60]
-                self.store.update_project(project.slug, name=new)
-                return f"Renamed {project.name} to {new}. The address stays {project.slug}; !slug changes that."
-            case "slug" | "move":
-                project, rest = (here, args) if here else (self.pick_project(args[:1], None), args[1:])
-                if not project or len(rest) != 1:
-                    return "Usage: !slug <new-slug> in the project's conversation, or !slug <old-slug> <new-slug>."
-                return await self.move(project, rest[0].lower())
-            case "switch":
-                project = self.pick_project(args, here)
-                return self.switch(project) if project else "Usage: !switch in the project's conversation, or !switch <slug>."
-            case "delete":
-                return await self.delete(args, here)
-            case "adopt":
-                return await self.adopt(args)
-            case _:
-                return f"Unknown command !{name}.\n\n{HELP}"
-
-    def pick_project(self, args: list[str], here: Project | None) -> Project | None:
-        return self.store.project(args[0].lower()) if args else here
-
-    def pick_job(self, args: list[str], here: Project | None) -> Job | None:
-        if args:
-            return self.store.job(int(args[0].lstrip("#"))) if args[0].lstrip("#").isdigit() else None
-        return self.store.active_job(here.slug) if here else None
-
-    def queue_text(self) -> str:
-        jobs = self.store.jobs(ACTIVE)
-        lines = [self.job_line(j) for j in jobs]
-        head = "Work is paused.\n" if self.scheduler.paused else ""
-        return head + ("\n".join(lines) if lines else "Nothing queued.")
-
-    def job_line(self, job: Job) -> str:
-        project = self.store.project(job.slug)
-        steps = plan.planned(self.settings, self.store, job)
-        step = plan.current(steps)
-        what = plan.what(job)
-        held = " (project paused)" if project.paused else ""
-        state = job.state
-        if state == "parked":  # a grace period before a new project starts, CI running, or a retry
-            if not self.store.steps(job.id):
-                state = "starting shortly"
-            elif step and step.kind in ("checks", "deploy") and not step.error:
-                state = "waiting for CI"
-            else:
-                state = "retrying soon"
-        state = turns.waiting_for(self.store, job) or state  # a change waiting its turn: who for
-        return f"#{job.id} {project.name}: {what} “{plan.title(job)}”, {state}, {plan.where(steps)}{held}"
-
-    def status_text(self, project: Project) -> str:
-        jobs = [j for j in self.store.jobs(ACTIVE, limit=1000) if j.slug == project.slug]
-        state = "\n".join(self.job_line(j) for j in sorted(jobs, key=lambda j: j.id)) or "Idle."
-        return (
-            f"{project.name} ({project.slug})\n{plan.settings_line(project)}\n{state}\n"
-            f"{self.settings.project_url(project.slug)}\n{self.settings.repo_url(project.slug)}"
-        )
-
-    # --- settings -------------------------------------------------------------
-
-    def set_setting(self, setting: str, args: list[str], here: Project | None) -> str:
-        allowed = SETTINGS[setting]
-        project, rest = (here, args) if here and len(args) == 1 else (self.pick_project(args[:1], None), args[1:])
-        if not project or len(rest) != 1 or rest[0].lower() not in allowed:
-            where = "" if here else " <project>"
-            return f"Usage: !{setting}{where} {'|'.join(allowed)}"
-        value = rest[0].lower()
-        project = self.store.update_project(project.slug, **{setting: "" if value == "default" else value})
-        reply = f"{project.name}: {plan.engine_words(project)}."
-        if self.store.active_job(project.slug, questions=False):
-            reply += " Takes effect from the next step."
-        return reply
-
-    def set_mode(self, args: list[str], here: Project | None) -> str:
-        """!mode <mode>|default: the mode a project's requests run in unless they ask for another.
-        A job that hasn't started yet (a new project in its minute's grace) takes it too."""
-        names = [m.name for m in self.store.modes()]
-        project, rest = (here, args) if here and len(args) == 1 else (self.pick_project(args[:1], None), args[1:])
-        wanted = rest[0].lower() if project and len(rest) == 1 else None
-        found = self.store.mode(wanted) if wanted and wanted not in NO_MODE else None
-        if wanted is None or (wanted not in NO_MODE and found is None):
-            where = "" if here else " <project>"
-            return f"Usage: !mode{where} {'|'.join([*names, 'default'])}"
-        value = found.name if found else ""
-        project = self.store.update_project(project.slug, mode=value)
-        reply = f"{project.name}: {plan.settings_line(project).lower()}."
-        job = self.store.active_job(project.slug, questions=False)
-        if job and not job.graph and not self.store.steps(job.id):  # not started: it runs in that mode
-            job = self.store.update_job(job.id, mode=value or self.fallback_mode())
-            wf = self.store.workflow(key=job.workflow)
-            reply += f" Job {job.id} will run as {plan.running(job, wf).lower()}." if wf else ""
-        elif job:
-            reply += " The job already under way carries on as it is; later requests run in it."
-        return reply
+    # --- a project's address, and deleting it -----------------------------------
 
     async def move(self, project: Project, new: str) -> str:
         """A new slug means a new address and a new repo: golem moves the code, a job fixes the references."""
-        old = project.slug
+        old, new = project.slug, new.strip().lower()
         if new == old:
             return f"{project.name} is already at {old}."
         if not intake.valid_slug(new):
@@ -646,7 +202,7 @@ class Bot:
             return f"{new} is taken (by a project or an existing repo)."
         job = self.store.active_job(old)
         if any(j.slug == old for j in self.scheduler.running_jobs()) or (job and job.state == "running"):
-            return "A step is running. Try again when it finishes, or !pause the project first."
+            return "A step is running. Try again when it finishes, or pause the project first."
         try:
             await self.workspace.move_repo(old, new, project.summary)
         except WorkspaceError as e:
@@ -665,38 +221,23 @@ class Bot:
             self.store.add_note(job.id, request)
             follow = "The current job will update the references and redeploy."
         else:
-            self.start_change(self.store.project(new), request, (self.library.fallback("change") or self.store.workflow(key="change")).key,
-                              f"Move to {new}")  # fmt: skip
-            self.scheduler.wake()
+            self.start_job(project, self.library.fallback("change") or self.store.workflow(key="change"), self.mode_for(project, ""), request,
+                           f"Move to {new}")  # fmt: skip
             follow = "A job is updating the references and will redeploy."
         return (
             f"Moved {project.name} to {new}: {repo}, soon live at {url}. {follow} "
             f"The old repo {self.settings.repo_url(old)} is still there; delete it on GitHub when you like "
-            "(my token can't)."
+            "(golem's token can't)."
         )
 
-    async def delete(self, args: list[str], here: Project | None) -> str:
-        """All of a project but its repo. Riggy confirms by typing the slug."""
-        if not args:
-            if not here:
-                return "Usage: !delete <slug>. It deletes the project for good."
-            return (
-                f"This deletes {here.name} for good: the site and its data, the code checkout, every job and "
-                f"its logs, and this conversation. The repo stays on GitHub for you to delete. "
-                f"To go ahead, say !delete {here.slug}"
-            )
-        project = self.store.project(args[0].lower())
-        if not project:
-            return f"No project called {args[0]}."
+    async def delete(self, project: Project) -> str:
+        """All of a project but its repo (web.py has Riggy type its slug to confirm)."""
         await self.scheduler.drop_project(project.slug)
         try:
             await teardown.delete_project(project, self.settings, self.store, self.workspace, self.deployer)
         except (DeployerError, WorkspaceError) as e:
-            return (
-                f"Couldn't delete all of {project.name}: {e}. Its jobs are stopped; "
-                f"say !delete {project.slug} to try again."
-            )
+            return f"Couldn't delete all of {project.name}: {e}. Its jobs are stopped; delete it again to try again."
         return (
-            f"Deleted {project.name}: its site and data, checkout, jobs, logs and conversation are gone. "
+            f"Deleted {project.name}: its site and data, checkout, jobs, logs and history are gone. "
             f"Delete the repo yourself on GitHub (Settings, at the bottom): {self.settings.repo_url(project.slug)}/settings"
         )

@@ -297,15 +297,29 @@ def what(job: Job) -> str:
     return job.playbook if job.playbook in ("options", "design", "question", "proposals") else "change"
 
 
+def adopting(slug: str) -> str:
+    """An adopt job's request when Riggy didn't say what the repo is."""
+    return f"Adopt {slug}."
+
+
+def adopt_words(job: Job) -> str:
+    """What Riggy said a repo he had golem adopt is: its job's request, unless he said nothing
+    (`adopting`); for one from before the form, what followed `!adopt <slug>`."""
+    request = job.request.strip()
+    if request.startswith("!adopt "):
+        return (request.split(maxsplit=2)[2:] or [""])[0]
+    return "" if request == adopting(job.slug) else request
+
+
 def title(job: Job) -> str:
     """What the job is about in a few words ("Library View Redesign"): the one a model gave it
     from Riggy's words, or else his request's first line, cut short (an adoption's: what he
-    said after `!adopt <slug>`, or the slug)."""
+    said the repo is, or its slug)."""
     if job.title:
         return job.title
     request = job.request.strip()
-    if job.kind == "adopt" and request.startswith("!adopt "):
-        request = (request.split(maxsplit=2)[2:] or [job.slug])[0]
+    if job.kind == "adopt":
+        request = adopt_words(job) or job.slug
     line = request.splitlines()[0] if request else ""
     return line if len(line) <= TITLE_CHARS else line[: TITLE_CHARS - 1].rstrip() + "…"
 

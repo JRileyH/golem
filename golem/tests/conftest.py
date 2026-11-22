@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from golem import plan
+from golem import intake, plan
 from golem.bot import Bot
+from golem.control import Control
 from golem.config import Settings
 from golem.deployer_client import DeployerError, Deployment
 from golem.cards import Cards
 from golem.harness import FakeHarness, RunResult
 from golem.prompts import Prompts
 from golem.scheduler import Scheduler
-from golem.store import Store
-from golem.talk import INBOX, Talk
+from golem.store import Job, Store
+from golem.talk import Talk
 from golem.workspace import LocalWorkspace
 
 REPO = Path(__file__).resolve().parents[2]
@@ -128,7 +128,7 @@ class Golem:
         self.bot = Bot(
             self.settings, self.store, self.talk, self.scheduler, self.harness, self.workspace, self.prompts, self.deployer
         )
-        self.bot.start_delay = timedelta(0)  # no grace period in tests
+        self.control = Control(self.store, self.scheduler)
         # Cards get their own scripted model and a pretend browser, out of the way of the job's script.
         self.card_calls: list = []
         self.shots: list[str] = []
@@ -145,8 +145,25 @@ class Golem:
         path.write_bytes(b"\xff\xd8jpeg")
         return True
 
-    async def say(self, channel: str, body: str) -> None:
-        await self.bot.handle(channel, body)
+    async def new_project(self, idea: str, name: str = "Tree Cards", slug: str = "", **more) -> Job:
+        """A project made on the New project form (bot.new_project), and its first job."""
+        return await self.bot.new_project(name, idea, slug=slug or intake.slugify(name), **more)
+
+    async def ask(self, slug: str, text: str, **more) -> Job:
+        """A request on a project's page: always a job of its own (bot.ask)."""
+        return await self.bot.ask(self.store.project(slug), text, **more)
+
+    async def reply(self, slug: str, text: str, job: int = 0) -> str:
+        """An answer to what a project's job is waiting on him for, from its pane or Now (control.note)."""
+        if not job:
+            waiting = [j for j in self.store.jobs(("waiting",), limit=1000) if j.slug == slug]
+            assert waiting, f"nothing on {slug} is waiting on him"
+            job = waiting[0].id
+        return await self.control.note(job, text)
+
+    async def note(self, slug: str, text: str, job: int = 0) -> str:
+        """A note for a job under way, from its pane: by default the project's change under way."""
+        return await self.control.note(job or self.store.active_job(slug, questions=False).id, text)
 
     async def step(self) -> None:
         """One scheduler turn: the next job's current step."""
@@ -175,7 +192,6 @@ class Golem:
     def labels(self, job_id: int, states=("done", "skipped", "failed")) -> list[str]:
         return [plan.label(s) for s in plan.shown(self.store.steps(job_id)) if s.state in states]
 
-    inbox = INBOX
 
 
 @pytest.fixture

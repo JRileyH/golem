@@ -1,6 +1,6 @@
 """Adopting a repo golem didn't make: the checklist it runs before taking one on.
 
-`!adopt <slug>` (bot.py) takes a repo in the org and from then on treats it like a project
+Adopting (the New project page, bot.py) takes a repo in the org and from then on treats it like a project
 golem built. First golem checks it over, and each check passes, is fixable or is blocking:
 
 - fixable: a worker can change it in the repo. The adopt job's `adopt` step does, following
@@ -288,7 +288,7 @@ def refusal(slug: str, checks: list[Check]) -> str:
     text = f"I didn't adopt {slug}. What's in the way:\n" + "\n".join(f"- {said}" for said in blocking)
     if fixable:
         text += f"\n\nThe rest I'd have fixed myself: {_and(fixable)}."
-    return text + f"\n\nOnce that's changed, say !adopt {slug} again."
+    return text + "\n\nOnce that's changed, adopt it again."
 
 
 def brief(name: str, summary: str, said: str, repo: str, day: str) -> str:

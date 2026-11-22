@@ -43,7 +43,7 @@ $modes
 - effort: `low`, `medium`, `high`, `xhigh` or `max` only if he said one ("extra
   high effort" means xhigh). Otherwise `unspecified`.
 
-What he said after `!adopt $slug` (maybe dictated, so expect typos):
+What he said the repo is (maybe dictated, so expect typos):
 
 $words
 
