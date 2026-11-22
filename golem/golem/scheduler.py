@@ -28,19 +28,23 @@ otherwise the job goes on like any other that ships.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import os
 import shutil
+import signal
+from string import Template
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import adopt, options, plan, proposals, teardown, turns
+from . import adopt, engine, options, plan, proposals, teardown, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
-from .harness import VERDICTS, WRAPUP_SCHEMA, Harness, RunResult, wrapup_schema
+from .harness import VERDICT_SCHEMA, VERDICTS, WRAPUP_SCHEMA, Harness, RunResult, wrapup_schema
 from .history import records
 from .talk import INBOX, STATUS, Talk
 from .upgrade import Upgrades
@@ -53,11 +57,12 @@ log = logging.getLogger(__name__)
 
 WRAPUP_TURNS = 15
 FIX_TURNS = 150
+SCRIPT_TIMEOUT = 600  # seconds a script block runs before golem stops it, unless it says
+SCRIPT_TAIL = 4096  # bytes of a failed script's output the next agent block gets
 SURVEY_TURNS = 100  # install, run the tests, read for what it needs
 # With HARNESS=fake there's no worker to survey a repo golem adopts: its own checks still run.
 FAKE_SURVEY = {"tests": {"result": "passed", "command": "", "detail": "not run (HARNESS=fake)"}, "missing": [], "needs": []}
 MAX_ATTEMPTS = 3  # failed attempts at one step before asking Riggy for help
-MAX_FIXES = 4  # fix steps in one job before asking Riggy for a hint
 RESOLVE_TURNS = 150
 MAX_RESOLVES = 3  # resolve steps in one job (conflicts with main) before asking Riggy for a hint
 LIMIT_RETRY = timedelta(minutes=30)
@@ -83,9 +88,7 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
-USES_TREE = ("agent", "push", "push-main", "merge", "deploy", "alert", "sync")
-BUILDS_DESIGN = ("guide", "apply")  # agent steps that build a design pass's pick (playbooks/design.md)
-DESIGN_PASS = ("design", *BUILDS_DESIGN)
+USES_TREE = ("agent", "script", "push", "push-main", "merge", "deploy", "alert", "sync")
 
 
 @dataclass
@@ -115,6 +118,9 @@ class Outcome:
     links: dict[str, str] = field(default_factory=dict)
     problem: str = ""
     session_id: str | None = None
+    port: str = ""  # the block's output it leaves by; "" for its usual one (its first)
+    counters: dict[str, int] = field(default_factory=dict)  # counters it sets, at its level (vet's gaps)
+    context: str | None = None  # what it found for the next agent block, if anything
 
 
 class Scheduler:
@@ -304,13 +310,39 @@ class Scheduler:
         if p.issue:
             await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state == "rejected")
 
-    def ensure_steps(self, job: Job) -> list[Step]:
-        """The job's steps, written from its playbook the first time."""
+    def ensure_started(self, job: Job) -> list[Step]:
+        """The job's steps; the first time, its own copy of its workflow and its first step."""
         steps = self.store.steps(job.id)
-        if not steps:
+        if steps or job.state not in ACTIVE:
+            return steps
+        if job.phase or self.store.runs(job.id):  # under way from before steps were tracked
             self.store.add_steps(job.id, plan.planned(self.settings, self.store, job))
-            steps = self.store.steps(job.id)
-        return steps
+            return self.store.steps(job.id)
+        job = self.pin(job)
+        moved = engine.advance(plan.snapshot(job), plan.vars_of(job), [], None, None, job.id)
+        return self.store.advance(job.id, None, {}, moved.rows, moved.vars)
+
+    ensure_steps = ensure_started
+
+    def pin(self, job: Job) -> Job:
+        """The job's own copy of its workflow, for its mode: nothing done to the workflow from now
+        on changes it. If the workflow can't run (its last working state broken by a sub-workflow
+        changing since), its start type's fallback, and Riggy is told."""
+        project = self.store.project(job.slug)
+        key, mode = plan.workflow_for(job, project)
+        wf = self.store.workflow(key=key)
+        try:
+            if wf is None:
+                raise engine.GraphError(f"there's no workflow called {key} any more")
+            snap = self.library.pin(wf, job.start, mode)
+        except engine.GraphError as e:
+            fallback = self.library.fallback(job.start)
+            if fallback is None or (wf and fallback.id == wf.id):
+                raise
+            log.warning("job %s: %s; using %s", job.id, e, fallback.key)
+            self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use its workflow ({e}), so it's running {fallback.name}.")
+            wf, snap = fallback, self.library.pin(fallback, job.start, mode)
+        return self.store.update_job(job.id, workflow=wf.key, mode=mode, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
     def insert(self, job_id: int, steps: list[Step], after: int) -> None:
         """Steps golem puts in where they're needed (a fix, a catch-up with main, another round),
@@ -331,7 +363,7 @@ class Scheduler:
         if step is None:
             return None
         if self.needs_sync(job, steps, step):
-            self.insert(job.id, [Step(0, job.id, 0, "sync", "sync")], after=step.position - 1)
+            self.insert(job.id, [Step(0, job.id, 0, "sync", "sync", turn=plan.turn_of(steps, step))], after=step.position - 1)
             step = plan.current(self.store.steps(job.id))
         self.store.update_job(job.id, state="running")
         if step.started_at is None:
@@ -357,6 +389,8 @@ class Scheduler:
             self.store.update_job(job.id, state="done")
             return
         job = self.store.job(job.id)
+        if await self.guarded(job, project, step):
+            return
         try:
             if job.worktree and step.kind in USES_TREE:  # made by its first step; back if it was lost
                 await self.workspace.ensure_tree(project.slug, job.id)
@@ -370,45 +404,30 @@ class Scheduler:
     async def settle(self, job: Job, project: Project, step: Step, outcome: Outcome) -> None:
         name = plan.label(step)
         match outcome.state:
-            case "done" | "skipped":
-                self.store.update_step(
-                    step.id, state=outcome.state, summary=outcome.summary, links=outcome.links, error=None, ended_at=now()
-                )
-                steps = self.store.steps(job.id)
-                finished = plan.current(steps) is None
+            case "done" | "skipped" | "failed":  # on to the block its output is wired to
+                state = outcome.state
+                closed = {"state": state, "summary": outcome.summary, "links": outcome.links, "ended_at": now(),
+                          "error": outcome.problem if state == "failed" else None}  # fmt: skip
+                finished, steps = self.walk_on(job, step, outcome, closed)
                 self.store.update_job(job.id, state="done" if finished else "queued", attempts=0, resume_session=None)
                 quiet = job.start in LOOKS  # its last step says it
-                if outcome.state == "done" and not quiet and (step.kind == "agent" or step.kind in ANNOUNCED):
+                nxt = plan.current(steps)
+                if state == "failed" and not (nxt and nxt.kind == "checkin"):  # a check-in after says it itself
+                    fixing = " Fixing it." if nxt and nxt.kind == "agent" else ""
+                    await self.say(project, f"✗ {name}: {outcome.summary}.{fixing}", notice=True)
+                elif state == "done" and not quiet and (step.kind == "agent" or step.kind in ANNOUNCED):
                     link = next(iter(outcome.links.values()), "")
-                    nxt = "" if finished else f"\nNext: {plan.upcoming(steps, step)}."
-                    await self.say(project, _join(f"✓ {name}: {outcome.summary}", link) + nxt, notice=True)
+                    ahead = "" if finished else f"\nNext: {plan.upcoming(plan.planned(self.settings, self.store, self.store.job(job.id)), step)}."
+                    await self.say(project, _join(f"✓ {name}: {outcome.summary}", link) + ahead, notice=True)
             case "wait":
                 self.store.update_step(step.id, summary=outcome.summary, links=outcome.links)
                 self.store.update_job(job.id, state="parked", retry_at=later(CI_POLL), attempts=0)
-            case "fix":
-                self.store.update_step(
-                    step.id, state="failed", summary=outcome.summary, error=outcome.problem, links=outcome.links, ended_at=now()
-                )
-                steps = self.store.steps(job.id)
-                fixes = sum(1 for s in steps if s.kind == "agent" and s.name == "fix")
-                fix = Step(0, job.id, 0, "agent", "fix", FIX_TURNS, problem=outcome.problem)
-                self.insert(job.id, [fix, *_retry(steps, step)], after=step.position)
-                if fixes < MAX_FIXES:
-                    self.store.update_job(job.id, state="queued", attempts=0)
-                    await self.say(project, f"✗ {name}: {outcome.summary}. Fixing it.", notice=True)
-                else:  # going round in circles: one of the few reasons to interrupt Riggy
-                    self.store.update_job(job.id, state="waiting", attempts=0)
-                    await self.say(
-                        project,
-                        f"I've tried to fix {name} {fixes} times and it still fails: {outcome.summary}.\n\n"
-                        "Reply with a hint and I'll try again, or `!kill` to drop the job.",
-                    )
             case "resolve":  # main moved under it and conflicts: a worker merges them, then it catches up again
                 self.store.update_step(step.id, state="failed", summary=outcome.summary, error=outcome.problem, ended_at=now())
                 steps = self.store.steps(job.id)
                 tries = sum(1 for s in steps if s.kind == "agent" and s.name == "resolve")
-                resolve = Step(0, job.id, 0, "agent", "resolve", RESOLVE_TURNS, problem=outcome.problem)
-                self.insert(job.id, [resolve, Step(0, job.id, 0, "sync", "sync")], after=step.position)
+                resolve = Step(0, job.id, 0, "agent", "resolve", RESOLVE_TURNS, problem=outcome.problem, turn=step.turn)
+                self.insert(job.id, [resolve, Step(0, job.id, 0, "sync", "sync", turn=step.turn)], after=step.position)
                 if tries < MAX_RESOLVES:
                     self.store.update_job(job.id, state="queued", attempts=0)
                     await self.say(project, f"Main moved on under {plan.title(job)}: {outcome.summary}. Merging it in.", notice=True)
@@ -442,6 +461,68 @@ class Scheduler:
                 return
         self.store.put("limit_notice", "0")
 
+    async def skip_now(self, job: Job, step: Step, summary: str) -> None:
+        """Riggy skipped a step from the status page: it's passed over by its `skip_to` output."""
+        await self.settle(self.store.job(job.id), self.store.project(job.slug), step, Outcome("skipped", summary))
+
+    def walk_on(self, job: Job, step: Step, outcome: Outcome, closed: dict) -> tuple[bool, list[Step]]:
+        """Close a step and write what comes after it: for a block of the job's workflow, the
+        block its output is wired to (engine.advance), in the same transaction. Whether the job's
+        finished, and its steps."""
+        block = plan.node(job, step)
+        if block is None:  # golem put it in (a catch-up with main), or from before workflows: the next is written already
+            self.store.update_step(step.id, **closed)
+            steps = self.store.steps(job.id)
+            return plan.current(steps) is None, steps
+        snap, vars = plan.snapshot(job), plan.vars_of(job)
+        outs = engine.ports(block)
+        port = outcome.port or (block.get("skip_to") if outcome.state == "skipped" and outcome.summary == engine.SKIPPED else "") or (outs[0] if outs else "")
+        closed["port"] = port
+        for name, value in outcome.counters.items():
+            vars["counters"][engine.counter_key(block, name)] = value
+        if outcome.context is not None:
+            vars["context"] = outcome.context
+        if outcome.state == "failed":  # for a check-in after it to say, and the next agent to fix
+            vars["context"] = outcome.problem
+            vars["failure"] = {"label": plan.label(step), "summary": outcome.summary}
+        if not outs:  # an End: nothing comes after it
+            steps = self.store.advance(job.id, step.id, closed, [], vars)
+            return True, steps
+        trace = self.store.steps(job.id)
+        for s in trace:  # the step closing, as it will be, for the counts the walk makes
+            if s.id == step.id:
+                s.state, s.port = outcome.state, port
+        moved = engine.advance(snap, vars, trace, step.node_id, port, job.id, self.guard())
+        steps = self.store.advance(job.id, step.id, closed, moved.rows, moved.vars)
+        return moved.finished or plan.current(steps) is None, steps
+
+    def guard(self) -> tuple[int, int]:
+        """Visits to one block, and agent runs in a job, before golem stops to ask whether to go on."""
+        visits, runs = self.store.get("guard_visits") or "", self.store.get("guard_runs") or ""
+        return (int(visits) if visits.isdigit() else engine.GUARD_VISITS, int(runs) if runs.isdigit() else engine.GUARD_RUNS)
+
+    async def guarded(self, job: Job, project: Project, step: Step) -> bool:
+        """Whether the loop guard stopped the job before this step (engine.advance set it): it's
+        been round a loop too often, so golem asks Riggy before it spends more. His reply lets it
+        go round as many times again."""
+        vars = plan.vars_of(job)
+        guard = vars["guard"]
+        if not step.node_id or guard.get("hit") != step.node_id:
+            return False
+        if guard.get("asked"):  # he's replied
+            vars["guard"] = {"rounds": guard.get("rounds", 0) + 1, "hit": ""}
+            self.store.update_job(job.id, vars=vars)
+            return False
+        vars["guard"] = {**guard, "asked": True}
+        self.store.update_job(job.id, vars=vars, state="waiting", attempts=0)
+        runs = sum(1 for s in self.store.steps(job.id) if s.kind == "agent" and s.started_at)
+        await self.say(
+            project,
+            f"{plan.title(job)} has come round to {plan.label(step)} {step.visit} times ({runs} agent runs so far), "
+            "more than I'll go without asking. Reply to let it carry on (with a hint, if you have one), or `!kill` to stop it.",
+        )
+        return True
+
     async def retry_or_ask(self, job: Job, error: str) -> None:
         job = self.store.job(job.id)
         if job is None or job.state == "killed":  # gone with its project, or stopped
@@ -472,8 +553,7 @@ class Scheduler:
         """One headless run that does the step's work on the job's branch and commits it. A
         question's or a proposal's looks at the checkout as it is (main, or a job's work under
         way), and anything it changes there is put back."""
-        if step.name in BUILDS_DESIGN and (nothing := self.nothing_designed(job, step)):
-            return Outcome("skipped", nothing)
+        block = plan.node(job, step) or {}
         looking, tree = job.start in LOOKS, self.tree(job)
         if looking:
             branch = await self.workspace.current_branch(project.slug, job=tree)
@@ -481,30 +561,31 @@ class Scheduler:
         else:
             branch = self.branch(job)
             await self.workspace.start_branch(project.slug, branch, job=tree)
-        notes = self.store.pending_notes(job.id, step.id)
+        notes = self.store.pending_notes(job.id, step.id, step.node_id)
         feedback = [text for _, text in notes]
+        intro, instructions = self.instructions(job, step, block)
+        outputs = [o for o in block.get("outputs") or [] if not block.get("contract")]
         if job.resume_session:
             prompt, resume = self.prompts.resume(feedback), job.resume_session
         elif job.start == "propose":
             jobs, said = self.history(project, job)
-            book = plan.load(self.settings, job.playbook)
             earlier = [p for p in self.store.proposals(project.slug, limit=proposals.PAST_SHOWN) if p.job_id != job.id]
             lens = proposals.lens(self.store, job)
-            prompt, resume = self.prompts.proposals(project, job, book, step, branch, lens, jobs, said, earlier), None
+            prompt, resume = self.prompts.proposals(project, job, intro, instructions, step, branch, lens, jobs, said, earlier), None
         elif job.start == "look":
             busy = self.store.active_job(project.slug, questions=False) is not None
             jobs, said = self.history(project, job)
-            book = plan.load(self.settings, job.playbook)
-            prompt, resume = self.prompts.question(project, job, book, step, branch, busy, jobs, said, feedback), None
+            prompt, resume = self.prompts.question(project, job, intro, instructions, step, branch, busy, jobs, said, feedback), None
         else:
-            book = plan.load(self.settings, job.playbook)
             lessons = self.lessons_path.read_text() if self.lessons_path.exists() else ""
-            steps = self.store.steps(job.id)
-            prompt, resume = self.prompts.step(project, job, book, step, steps, branch, feedback, lessons), None
+            steps = plan.shown(self.store.steps(job.id))
+            prompt, resume = self.prompts.step(project, job, intro, instructions, step, steps, branch, feedback, lessons, outputs), None
 
-        schema = options.MAKERS.get(step.name) if step.kind == "agent" else None  # what it made comes with its verdict
-        schema = schema or {"propose": proposals.SCHEMA}.get(step.name)
-        result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema)
+        contract = block.get("contract") or ""
+        schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
+        if outputs:  # its verdict is the output it takes, or blocked
+            schema = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": [*(o["name"] for o in outputs), "blocked"]}}}
+        result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema, block=block)
         if result.outcome == "max_turns" and result.session_id:
             wrapped = wrapup_schema(schema)
             wrapup = await self.execute(
@@ -526,12 +607,16 @@ class Scheduler:
             return Outcome("error", problem=result.error or result.outcome)
 
         v = result.verdict
-        if v.get("verdict") not in VERDICTS:
+        allowed = [*(o["name"] for o in outputs), "blocked"] if outputs else VERDICTS
+        if v.get("verdict") not in allowed:
             return Outcome("error", problem=f"unknown verdict {v.get('verdict')!r}")
-        if options.makes(step) and v["verdict"] == "done":
-            problem = self.keep_options(job, project, step, v)
+        port = v["verdict"] if outputs and v["verdict"] != "blocked" else ""
+        if contract in ("options", "design") and v["verdict"] == "done":
+            problem = self.keep_options(job, project, step, v, contract)
             if problem:
                 return Outcome("error", problem=problem)
+            if contract == "design":
+                port = "nothing" if options.design_of(self.store.step(step.id)).skip else "directions"
         self.store.consume_notes([i for i, _ in notes])
         message, link = str(v.get("message", "")).strip(), str(v.get("link") or "").strip()
         links = {"link": link} if link.startswith(("https://", "http://")) else {}
@@ -542,7 +627,28 @@ class Scheduler:
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
-        return Outcome("done", message, links)
+        return Outcome("done", message, links, port=port)
+
+    def instructions(self, job: Job, step: Step, block: dict) -> tuple[str, str]:
+        """The text every agent block of the job's workflow gets, and this step's own: its block's
+        instructions, with what the blocks before it found (a failure to fix, an adoption's gaps)
+        put in at $problem or added after. Steps golem puts in itself (merging main in, a fix
+        from before workflows) have theirs in prompts/."""
+        snap = plan.snapshot(job) or {}
+        intros = snap.get("intros") or {}
+        intro = intros.get("", "")
+        if block.get("path") and intros.get(block["path"]):  # a sub-workflow's own text, after the job's
+            intro = f"{intro}\n\n{intros[block['path']]}".strip()
+        if not block:
+            if step.name in ("fix", "resolve"):
+                return intro, self.prompts.render(step.name, problem=step.problem or "")
+            return intro, ""
+        text = block.get("instructions") or ""
+        if "$problem" in text:
+            return intro, Template(text).safe_substitute(problem=step.problem or "(nothing reported)")
+        if step.problem:
+            text += f"\n\n## What golem's checks found\n\n{step.problem}"
+        return intro, text
 
     def history(self, project: Project, job: Job) -> tuple[list[str], list[str]]:
         """For a job that only looks: the project's latest jobs, and its conversation lately."""
@@ -554,22 +660,11 @@ class Scheduler:
         said = [f"- {m.who}: {_first_line(m.text, 300)}" for m in self.store.messages(project.slug, limit=20) if m.text]
         return jobs, said
 
-    def nothing_designed(self, job: Job, step: Step) -> str:
-        """Why a step that builds a design pass's pick has nothing to build, or "": its design
-        round was skipped, or found nothing to design."""
-        made = next((s for s in reversed(self.store.steps(job.id)) if s.position < step.position and s.name == "design"), None)
-        design = options.design_of(made)
-        if design and design.skip:
-            return f"Nothing to design: {design.skip}"
-        if made is None or made.state != "done" or not made.options:
-            return "No design round to build: it was skipped."
-        return ""
-
-    def keep_options(self, job: Job, project: Project, step: Step, v: dict) -> str:
+    def keep_options(self, job: Job, project: Project, step: Step, v: dict, contract: str) -> str:
         """Keep what a step that makes options returned with them (options.collect; a design
         round's doc and pages too, collect_design), or say what's wrong with it."""
         checkout, folder = self.checkout(project, job), options.folder(self.settings, job.id)
-        design, problem = options.collect_design(v, checkout, folder, str(step.id)) if step.name == "design" else (None, "")
+        design, problem = options.collect_design(v, checkout, folder, str(step.id)) if contract == "design" else (None, "")
         if problem:
             return problem
         made = [] if design and design.skip else options.collect(v.get("options"), checkout, folder, str(step.id))
@@ -589,23 +684,24 @@ class Scheduler:
         resume: str | None,
         schema: dict | None = None,
         kind: str | None = None,
+        block: dict | None = None,
     ) -> RunResult:
         """One run of the step, with the model and effort chosen for it as it starts (plan.engine):
         as a step of its own name, or of `kind` (a vet step's survey)."""
         project = self.store.project(project.slug)
         current = self.store.step(step.id) or step
-        engine = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current)
+        chosen = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current, block)
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{label}.jsonl.gz"
         self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)
-        run_id = self.store.start_run(job.id, label, str(engine), str(log_path), step.id)
+        run_id = self.store.start_run(job.id, label, str(chosen), str(log_path), step.id)
         notes = self.progress_path(job)
         seen = notes.stat().st_size if notes.exists() else 0  # notes from earlier steps were passed on then
         run = asyncio.create_task(
             self.harness.run(
                 cwd=self.checkout(project, job),
                 prompt=prompt,
-                model=engine.model,
-                effort=engine.effort,
+                model=chosen.model,
+                effort=chosen.effort,
                 max_turns=max_turns,
                 log_path=log_path,
                 env=self.worker_env(project, job),
@@ -639,7 +735,7 @@ class Scheduler:
         notes = self.progress_path(job)
         tail, started = Tail(log_path), datetime.now(UTC)
         steps, news = Steps(started), started
-        total = len(self.store.steps(job.id))
+        total = len(plan.planned(self.settings, self.store, job))
         while True:
             await asyncio.sleep(MONITOR_SECONDS)
             steps.lines(tail.events())
@@ -688,13 +784,13 @@ class Scheduler:
 
         if adopt.decide(checks) == "refuse":
             return Outcome("refused", "Something's in the way: not adopted.", problem=adopt.refusal(slug, checks))
-        work = next((x for x in self.store.steps(job.id) if x.kind == "agent" and x.name == "adopt" and x.state == "pending"), None)
-        if work and adopt.needs_worker(checks):
-            self.store.update_step(work.id, problem=adopt.task(checks))
-            fixing, nxt = sum(c.state == adopt.FIXABLE for c in checks), "I'll fix what's marked →, then PR, CI, merge and deploy it."
+        # What the workflow's next blocks go by: how many gaps a worker has to fix (a condition
+        # counts them), and what they are, for the agent block that fixes them.
+        gaps, context = 0, ""
+        if adopt.needs_worker(checks):
+            gaps, context = sum(c.state == adopt.FIXABLE for c in checks), adopt.task(checks)
+            fixing, nxt = gaps, "I'll fix what's marked →, then PR, CI, merge and deploy it."
         else:
-            if work:
-                self.store.update_step(work.id, state="skipped", summary="Nothing for a worker to fix.", ended_at=now())
             fixing = 0
             nxt = "I'll write its brief, then deploy it." if any(c.state == adopt.FIXABLE for c in checks) else "Next I deploy main as it is."
         await self.say(
@@ -702,7 +798,8 @@ class Scheduler:
             f"I checked it over, and I'm adopting it.\n\n{adopt.report(checks)}\n\n{nxt}\n\n"
             f"{plan.settings_line(self.store.project(slug))} (!mode, !model or !effort here to change them).",
         )
-        return Outcome("done", f"Adopting it: {fixing} thing(s) to fix." if fixing else "Adopting it as it is.", links)
+        summary = f"Adopting it: {fixing} thing(s) to fix." if fixing else "Adopting it as it is."
+        return Outcome("done", summary, links, counters={"gaps": max(gaps, 1) if context else 0}, context=context)
 
     async def survey(self, job: Job, project: Project, step: Step) -> dict | Outcome:
         """The survey: a worker run that builds and tests the repo here and reads it for what it needs
@@ -749,9 +846,9 @@ class Scheduler:
             job = self.store.update_job(job.id, issue=issue)
         if job.kind == "adopt":
             await self.write_brief(job, project)
-        if job.playbook == "options":
+        if job.workflow == "options":
             await self.say(project, f"Making options: {plan.title(job)}", notice=True)
-        elif job.playbook == "design":
+        elif job.workflow == "design":
             await self.say(project, f"Making design directions: {plan.title(job)}", notice=True)
         elif job.kind == "change":
             await self.say(project, f"Working on it: {plan.title(job)}", notice=True)
@@ -862,7 +959,7 @@ class Scheduler:
         return Outcome("done", f"Pushed {sha[:7]} to main.", {"commit": self.commit_url(project, sha)})
 
     async def do_pr(self, job: Job, project: Project, step: Step) -> Outcome:
-        steps = self.store.steps(job.id)
+        steps = plan.planned(self.settings, self.store, job)
         work = _since_last(steps, step, "merge")
         names = " + ".join(s.name for s in work) or ("brief" if job.kind == "adopt" else "changes")
         title = project.name if job.kind in ("new", "adopt") else plan.title(job)
@@ -880,7 +977,7 @@ class Scheduler:
     async def do_checks(self, job: Job, project: Project, step: Step) -> Outcome:
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
         if pr is None:
-            return Outcome("skipped", "No PR to check.")
+            return Outcome("skipped", "No PR to check.", port="pass")
         return await self.wait_for_ci(project, step, pr.sha, f"PR #{pr.number}")
 
     async def do_merge(self, job: Job, project: Project, step: Step) -> Outcome:
@@ -896,38 +993,51 @@ class Scheduler:
         sha = await self.workspace.main_sha(project.slug)
         deployed = [s for s in self.store.steps(job.id) if s.kind == "deploy" and s.state == "done" and s.position < step.position]
         if deployed and deployed[-1].links.get("commit") == self.commit_url(project, sha):
-            return Outcome("skipped", f"{sha[:7]} is live already.")
+            return Outcome("skipped", f"{sha[:7]} is live already.", port="pass")
         ci = await self.wait_for_ci(project, step, sha, "main")
         if ci.state != "done":
             return ci
         deployment = await self.deployer.deploy(project.slug, sha)
         if not deployment.ok:
             problem = f"The deployer couldn't deploy {sha[:7]}:\n{deployment.problem}"
-            return Outcome("fix", f"the deployer refused {sha[:7]}", {"commit": self.commit_url(project, sha)}, problem)
+            return Outcome("failed", f"the deployer refused {sha[:7]}", {"commit": self.commit_url(project, sha)}, problem, port="fail")
         url = self.settings.project_url(project.slug)
         if self.store.card(project.slug) is None:  # live for the first time: on the projects page
             await self.refresh_card(project, job)
-        return Outcome("done", f"{sha[:7]} is live.", {"site": url, "commit": self.commit_url(project, sha)})
+        return Outcome("done", f"{sha[:7]} is live.", {"site": url, "commit": self.commit_url(project, sha)}, port="pass")
 
     async def do_checkin(self, job: Job, project: Project, step: Step) -> Outcome:
-        """Show Riggy the live site and wait for his reply, which goes to the next step that
-        builds (past a design pass's steps, which see it under "Done so far")."""
+        """Ask Riggy and wait for his reply: by default, to try the live site. His reply goes to
+        the block's `reply_to` (the buildout, past a design pass's steps, which see it under
+        "Done so far"), else to the next agent. With several outputs, a cheap call says which his
+        reply means."""
+        block = plan.node(job, step) or {}
         if step.state == "waiting":  # he's replied (the bot queued the job again)
-            replies = self.store.pending_notes(job.id)
+            replies = self.store.pending_notes(job.id, step.id, step.node_id)
             said = _first_line(replies[-1][1], 200) if replies else ""
-            later = [s for s in self.store.steps(job.id) if s.position > step.position and s.kind == "agent"]
-            builds = next((s for s in later if s.name not in DESIGN_PASS), None)
-            if replies and builds and later[0].name in DESIGN_PASS:
-                self.store.aim_notes([i for i, _ in replies], builds.id)
-            return Outcome("done", f"You said: “{said}”" if said else "You replied.")
-        steps = self.store.steps(job.id)
+            if replies and block.get("reply_to"):
+                to = f"{block['path']}/{block['reply_to']}" if block.get("path") else block["reply_to"]
+                self.store.aim_notes_at(job.id, [i for i, _ in replies], to)
+            port = ""
+            if len(block.get("outputs") or []) > 1:
+                port = await options.read_choice(self.harness, self.settings, "\n\n".join(t for _, t in replies), block["outputs"])
+            return Outcome("done", f"You said: “{said}”" if said else "You replied.", port=port)
+        steps = plan.planned(self.settings, self.store, job)
+        if block.get("message"):
+            vars = plan.vars_of(job)
+            failure = vars.get("failure") or {}
+            here = block.get("path", "")
+            counters = {k.removeprefix(f"{here}/") if here else k: v for k, v in vars["counters"].items() if (k.rsplit("/", 1)[0] if "/" in k else "") == here}
+            text = Template(block["message"]).safe_substitute(
+                failed=failure.get("label", "it"), failure=failure.get("summary", ""), last=plan.last_said(steps),
+                url=self.settings.project_url(project.slug), **{k: str(v) for k, v in counters.items()},
+            )  # fmt: skip
+            await self.say(project, text)
+            return Outcome("checkin")
         message = plan.last_said(steps) or "Something to try is live."
         then = next((s for s in steps if s.position > step.position and s.kind == "agent"), None)
-        design = (
-            " Then I'll make a few design directions for its look, for you to pick from."
-            if then and then.name == "design" and then.state == "pending"
-            else ""
-        )
+        maker = then and (plan.node(job, then) or plan.snapshot(job)["nodes"].get(then.node_id, {})).get("contract") == "design"
+        design = " Then I'll make a few design directions for its look, for you to pick from." if maker and then.state == "pending" else ""
         await self.say(
             project,
             f"{message}\n{self.settings.project_url(project.slug)}\n\n"
@@ -946,14 +1056,9 @@ class Scheduler:
         if step.state == "waiting":  # he's replied (the bot queued the job again)
             said = "\n\n".join(text for _, text in self.store.pending_notes(job.id))
             reply = await options.read_reply(self.harness, self.settings, said, shown, design.questions if design else [])
-            if reply.more:  # his reply goes to the new round's step, made like the last
-                again = [
-                    Step(0, job.id, 0, "agent", made.name, made.max_turns),
-                    Step(0, job.id, 0, "choose", "choose", optional=step.optional),
-                ]
-                self.insert(job.id, again, after=step.position)
-                return Outcome("done", options.again(reply, shown, said, design is not None))
-            return Outcome("done", options.picked(reply, shown, said))
+            if reply.more:  # back to the block that made them; his reply goes to its new round
+                return Outcome("done", options.again(reply, shown, said, design is not None), port="more")
+            return Outcome("done", options.picked(reply, shown, said), port="picked")
         for o in shown:  # after "✓ options: <what they are>"
             await self.show_option(project, job, o)
         if design:
@@ -997,17 +1102,58 @@ class Scheduler:
         for i, image in enumerate(option.images):
             await self.chat.send_image(project.slug, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
 
+    async def do_script(self, job: Job, project: Project, step: Step) -> Outcome:
+        """A script block: its command run in the job's checkout, as a worker would run it (its
+        environment, ports and TMPDIR). Passes on exit 0; otherwise fails, and the end of what it
+        printed goes to the next agent block. Its output is kept with the job's logs."""
+        block = plan.node(job, step) or {}
+        command, timeout = block.get("command") or "", int(block.get("timeout") or SCRIPT_TIMEOUT)
+        log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{_safe(step.name)}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)
+        await self.workspace.commit_all(project.slug, "Work left uncommitted", job=self.tree(job))
+        proc = await asyncio.create_subprocess_shell(
+            command, cwd=self.checkout(project, job), env=self.worker_env(project, job), stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True,
+        )  # fmt: skip
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+            code = proc.returncode
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            out, code = b"", None
+        except asyncio.CancelledError:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            raise
+        text = out.decode(errors="replace")
+        log_path.write_text(f"$ {command}\n{text}")
+        tail = text[-SCRIPT_TAIL:]
+        last = _first_line(tail.strip().splitlines()[-1] if tail.strip() else "", 160)
+        links = {"log": f"{self.settings.url('golem')}/steps/{step.id}"}
+        if code == 0:
+            return Outcome("done", f"Passed{': ' + last if last else '.'}", links, port="pass")
+        why = f"timed out after {timeout} seconds" if code is None else f"exited {code}"
+        problem = f"`{command}` {why}. The end of what it printed:\n\n{tail.strip() or '(nothing)'}"
+        return Outcome("failed", f"{step.name} {why}" + (f": {last}" if last else ""), links, problem, port="fail")
+
     async def do_alert(self, job: Job, project: Project, step: Step) -> Outcome:
-        """The last step: only reached once the final deploy succeeded."""
+        """The End of a job's workflow: Riggy told it's done, its issue closed if no PR did, and
+        its card brought up to date. Live only if it deployed (or was live already): a workflow
+        needn't deploy."""
         url = self.settings.project_url(project.slug)
         steps = self.store.steps(job.id)
-        message = plan.last_said(steps) or f"{project.name} is live."
+        live = any(s.kind == "deploy" and s.state == "done" for s in steps) or self.store.card(project.slug) is not None
+        message = plan.last_said(steps) or (f"{project.name} is live." if live else f"{plan.title(job)} is done.")
+        link = url if live else (f"{self.settings.repo_url(project.slug)}/issues/{job.issue}" if job.issue else "")
         if job.issue and not any(s.kind == "pr" and s.state == "done" for s in steps):  # no PR closed its issue (reckless, or nothing to merge)
-            await self.workspace.close_issue(project.slug, job.issue, f"Done: {message}\n\n{url}")
-        await self.say(project, _join(f"Done: {message}", url))
-        await self.status(f"Finished job {job.id} on {project.name}: {url}", notice=True)
-        await self.refresh_card(project, job)  # what it is now, on the projects page
-        return Outcome("done", "Told you it's live.", {"site": url})
+            await self.workspace.close_issue(project.slug, job.issue, _join(f"Done: {message}", f"\n{url}" if live else ""))
+        await self.say(project, _join(f"Done: {message}", link))
+        await self.status(f"Finished job {job.id} on {project.name}" + (f": {url}" if live else "."), notice=True)
+        if live:
+            await self.refresh_card(project, job)  # what it is now, on the projects page
+        return Outcome("done", "Told you it's live." if live else "Told you it's done.", {"site": url} if live else {})
 
     async def refresh_card(self, project: Project, job: Job | None = None) -> None:
         """The project's card on the projects page (cards.py), from what the job just shipped (its
@@ -1030,16 +1176,16 @@ class Scheduler:
         links = {"ci": ci.url} if ci.url else {}
         match ci.state:
             case "passed":
-                return Outcome("done", f"CI passed on {what} ({sha[:7]}).", links)
+                return Outcome("done", f"CI passed on {what} ({sha[:7]}).", links, port="pass")
             case "failed":
                 problem = f"CI failed on {what} (commit {sha[:7]}):\n{ci.detail}"
-                return Outcome("fix", f"CI failed on {what}", links, problem)
+                return Outcome("failed", f"CI failed on {what}", links, problem, port="fail")
             case "none" if waited >= CI_START_TIMEOUT:
                 problem = (
                     f"No CI workflow ran on {what} (commit {sha[:7]}) in {span(waited)}. The repo needs "
                     ".github/workflows/build.yml, running on pull requests and pushes to main (skills/new-repo.md)."
                 )
-                return Outcome("fix", f"no CI ran on {what}", links, problem)
+                return Outcome("failed", f"no CI ran on {what}", links, problem, port="fail")
             case "pending" if waited >= CI_TIMEOUT:
                 return Outcome("error", problem=f"CI on {what} still hasn't finished after {span(waited)}: {ci.detail}")
         return Outcome("wait", f"Waiting for CI on {what}: {ci.detail or 'not started yet'}", links)
@@ -1111,15 +1257,9 @@ class Scheduler:
         await self.chat.send(STATUS, text, notice=notice)
 
 
-def _retry(steps: list[Step], failed: Step) -> list[Step]:
-    """Golem's steps from the last push up to and including the one that failed, to run again
-    after the fix: pushing it, a PR, CI, merging and deploying, as far as the failure got.
-    Steps skipped the first time (nothing to merge then) are repeated too: the fix has to land."""
-    before = [s for s in steps if s.position <= failed.position]
-    start = max((i for i, s in enumerate(before) if s.kind in ("push", "push-main")), default=None)
-    if start is None:
-        return [Step(0, failed.job_id, 0, failed.kind, failed.name)]
-    return [Step(0, failed.job_id, 0, s.kind, s.name) for s in before[start:] if s.kind != "agent"]
+def _safe(name: str) -> str:
+    """A block's name as part of a file name."""
+    return "".join(c if c.isalnum() or c in "-_" else "-" for c in name)[:40] or "script"
 
 
 def _since_last(steps: list[Step], step: Step, kind: str) -> list[Step]:

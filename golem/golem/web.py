@@ -140,8 +140,8 @@ def create_app(
             state=_state(store, job, steps) if job else "idle",
             live=lines,
             notes=notes,
-            skippable={s.id for s in steps if s.id and active and signed and control.skippable(job, s.id)},
-            restorable={s.id for s in steps if s.id and active and signed and control.restorable(job, s.id)},
+            skippable={s.position for s in steps if active and signed and control.skippable(job, s)},
+            restorable={s.position for s in steps if active and signed and control.restorable(job, s)},
             position=position,
             site=settings.project_url(project.slug),
             repo=settings.repo_url(project.slug),
@@ -243,16 +243,16 @@ def create_app(
             data.live = live.lines(runs[-1]) if runs else []
         runs = [r for r in store.runs(job.id) if step.id and r["step_id"] == step.id]
         engine = inherited = None
+        block = plan.block_of(settings, store, job, step)
         if step.kind == "agent":
-            engine = plan.engine(settings, store, project, step)
-            inherited = plan.engine(settings, store, project, replace(step, model=None, effort=None))
+            engine = plan.engine(settings, store, project, step, block)
+            inherited = plan.engine(settings, store, project, replace(step, model=None, effort=None), block)
         if step.kind == "agent":
             does = step.problem.splitlines()[0] if step.name in ("fix", "resolve") and step.problem else ""
-            if not does:
-                try:
-                    does = _first_paragraph(plan.load(settings, job.playbook).instructions(step.name))
-                except KeyError:
-                    does = ""
+            if not does and block:
+                does = _first_paragraph(block.get("instructions") or "")
+        elif step.kind == "script" and block:
+            does = f"Runs `{block.get('command', '')}` in the job's checkout: it passes if that exits 0."
         else:
             does = pages.DOES.get(step.kind, "")
         href = pages.step_href(job, step)
@@ -266,7 +266,7 @@ def create_app(
                 does=does,
                 runs=runs,
                 transcripts={r["id"]: live.transcript(r) for r in runs if r["outcome"] is not None},
-                notes=store.step_notes(step.id) if step.id else [],
+                notes=(store.step_notes(step.id) if step.id else []) + (store.node_notes(job.id, step.node_id) if step.node_id else []),
                 configurable=control.configurable(job, step),
             ),
             signed,
@@ -563,9 +563,9 @@ def create_app(
         try:
             match action:
                 case "skip":
-                    message = await control.skip(job, step)
+                    message = await control.skip(job, step, position)
                 case "restore":
-                    message = await control.restore(job, step)
+                    message = await control.restore(job, step, position)
                 case "move":
                     message = await control.move(job, value)
                 case "pause" | "resume":

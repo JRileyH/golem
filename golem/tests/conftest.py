@@ -173,7 +173,7 @@ class Golem:
         raise AssertionError("still going after 100 steps")
 
     def labels(self, job_id: int, states=("done", "skipped", "failed")) -> list[str]:
-        return [plan.label(s) for s in self.store.steps(job_id) if s.state in states]
+        return [plan.label(s) for s in plan.shown(self.store.steps(job_id)) if s.state in states]
 
     inbox = INBOX
 

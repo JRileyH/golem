@@ -771,9 +771,9 @@ class Store:
 
     # --- notes ----------------------------------------------------------------
 
-    def add_note(self, job_id: int, text: str, step_id: int | None = None) -> int:
+    def add_note(self, job_id: int, text: str, step_id: int | None = None, node_id: str = "") -> int:
         cur = self.db.execute(
-            "INSERT INTO notes (job_id, text, created_at, step_id) VALUES (?, ?, ?, ?)", (job_id, text, now(), step_id)
+            "INSERT INTO notes (job_id, text, created_at, step_id, node_id) VALUES (?, ?, ?, ?, ?)", (job_id, text, now(), step_id, node_id)
         )
         return cur.lastrowid
 
@@ -785,13 +785,19 @@ class Store:
     def drop_note(self, note_id: int) -> None:
         self.db.execute("DELETE FROM notes WHERE id = ?", (note_id,))
 
-    def pending_notes(self, job_id: int, step_id: int | None = None) -> list[tuple[int, str]]:
-        """Notes not yet passed on: those for whichever step is next, and those for `step_id`."""
+    def pending_notes(self, job_id: int, step_id: int | None = None, node_id: str = "") -> list[tuple[int, str]]:
+        """Notes not yet passed on: those for whichever step is next, and those for `step_id` (or
+        for its block of the job's workflow, `node_id`)."""
         rows = self.db.execute(
-            "SELECT id, text FROM notes WHERE job_id = ? AND consumed = 0 AND (step_id IS NULL OR step_id = ?) ORDER BY id",
-            (job_id, step_id),
+            "SELECT id, text FROM notes WHERE job_id = ? AND consumed = 0 AND (step_id IS NULL OR step_id = ?)"
+            " AND (node_id = '' OR node_id = ?) ORDER BY id",
+            (job_id, step_id, node_id or "\0"),
         )
         return [(r["id"], r["text"]) for r in rows]
+
+    def node_notes(self, job_id: int, node_id: str) -> list[str]:
+        rows = self.db.execute("SELECT text FROM notes WHERE job_id = ? AND node_id = ? ORDER BY id", (job_id, node_id))
+        return [r["text"] for r in rows]
 
     def step_notes(self, step_id: int) -> list[str]:
         rows = self.db.execute("SELECT text FROM notes WHERE step_id = ? ORDER BY id", (step_id,))
@@ -800,9 +806,10 @@ class Store:
     def consume_notes(self, ids: list[int]) -> None:
         self.db.executemany("UPDATE notes SET consumed = 1 WHERE id = ?", [(i,) for i in ids])
 
-    def aim_notes(self, ids: list[int], step_id: int) -> None:
-        """Pass notes on to one step rather than whichever comes next: the others don't see them."""
-        self.db.executemany("UPDATE notes SET step_id = ? WHERE id = ?", [(step_id, i) for i in ids])
+    def aim_notes_at(self, job_id: int, ids: list[int], node_id: str) -> None:
+        """Pass notes on to one block of the job's workflow rather than whichever step comes next:
+        the others don't see them."""
+        self.db.executemany("UPDATE notes SET node_id = ? WHERE id = ? AND job_id = ?", [(node_id, i, job_id) for i in ids])
 
     # --- steps ----------------------------------------------------------------
 
@@ -824,6 +831,10 @@ class Store:
                     (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links), s.turn,
                      s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
                 )
+
+    def drop_steps_after(self, job_id: int, position: int) -> None:
+        """Forget the steps after one (written by walking on from it, none started): undoing a skip."""
+        self.db.execute("DELETE FROM steps WHERE job_id = ? AND position > ? AND started_at IS NULL", (job_id, position))
 
     def steps(self, job_id: int) -> list[Step]:
         rows = self.db.execute("SELECT * FROM steps WHERE job_id = ? ORDER BY position", (job_id,))

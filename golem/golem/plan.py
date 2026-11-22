@@ -6,8 +6,10 @@ status page.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 
+from . import engine as graphs
 from . import playbook as playbooks
 from .config import Settings
 from .store import ACTIVE, OPEN, Job, Project, Step, Store
@@ -65,21 +67,126 @@ def load(settings: Settings, name: str) -> playbooks.Playbook:
     return playbooks.load(settings.process_dir / "playbooks" / f"{name}.md")
 
 
+# Which built-in workflow and tab a job from before workflows runs, by its playbook: a new
+# project's playbook was its mode; the others took the project's mode.
+BOOKS = {"standard": "web_app", "rigorous": "web_app", "reckless": "web_app", "feature": "change", "options": "options",
+         "design": "design", "question": "question", "proposals": "proposals", "adopt": "adopt"}  # fmt: skip
+NEW_BOOKS = ("standard", "rigorous", "reckless")
+
+
+def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
+    """The workflow (by key) and mode a job runs: its own, or for a job that hasn't said, the
+    one its playbook became."""
+    if job.workflow:
+        return job.workflow, job.mode
+    if job.playbook in NEW_BOOKS:
+        return "web_app", "" if job.playbook == "standard" else job.playbook
+    mode = project.mode if project and project.mode != "standard" else ""
+    return BOOKS.get(job.playbook, "change"), mode
+
+
+def snapshot(job: Job) -> dict | None:
+    """The job's own copy of its workflow, once it has one."""
+    return json.loads(job.graph) if job.graph else None
+
+
+def vars_of(job: Job) -> dict:
+    """The job's counters, settings for blocks still to come, and loop guard (graphs.blank_vars)."""
+    found = json.loads(job.vars or "{}") or {}
+    return {**graphs.blank_vars(), **found}
+
+
+def node(job: Job, step: Step) -> dict | None:
+    """The block of the job's workflow a step is a visit to; None for a step golem put in
+    (a catch-up with main) or one from before workflows."""
+    snap = snapshot(job) if step.node_id else None
+    return snap["nodes"].get(step.node_id) if snap else None
+
+
 def planned(settings: Settings, store: Store, job: Job) -> list[Step]:
-    """The job's steps; for a job that hasn't started, the steps it will get (id 0)."""
-    steps = store.steps(job.id)
-    if steps or job.state not in ACTIVE:  # a job that ended before golem tracked steps has none
+    """The job's steps so far and those likely to come, in order: what's been done, what's under
+    way, and the blocks after it on the usual way through its workflow (id 0: not written yet).
+    Counters and conditions are left out: they're golem's bookkeeping, not steps."""
+    steps = shown(store.steps(job.id))
+    if job.state not in ACTIVE:
         return steps
+    if not steps and (job.phase or store.runs(job.id)):  # under way from before steps were tracked
+        return _legacy(settings, store, job)
+    snap, vars = snapshot(job), vars_of(job)
+    if snap is None:
+        snap = preview(settings, store, job)
+        if snap is None:
+            return steps
+    trace = store.steps(job.id)
+    at = next((s for s in reversed(trace) if s.state in OPEN and s.node_id), None)
+    ahead = graphs.predict(snap, vars, trace, at.node_id if at else None)
+    last = max((s.position for s in trace), default=0)
+    for i, nid in enumerate(ahead, start=last + 1):
+        step = graphs.row(snap, nid, trace, vars, job.id)
+        step.position, step.problem = i, None
+        settings_ = vars["nodes"].get(nid, {})
+        step.model, step.effort = settings_.get("model"), settings_.get("effort")
+        if settings_.get("skip"):
+            step.state, step.summary = "skipped", graphs.SKIPPED
+        steps.append(step)
+    return steps
+
+
+def preview(settings: Settings, store: Store, job: Job) -> dict | None:
+    """The copy of its workflow a job that hasn't started will take, as it is now."""
+    from .workflows import Library
+
+    key, mode = workflow_for(job, store.project(job.slug))
+    wf = store.workflow(key=key)
+    if wf is None:
+        return None
+    try:
+        return Library(store, settings.process_dir / "workflows", settings.web_password).pin(wf, job.start, mode)
+    except graphs.GraphError:
+        return None
+
+
+def block_of(settings: Settings, store: Store, job: Job, step: Step) -> dict | None:
+    """The block a step is (or will be) a visit to: from the job's copy, or for a job that
+    hasn't started, the copy it would take."""
+    if not step.node_id:
+        return None
+    snap = snapshot(job) or (preview(settings, store, job) if job.state in ACTIVE else None)
+    return snap["nodes"].get(step.node_id) if snap else None
+
+
+def blocks_in_order(graph: dict) -> list[dict]:
+    """A graph's blocks, in the order a job usually meets them (first outputs from Start), then the rest."""
+    nodes, wired = graphs.by_id(graph), graphs.wires(graph)
+    seen, order = set(), []
+    try:
+        at = graphs.entry(graph)["id"]
+    except graphs.GraphError:
+        at = None
+    while at and at in nodes and at not in seen:
+        seen.add(at)
+        order.append(nodes[at])
+        outs = wired.get(at, {})
+        at = next(iter(outs.values()), None)
+    return order + [n for n in graph.get("nodes") or [] if n["id"] not in seen]
+
+
+def shown(steps: list[Step]) -> list[Step]:
+    """Steps without golem's bookkeeping (counters, conditions)."""
+    return [s for s in steps if s.kind not in graphs.CONTROL]
+
+
+def _legacy(settings: Settings, store: Store, job: Job) -> list[Step]:
+    """A job from before steps were tracked: its playbook's steps, the ones before its phase done."""
     project = store.project(job.slug)
     specs = load(settings, job.playbook).for_mode(project.mode)
     steps = [Step(0, job.id, i, s.kind, s.name, s.max_turns or None, s.optional) for i, s in enumerate(specs, start=1)]
     for s in steps:
         s.turn = turn_of(steps, s)
-    if job.phase or store.runs(job.id):
-        names = LEGACY_PHASES.get(job.playbook, [])[job.phase :]
-        resume = next((i for i, s in enumerate(steps) if s.kind == "agent" and s.name in names), 0)
-        for s in steps[:resume]:
-            s.state, s.summary = "done", LEGACY_DONE
+    names = LEGACY_PHASES.get(job.playbook, [])[job.phase :]
+    resume = next((i for i, s in enumerate(steps) if s.kind == "agent" and s.name in names), 0)
+    for s in steps[:resume]:
+        s.state, s.summary = "done", LEGACY_DONE
     return steps
 
 
@@ -125,16 +232,19 @@ class Engine:
         return f"{self.model}/{self.effort}"
 
 
-def engine(settings: Settings, store: Store, project: Project, step: Step) -> Engine:
-    """The most specific choice wins: this step's, the project's, the default for steps like it
-    (by name: docs, spec, fix…), the default for every step, then GOLEM_MODEL and GOLEM_EFFORT."""
+def engine(settings: Settings, store: Store, project: Project, step: Step, block: dict | None = None) -> Engine:
+    """The most specific choice wins: this step's, the project's, the workflow block's own, the
+    default for steps like it (by name: docs, spec, fix…), the default for every step, then
+    GOLEM_MODEL and GOLEM_EFFORT."""
     defaults = store.defaults()
     named, every = defaults.get(step.name, ("", "")), defaults.get("*", ("", ""))
+    block = block or {}
     found = []
     for i, fallback in enumerate((settings.default_model, settings.default_effort)):
         choices = [
             (step.model if i == 0 else step.effort, "this step"),
             (project.model if i == 0 else project.effort, "the project"),
+            (block.get("model" if i == 0 else "effort") or "", "its workflow"),
             (named[i], f"the {step.name} default"),
             (every[i], "the default"),
             (fallback, "the default"),
@@ -184,7 +294,10 @@ def current(steps: list[Step]) -> Step | None:
 
 
 def label(step: Step) -> str:
-    return step.name if step.kind == "agent" else LABELS.get(step.kind, step.kind)
+    """What a step is called: an agent's name; golem's own by kind, unless its block has a name of its own."""
+    if step.kind == "agent" or (step.kind in ("checkin", "choose", "script", "condition") and step.name != step.kind):
+        return step.name
+    return LABELS.get(step.kind, step.kind)
 
 
 def step_class(steps: list[Step], step: Step) -> str:
@@ -209,8 +322,9 @@ def turn_of(steps: list[Step], step: Step) -> str:
 
 def run_before(steps: list[Step], step: Step) -> list[Step]:
     """The steps of `step`'s turn that lead up to it, in order, ending with it: its job's turn at
-    building, say, from the catch-up with main through `step`."""
-    ordered = sorted(steps, key=lambda s: s.position)
+    building, say, from the catch-up with main through `step`. Counters and conditions don't
+    break a run: a fix loop's are part of its turn at shipping."""
+    ordered = sorted((s for s in steps if s.kind not in graphs.CONTROL or s.position == step.position), key=lambda s: s.position)
     i = next(i for i, s in enumerate(ordered) if s.position == step.position)
     turn, start = turn_of(ordered, step), i
     while start > 0 and turn_of(ordered, ordered[start - 1]) == turn:

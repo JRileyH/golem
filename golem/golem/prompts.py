@@ -7,7 +7,6 @@ from string import Template
 
 from . import plan
 from .config import Settings
-from .playbook import Playbook
 from .proposals import LENSES, Lens, kinds, past
 from .store import Job, Project, Proposal, Step
 
@@ -28,20 +27,24 @@ class Prompts:
         self,
         project: Project,
         job: Job,
-        book: Playbook,
+        intro: str,
+        instructions: str,
         step: Step,
         steps: list[Step],
         branch: str,
         feedback: list[str],
         lessons: str,
+        outputs: list[dict] = (),
     ) -> str:
+        """An agent step: its block's instructions (with what the blocks before found, Scheduler.instructions)
+        in golem's frame. A block with several outputs ends with the one it takes instead of done."""
         s = self.settings
-        if step.name in ("fix", "resolve") and step.problem:  # steps golem puts in, with what to fix or merge
-            instructions = self.render(step.name, problem=step.problem)
-        else:
-            instructions = book.instructions(step.name)
-            if step.problem:  # what golem found for the step to do: an adoption's gaps
-                instructions += f"\n\n## What golem's checks found\n\n{step.problem}"
+        if outputs:
+            ways = "\n".join(f"- `{o['name']}`: {o.get('about') or ''}".rstrip(": ") for o in outputs)
+            instructions += (
+                "\n\n## How this step ends\n\nInstead of `done`, your verdict is the one of these that fits "
+                f"(or `blocked`, as below). It decides what golem does next.\n\n{ways}"
+            )
         earlier = ""
         if step.error:
             earlier = (
@@ -60,7 +63,7 @@ class Prompts:
             kind={"new": "new project", "adopt": "adopting a repo golem didn't make"}.get(job.kind, "change to an existing project"),
             request=job.request,
             issue=f"#{job.issue} ({s.repo_url(project.slug)}/issues/{job.issue})" if job.issue else "none",
-            intro=book.intro,
+            intro=intro,
             done=format_done(steps),
             step=step.name,
             instructions=instructions,
@@ -73,7 +76,7 @@ class Prompts:
             skills=s.process_dir / "skills",
         )
 
-    def question(self, project: Project, job: Job, book: Playbook, step: Step, branch: str, busy: bool,
+    def question(self, project: Project, job: Job, intro: str, instructions: str, step: Step, branch: str, busy: bool,
                  jobs: list[str], said: list[str], feedback: list[str]) -> str:  # fmt: skip
         """A question's step: what the project is, what's happened lately, and what he asked."""
         s = self.settings
@@ -92,12 +95,12 @@ class Prompts:
             jobs="\n".join(jobs) or "(none yet)",
             said="\n".join(said) or "(nothing yet)",
             step=step.name,
-            intro=book.intro,
-            instructions=book.instructions(step.name),
+            intro=intro,
+            instructions=instructions,
             skills=s.process_dir / "skills",
         )
 
-    def proposals(self, project: Project, job: Job, book: Playbook, step: Step, branch: str, lens: Lens,
+    def proposals(self, project: Project, job: Job, intro: str, instructions: str, step: Step, branch: str, lens: Lens,
                   jobs: list[str], said: list[str], earlier: list[Proposal]) -> str:  # fmt: skip
         """A proposals job's step: the project, what's happened lately, the lens to look through,
         and every earlier proposal with what Riggy made of it."""
@@ -118,8 +121,8 @@ class Prompts:
             said="\n".join(said) or "(nothing yet)",
             past=past(earlier),
             step=step.name,
-            intro=book.intro,
-            instructions=book.instructions(step.name),
+            intro=intro,
+            instructions=instructions,
             skills=s.process_dir / "skills",
         )
 

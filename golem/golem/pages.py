@@ -63,8 +63,8 @@ class LaneData:
     state: str  # a few words: "working", "waiting for CI", "waiting for you"…
     live: list[Line]  # the running agent step's latest lines
     notes: list[str]  # the worker's progress notes, latest last
-    skippable: set[int]
-    restorable: set[int]
+    skippable: set[int]  # positions of the steps Riggy can skip
+    restorable: set[int]  # and of those whose skip he can undo
     position: int | None  # place in the queue, 1 = next to run
     site: str
     repo: str
@@ -480,10 +480,10 @@ def sheet_controls(d: SheetData) -> str:
             + _hidden(job=job.id, step=s.id or "", position="" if s.id else s.position, back=back)
             + "<textarea name=value rows=2 placeholder='Context for this step only…' required></textarea><button>Add</button></form>"
         )
-    if s.id in lane.skippable:
+    if s.position in lane.skippable:
         out.append(skip_button(job, s, back=back))
-    if s.id in lane.restorable:
-        out.append(action_form("restore", "Undo skip", job=job.id, step=s.id, back=back))
+    if s.position in lane.restorable:
+        out.append(action_form("restore", "Undo skip", job=job.id, step=s.id, position=s.position, back=back))
     if job.state in ACTIVE and s.state in OPEN and lane.position != 1:
         out.append(action_form("move", f"Run {lane.project.name} next", job=job.id, value="first", back=back))
     if not out:
@@ -497,10 +497,10 @@ def sheet_controls(d: SheetData) -> str:
 def steps_lists(lane: LaneData, signed_in: bool, now: datetime) -> str:
     current = plan.current(lane.steps)
     ahead = [s for s in lane.steps if s.state == "pending" and s is not current]
-    ahead += [s for s in lane.steps if s.id in lane.restorable]
+    ahead += [s for s in lane.steps if s.position in lane.restorable]
     done = [
         s for s in lane.steps
-        if s.state in ("done", "failed") or (s.state == "skipped" and s.id not in lane.restorable)
+        if s.state in ("done", "failed") or (s.state == "skipped" and s.position not in lane.restorable)
         if current is None or s.position < current.position
     ]  # fmt: skip
     html = ""
@@ -530,10 +530,10 @@ def _row(group: list[Step], lane: LaneData, signed_in: bool, now: datetime | Non
     s = first
     tag = "<span class=opt>optional</span>" if s.optional and s.state == "pending" else ""
     button = ""
-    if signed_in and s.id in lane.skippable:
+    if signed_in and s.position in lane.skippable:
         button = skip_button(lane.job, s, back=f"/jobs/{lane.job.id}")
-    elif signed_in and s.id in lane.restorable:
-        button = action_form("restore", "Undo skip", job=lane.job.id, step=s.id, back=f"/jobs/{lane.job.id}")
+    elif signed_in and s.position in lane.restorable:
+        button = action_form("restore", "Undo skip", job=lane.job.id, step=s.id, position=s.position, back=f"/jobs/{lane.job.id}")
     summary = f"<p>{escape(_short(s.summary, 300))}</p>" if s.state != "pending" and s.summary else ""
     tally = lane.tallies.get(s.id)
     usage = f"<span class=took> · {_money(tally.cost)} · {_count(tally.tokens)} tokens</span>" if tally and tally.runs else ""
@@ -680,8 +680,10 @@ def when(at: datetime, now: datetime) -> str:
 
 
 def action_form(action: str, label: str, *, job: int | None = None, step: int | None = None, value: str = "",
-                slug: str = "", back: str = "", confirm: str = "", danger: bool = False) -> str:  # fmt: skip
-    hidden = _hidden(action=action, job=job, step=step, value=value, slug=slug, back=back)
+                slug: str = "", back: str = "", confirm: str = "", danger: bool = False, position: int | None = None) -> str:  # fmt: skip
+    """A button that posts an action. A step still to come has no id yet: it goes by its position."""
+    where = {"step": step} if step else {"position": position} if position else {}
+    hidden = _hidden(action=action, job=job, value=value, slug=slug, back=back, **where)
     check = f" onsubmit='return confirm({escape(json.dumps(confirm))})'" if confirm else ""
     return f"<form method=post action=/act class=inline{check}>{hidden}<button{' class=danger' if danger else ''}>{escape(label)}</button></form>"
 
@@ -707,7 +709,7 @@ def reply_form(job: Job, placeholder: str, back: str) -> str:
 
 
 def skip_button(job: Job, step: Step, label: str = "Skip", back: str = "") -> str:
-    return action_form("skip", label, job=job.id, step=step.id, back=back or f"/p/{job.slug}",
+    return action_form("skip", label, job=job.id, step=step.id, position=step.position, back=back or f"/p/{job.slug}",
                        confirm="" if step.kind in plan.ASKS else f"Skip {plan.label(step)}?")  # fmt: skip
 
 

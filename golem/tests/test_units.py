@@ -145,9 +145,11 @@ def test_steps_golem_puts_in_are_part_of_the_section_they_are_in():
 def test_a_new_jobs_steps_say_the_turn_each_takes(golem):
     golem.store.add_project("trees", "Trees", "s")
     job = golem.store.add_job("trees", "change", "add a quiz", "feature")
-    steps = golem.scheduler.ensure_steps(job)
+    golem.scheduler.ensure_steps(job)
+    steps = plan.planned(golem.settings, golem.store, golem.store.job(job.id))
     assert [(s.name, s.turn) for s in steps][:3] == [("setup", "none"), ("change", "build"), ("review", "none")]
     assert {s.turn for s in steps if s.kind in ("push", "pr", "checks", "merge", "deploy")} == {"ship"}
+    assert golem.store.steps(job.id)[0].turn == "none"  # written with it
 
 
 def test_changes_on_one_project_take_turns_at_building_and_shipping(tmp_path):
@@ -685,16 +687,18 @@ def test_store_delete_project_leaves_other_projects_alone(tmp_path):
     assert store.pending_notes(1) == [] and store.pending_notes(2) == [(2, "note for birds")]
 
 
-def test_notes_aimed_at_one_step_are_for_it_alone(tmp_path):
+def test_notes_aimed_at_one_block_are_for_it_alone(tmp_path):
     store = Store(tmp_path / "db")
     store.add_project("trees", "Trees", "s")
     job = store.add_job("trees", "new", "idea", "standard")
-    store.add_steps(job.id, [Step(0, job.id, 0, "agent", name) for name in ("design", "buildout")])
+    store.add_steps(job.id, [Step(0, job.id, 0, "agent", name, node_id=name) for name in ("design", "buildout")])
     design, buildout = store.steps(job.id)
     store.add_note(job.id, "the score is broken")
-    store.aim_notes([i for i, _ in store.pending_notes(job.id)], buildout.id)
-    assert store.pending_notes(job.id) == [] and store.pending_notes(job.id, design.id) == []
-    assert [text for _, text in store.pending_notes(job.id, buildout.id)] == ["the score is broken"]
+    store.aim_notes_at(job.id, [i for i, _ in store.pending_notes(job.id)], "buildout")
+    assert store.pending_notes(job.id) == [] and store.pending_notes(job.id, design.id, "design") == []
+    assert [text for _, text in store.pending_notes(job.id, buildout.id, "buildout")] == ["the score is broken"]
+    store.add_note(job.id, "for the step itself", step_id=design.id)
+    assert [text for _, text in store.pending_notes(job.id, design.id, "design")] == ["for the step itself"]
 
 
 # --- golem-deploy ------------------------------------------------------------

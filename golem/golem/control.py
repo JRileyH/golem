@@ -24,6 +24,7 @@ Each change to a project is posted in its conversation, so it stays the record o
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from . import options, plan
 from .proposals import LENSES, WAITING, kinds
@@ -56,53 +57,66 @@ class Control:
         return project
 
     def step(self, job: Job, step_id: int, position: int = 0) -> Step:
-        """A job's step by id, or by position for a job that hasn't started (its steps are written then)."""
+        """A job's step by id, or by position: one still to come isn't written yet (id 0), so it's
+        known by where it is on the job's way through its workflow (plan.planned)."""
         if not step_id and position:
-            steps = self.scheduler.ensure_steps(job)
-            step_id = next((s.id for s in steps if s.position == position), 0)
-        step = self.store.step(step_id) if step_id else None
+            step = next((s for s in plan.planned(self.scheduler.settings, self.store, job) if s.position == position), None)
+        else:
+            step = self.store.step(step_id) if step_id else None
         if step is None or step.job_id != job.id:
             raise ControlError("No such step.")
         return step
+
+    def _block_settings(self, job: Job, step: Step, **changes: object) -> None:
+        """Riggy's settings for a block of the job's workflow still to come: kept with the job, and
+        given to its step when it's written (engine.advance). None unsets one."""
+        vars = plan.vars_of(job)
+        mine = {**vars["nodes"].get(step.node_id, {}), **changes}
+        vars["nodes"][step.node_id] = {k: v for k, v in mine.items() if v not in (None, "", False)}
+        self.store.update_job(job.id, vars=vars)
 
     def configurable(self, job: Job, step: Step) -> bool:
         """Whether a step's model, effort and context can still change: an agent step not yet started."""
         return job.state in ACTIVE and step.kind == "agent" and step.state == "pending" and step.started_at is None
 
     def kinds(self) -> list[str]:
-        """The kinds of agent run, by name, in the order the playbooks use them; then those
-        golem starts itself: fix, resolve (turns.py), and the survey an adoption's check runs (adopt.py)."""
+        """The kinds of agent run, by name: every agent block's in the workflows, built-ins first,
+        each in the order its graph runs them; then those golem starts itself: resolve (turns.py)
+        and the survey an adoption's check runs (adopt.py)."""
         names: list[str] = []
-        for book in ("standard", "rigorous", "reckless", "feature", "options", "design", "question", "proposals", "adopt"):
-            for spec in plan.load(self.scheduler.settings, book).steps:
-                if spec.kind == "agent" and spec.name not in names:
-                    names.append(spec.name)
-        return [*names, "fix", "resolve", "survey"]
+        for wf in self.store.workflows():
+            for tab in self.store.tabs(wf.id).values():
+                for node in plan.blocks_in_order(tab.graph):
+                    if node["type"] == "agent" and node.get("name") and node["name"] not in names:
+                        names.append(node["name"])
+        return [*names, *(n for n in ("fix", "resolve", "survey") if n not in names)]
 
-    def skippable(self, job: Job, step_id: int) -> bool:
+    def skippable(self, job: Job, step: Step) -> bool:
         """Whether an upcoming step can be skipped: optional, and not under way."""
-        step = self.store.step(step_id)
-        if step is None or step.job_id != job.id or not step.optional:
+        if step.job_id != job.id or not step.optional or job.state not in ACTIVE:
             return False
         if step.kind in plan.ASKS and step.state == "waiting":  # skipping is "looks good", or "you pick"
             return True
         return step.state == "pending" and step.started_at is None
 
-    def restorable(self, job: Job, step_id: int) -> bool:
-        """Whether a skip can be undone: nothing after the step has started."""
-        step = self.store.step(step_id)
-        if step is None or step.job_id != job.id or step.state != "skipped" or step.summary != SKIPPED:
+    def restorable(self, job: Job, step: Step) -> bool:
+        """Whether a skip can be undone: one still to come, or one nothing after has started."""
+        if step.job_id != job.id or step.state != "skipped" or step.summary != SKIPPED or job.state not in ACTIVE:
             return False
+        if not step.id:
+            return bool(plan.vars_of(job)["nodes"].get(step.node_id, {}).get("skip"))
         later = [s for s in self.store.steps(job.id) if s.position > step.position]
-        return all(s.state == "pending" and s.started_at is None for s in later)
+        return all(s.state in ("pending", "skipped", "done") and s.started_at is None for s in later)
 
-    async def skip(self, job_id: int, step_id: int) -> str:
+    async def skip(self, job_id: int, step_id: int, position: int = 0) -> str:
         job, project = self._job(job_id)
-        if not self.skippable(job, step_id):
+        step = self.step(job, step_id, position)
+        if not self.skippable(job, step):
             raise ControlError("That step can't be skipped: only optional steps that haven't started can.")
-        step = self.store.update_step(step_id, state="skipped", summary=SKIPPED)
-        if job.state == "waiting" and step.kind in plan.ASKS:
-            self.store.update_job(job.id, state="queued", attempts=0)
+        if not step.id:  # still to come: it'll be passed over when the job gets there
+            self._block_settings(job, step, skip=True)
+        else:
+            await self.scheduler.skip_now(job, step, SKIPPED)
         self.scheduler.wake()
         design = options.design_of(options.shown(self.store.steps(job.id), step)[0]) if step.kind == "choose" else None
         what = {
@@ -114,11 +128,18 @@ class Control:
         await self.scheduler.say(project, f"Skipped {what}, from the status page.", notice=True)
         return f"Skipped {plan.label(step)}."
 
-    async def restore(self, job_id: int, step_id: int) -> str:
+    async def restore(self, job_id: int, step_id: int, position: int = 0) -> str:
         job, project = self._job(job_id)
-        if not self.restorable(job, step_id):
+        step = self.step(job, step_id, position)
+        if not self.restorable(job, step):
             raise ControlError("That skip can't be undone any more: the steps after it have started.")
-        step = self.store.update_step(step_id, state="pending", summary=None)
+        if not step.id:
+            self._block_settings(job, step, skip=None)
+        else:  # what walking on from it wrote goes, and it's the job's next step again
+            self.store.drop_steps_after(job.id, step.position)
+            step = self.store.update_step(step.id, state="pending", summary=None, port="", ended_at=None)
+            if job.state == "done":
+                self.store.update_job(job.id, state="queued")
         await self.scheduler.say(project, f"Put {plan.label(step)} back in, from the status page.", notice=True)
         return f"Put {plan.label(step)} back."
 
@@ -229,8 +250,12 @@ class Control:
         if not self.configurable(job, step):
             raise ControlError("Only agent steps that haven't started can change.")
         _check(name, value)
-        step = self.store.update_step(step.id, **{name: value or None})
-        engine = plan.engine(self.scheduler.settings, self.store, project, step)
+        if step.id:
+            step = self.store.update_step(step.id, **{name: value or None})
+        else:  # still to come: kept for its block, and given to it when it's written
+            self._block_settings(job, step, **{name: value or None})
+            step = replace(step, **{name: value or None})
+        engine = plan.engine(self.scheduler.settings, self.store, project, step, plan.node(self.store.job(job.id), step))
         await self.scheduler.say(project, f"{step.name} will run on {engine}, from the status page.", notice=True)
         return f"{step.name} will run on {engine}."
 
@@ -330,7 +355,10 @@ class Control:
             step = self.step(job, step_id, position)
             if not self.configurable(job, step):
                 raise ControlError("That step has started: send a note to the job instead.")
-            self.store.add_note(job.id, text[:4000], step.id)
+            if step.id:
+                self.store.add_note(job.id, text[:4000], step.id)
+            else:  # still to come: for its block, whenever the job gets there
+                self.store.add_note(job.id, text[:4000], node_id=step.node_id)
             await self.scheduler.chat.heard(project.slug, f"For {step.name}: {text[:4000]}")
             return f"{step.name} gets that when it starts."
         self.store.add_note(job.id, text[:4000])

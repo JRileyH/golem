@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 from golem import plan, pwa, web
 from golem.control import Control
 from golem.live import LiveRuns, view
+from golem.scheduler import Outcome
 from golem.web import COOKIE, Auth, create_app
 
 SECRET = "ghp_supersecrettokenvalue"
@@ -43,18 +44,29 @@ def act(client, **form):
 
 
 def start(golem, job, at: str):
-    """Give the job its steps and work them as far as the step labelled `at`."""
-    steps = golem.scheduler.ensure_steps(job)
-    for s in steps:
-        if plan.label(s) == at:
+    """Start the job and walk it, each step done as it comes, as far as the step labelled `at`."""
+    golem.scheduler.ensure_steps(job)
+    for _ in range(200):
+        s = plan.current(golem.store.steps(job.id))
+        if s is None or plan.label(s) == at:
             break
-        golem.store.update_step(s.id, state="done", summary=f"{s.name} done", started_at="2026-10-23T10:00:00+00:00",
-                                 ended_at="2026-10-23T10:05:00+00:00")  # fmt: skip
+        closed = {"state": "done", "summary": f"{s.name} done", "started_at": "2026-10-23T10:00:00+00:00", "ended_at": "2026-10-23T10:05:00+00:00"}
+        golem.scheduler.walk_on(golem.store.job(job.id), s, Outcome("done", f"{s.name} done"), closed)
     return golem.store.steps(job.id)
 
 
 def by_name(golem, job, name):
-    return next(s for s in golem.store.steps(job.id) if s.name == name)
+    """A step of the job by name: written already, or still to come (plan.planned, id 0)."""
+    return next(s for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id)) if s.name == name)
+
+
+def at(s) -> dict:
+    """The form fields that say which step: its id, or its position if it's still to come."""
+    return {"step": s.id} if s.id else {"position": s.position}
+
+
+def sheet_of(job, s) -> str:
+    return f"/steps/{s.id}?part=sheet" if s.id else f"/jobs/{job.id}/planned/{s.position}?part=sheet"
 
 
 def test_anyone_sees_what_is_under_way(golem, page):
@@ -166,12 +178,12 @@ def test_tokens_expire_and_guessing_is_slowed():
 def test_changes_need_signing_in_and_this_site(golem, page):
     start(golem, page.job, "spec")
     review = by_name(golem, page.job, "review")
-    assert "Sign%20in%20first" in act(page, action="skip", job=page.job.id, step=review.id)
+    assert "Sign%20in%20first" in act(page, action="skip", job=page.job.id, **at(review))
     sign_in(page)
-    r = page.post("/act", data={"action": "skip", "job": page.job.id, "step": review.id}, headers={"origin": "https://evil.example"}, follow_redirects=False)
+    r = page.post("/act", data={"action": "skip", "job": page.job.id, **at(review)}, headers={"origin": "https://evil.example"}, follow_redirects=False)
     assert "Sign%20in%20first" in r.headers["location"]
-    assert golem.store.step(review.id).state == "pending"
-    assert act(page, action="skip", job=page.job.id, step=review.id, back="https://evil.example/").startswith("/?msg=")
+    assert by_name(golem, page.job, "review").state == "pending"
+    assert act(page, action="skip", job=page.job.id, **at(review), back="https://evil.example/").startswith("/?msg=")
 
 
 def test_skipping_only_optional_steps_that_have_not_started(golem, page):
@@ -180,17 +192,17 @@ def test_skipping_only_optional_steps_that_have_not_started(golem, page):
     start(golem, job, "buildout")
     review, buildout = by_name(golem, job, "review"), by_name(golem, job, "buildout")
     assert page.get(f"/jobs/{job.id}").text.count(">Skip</button>") == 2  # review and docs; not buildout or shipping
-    assert ">Skip</button>" in page.get(f"/steps/{review.id}?part=sheet").text
-    assert ">Skip</button>" not in page.get(f"/steps/{buildout.id}?part=sheet").text
-    assert "Skipped%20review." in act(page, action="skip", job=job.id, step=review.id)
-    assert golem.store.step(review.id).state == "skipped"
+    assert ">Skip</button>" in page.get(sheet_of(job, review)).text
+    assert ">Skip</button>" not in page.get(sheet_of(job, buildout)).text
+    assert "Skipped%20review." in act(page, action="skip", job=job.id, **at(review))
+    assert by_name(golem, job, "review").state == "skipped"
     assert golem.chat.texts(job.slug)[-1] == "Skipped review, from the status page."
-    assert "can%27t%20be%20skipped" in act(page, action="skip", job=job.id, step=buildout.id)
-    deploy = [s for s in golem.store.steps(job.id) if s.kind == "deploy"][-1]
-    assert "can%27t%20be%20skipped" in act(page, action="skip", job=job.id, step=deploy.id)
-    assert "Undo skip" in page.get(f"/steps/{review.id}?part=sheet").text
-    assert "Put%20review%20back." in act(page, action="restore", job=job.id, step=review.id)
-    assert golem.store.step(review.id).state == "pending"
+    assert "can%27t%20be%20skipped" in act(page, action="skip", job=job.id, **at(buildout))
+    deploy = [s for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id)) if s.kind == "deploy"][-1]
+    assert "can%27t%20be%20skipped" in act(page, action="skip", job=job.id, **at(deploy))
+    assert "Undo skip" in page.get(sheet_of(job, review)).text
+    assert "Put%20review%20back." in act(page, action="restore", job=job.id, **at(review))
+    assert by_name(golem, job, "review").state == "pending"
 
 
 def test_skipped_steps_are_passed_over(golem):
@@ -201,10 +213,13 @@ def test_skipped_steps_are_passed_over(golem):
         await golem.until("your check-in")
         job = golem.store.jobs()[0]
         control = Control(golem.store, golem.scheduler)
-        await control.skip(job.id, by_name(golem, job, "review").id)
+        review = by_name(golem, job, "review")
+        await control.skip(job.id, review.id, review.position)
         assert golem.chat.texts(room)[-1] == "Skipped review, from the status page."
-        await control.skip(job.id, by_name(golem, job, "checkin").id)
-        await control.skip(job.id, by_name(golem, job, "design").id)  # and with it the guide and restyle
+        checkin = by_name(golem, job, "checkin")
+        await control.skip(job.id, checkin.id, checkin.position)
+        design = by_name(golem, job, "design")
+        await control.skip(job.id, design.id, design.position)  # and with it the guide and restyle
         golem.workspace.has_work = False  # as in git: nothing new on the branch after the skipped pass
         await golem.until("buildout")
         deploys = [s for s in golem.store.steps(job.id) if s.kind == "deploy"]
@@ -400,17 +415,20 @@ def test_a_step_before_it_starts_can_get_its_own_model_effort_and_context(golem,
     html = page.get(f"/jobs/{job.id}/planned/2?part=sheet").text  # spec
     assert "Runs on</dt><dd>opus/high" in html and "default: opus" in html
     act(page, action="step-setting", job=job.id, position=2, name="model", value="haiku")
-    spec = by_name(golem, job, "spec")  # the job's steps are stored now
-    assert spec.model == "haiku" and len(golem.store.steps(job.id)) == 33
-    act(page, action="step-setting", job=job.id, step=spec.id, name="effort", value="low")
-    html = page.get(f"/steps/{spec.id}?part=sheet").text
+    spec = by_name(golem, job, "spec")  # still to come: its block keeps the setting
+    assert spec.model == "haiku" and golem.store.steps(job.id) == []
+    act(page, action="step-setting", job=job.id, **at(spec), name="effort", value="low")
+    html = page.get(sheet_of(job, spec)).text
     assert "haiku/low" in html and "model from this step" in html
-    assert "spec%20gets%20that" in act(page, action="note", job=job.id, step=spec.id, value="keep it to one page")
-    assert "keep it to one page" in page.get(f"/steps/{spec.id}?part=sheet").text
+    assert "spec%20gets%20that" in act(page, action="note", job=job.id, **at(spec), value="keep it to one page")
+    assert "keep it to one page" in page.get(sheet_of(job, spec)).text
     assert golem.store.pending_notes(job.id) == []  # not for whichever step is next
-    act(page, action="step-setting", job=job.id, step=spec.id, name="model", value="")
-    assert golem.store.step(spec.id).model is None
+    act(page, action="step-setting", job=job.id, **at(spec), name="model", value="")
+    assert by_name(golem, job, "spec").model is None
 
+    start(golem, job, "spec")  # written once the job gets there, with what was set for it
+    spec = by_name(golem, job, "spec")
+    assert (spec.id, spec.effort) != (0, None) and spec.effort == "low"
     golem.store.update_step(spec.id, started_at="2026-10-23T10:00:00+00:00")
     assert "haven%27t%20started" in act(page, action="step-setting", job=job.id, step=spec.id, name="model", value="opus")
     assert "has%20started" in act(page, action="note", job=job.id, step=spec.id, value="too late")
@@ -425,8 +443,8 @@ def test_step_context_and_settings_reach_only_that_step(golem):
         control = Control(golem.store, golem.scheduler)
         golem.scheduler.ensure_steps(job)
         scaffold = by_name(golem, job, "scaffold")
-        await control.note(job.id, "use plain CSS", scaffold.id)
-        await control.step_setting(job.id, scaffold.id, 0, "model", "sonnet")
+        await control.note(job.id, "use plain CSS", scaffold.id, scaffold.position)
+        await control.step_setting(job.id, scaffold.id, scaffold.position, "model", "sonnet")
         golem.store.set_default("spec", "effort", "low")
         await golem.until("PR")
         spec_call, scaffold_call = golem.harness.calls[-2:]
@@ -465,7 +483,7 @@ def test_insights_and_defaults(golem, page):
     assert "No%20kind%20of%20step" in act(page, action="default", kind="nope", name="model", value="haiku")
     act(page, action="default", kind="*", name="effort", value="medium")
     docs = by_name(golem, job, "docs")
-    assert "haiku/medium" in page.get(f"/steps/{docs.id}?part=sheet").text
+    assert "haiku/medium" in page.get(sheet_of(job, docs)).text
     html = page.get("/settings").text
     assert "docs</b> <span class=muted>not run yet · suggested sonnet/medium" in html and "reset-defaults" in html
     assert "GOLEM_MODEL" not in html and "GOLEM_EFFORT" not in html  # every row's unset reads "default: …"
@@ -473,7 +491,7 @@ def test_insights_and_defaults(golem, page):
     assert "back%20to%20golem" in act(page, action="reset-defaults")
     assert golem.store.defaults()["docs"] == ("sonnet", "medium") and "*" not in golem.store.defaults()
     assert "suggested sonnet" not in page.get("/settings").text  # each at its suggestion
-    assert "sonnet/medium" in page.get(f"/steps/{docs.id}?part=sheet").text
+    assert "sonnet/medium" in page.get(sheet_of(job, docs)).text
 
 
 def test_proposals_how_often_and_thumbs_up_or_down(golem, page):

@@ -257,8 +257,10 @@ def visits(trace: list[Step], node_id: str) -> int:
     return sum(1 for s in trace if s.node_id == node_id)
 
 
-def evaluate(node: dict, counters: dict[str, int], trace: list[Step], mode: str) -> bool:
-    """A condition block's answer: its rows, all or any of them."""
+def evaluate(node: dict, counters: dict[str, int], trace: list[Step], mode: str, unknown: bool | None = None) -> bool:
+    """A condition block's answer: its rows, all or any of them. A counter nothing has set yet is
+    0, unless `unknown` says what a row about one comes out as (a prediction shows the work a
+    block like vet hasn't counted yet)."""
     results = []
     for row in node.get("rows") or []:
         of, name, op, value = row.get("of"), row.get("name", ""), row.get("op", "=="), row.get("value")
@@ -270,7 +272,11 @@ def evaluate(node: dict, counters: dict[str, int], trace: list[Step], mode: str)
             ref = f"{node['path']}/{name}" if node.get("path") else name
             have = visits(trace, ref)
         else:
-            have = counters.get(counter_key(node, name), 0)
+            key = counter_key(node, name)
+            if unknown is not None and key not in counters:
+                results.append(unknown)
+                continue
+            have = counters.get(key, 0)
         try:
             results.append(OPERATORS[op](have, int(value)))
         except (KeyError, TypeError, ValueError):
@@ -386,7 +392,7 @@ def predict(snap: dict, vars: dict, trace: list[Step], node_id: str | None) -> l
             at = snap["edges"][at][NEXT]
             continue
         if node["type"] == "condition":
-            at = snap["edges"][at]["true" if evaluate(node, counters, trace, snap.get("mode", "")) else "false"]
+            at = snap["edges"][at]["true" if evaluate(node, counters, trace, snap.get("mode", ""), unknown=True) else "false"]
             continue
         path.append(at)
         at = _first(snap, vars, at)

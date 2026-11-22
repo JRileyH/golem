@@ -5,7 +5,7 @@ tabs:
   default:
     md: design_round.md
     blocks:
-      - {agent: design, turns: 400, turn: none, contract: design, nothing: out-nothing}
+      - {agent: design, turns: 400, turn: none, contract: design, skip_to: nothing, nothing: out-nothing}
       - {choose: choose, optional: true, more: design}
       - {output: picked}
       - {output: nothing}

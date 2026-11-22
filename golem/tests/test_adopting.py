@@ -39,7 +39,7 @@ def arm(tmp_path) -> Golem:
 def states(golem: Golem, job_id: int) -> list[tuple[str, str]]:
     from golem import plan
 
-    return [(plan.label(s), s.state) for s in golem.store.steps(job_id)]
+    return [(plan.label(s), s.state) for s in plan.shown(golem.store.steps(job_id))]
 
 
 # --- the bot ---------------------------------------------------------------------
@@ -116,7 +116,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
         job = golem.store.jobs()[0]
         assert job.state == "done"
         assert states(golem, job.id) == [
-            ("check it over", "done"), ("set up", "done"), ("adopt", "skipped"), ("push", "skipped"), ("PR", "skipped"),
+            ("check it over", "done"), ("set up", "done"), ("push", "skipped"), ("PR", "skipped"),
             ("CI", "skipped"), ("merge", "skipped"), ("deploy", "done"), ("done", "done"),
         ]  # fmt: skip
         main = golem.workspace.main["mimic"]
@@ -185,7 +185,7 @@ def test_a_missing_brief_alone_needs_no_worker(tmp_path):
         await adopt(golem, then=[PASSED])
         await golem.finish()
         job = golem.store.jobs()[0]
-        assert ("adopt", "skipped") in states(golem, job.id) and job.state == "done"
+        assert "adopt" not in dict(states(golem, job.id)) and job.state == "done"  # nothing for a worker: its condition goes past it
         assert len(golem.harness.calls) == 2  # the triage and the survey, nothing else
         assert (golem.workspace.tree_path(job.id) / "docs" / "brief.md").read_text().startswith("# Mimic\n")
         assert "open PR #1: Mimic: brief" in golem.workspace.actions
@@ -329,6 +329,7 @@ def test_the_check_waits_for_ci_on_main_before_the_survey(tmp_path):
         assert golem.store.steps(job.id)[0].summary == "Waiting for CI on main to finish before checking it over: build: in_progress"
         await golem.step()
         assert len(golem.harness.calls) == 2
+        await golem.until("adopt")  # what the check found goes to the block that fixes it
         work = next(s for s in golem.store.steps(job.id) if s.name == "adopt")
         assert work.problem == "- CI on main: CI fails on main's latest commit (build: failure)."
 
@@ -344,6 +345,7 @@ def test_the_deployers_own_rules_judge_the_compose_file(tmp_path):
         await adopt(golem, then=[PASSED])
         await golem.step()
         job = golem.store.jobs()[0]
+        await golem.until("adopt")
         work = next(s for s in golem.store.steps(job.id) if s.name == "adopt")
         assert work.problem == (
             "- deploy/compose.yml: The deployer refuses it: service `mimic`: `ports` is not allowed; "

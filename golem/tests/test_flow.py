@@ -286,7 +286,7 @@ def test_failed_ci_gets_a_fix_step_and_the_delivery_again(golem):
         assert golem.chat.texts(room)[-1] == "✗ CI: CI failed on PR #1. Fixing it."
         failed = [s for s in golem.store.steps(job.id) if s.state == "failed"]
         assert [(plan.label(s), s.links) for s in failed] == [("CI", {"ci": failure.url})]
-        upcoming = [plan.label(s) for s in golem.store.steps(job.id) if s.state == "pending"]
+        upcoming = [plan.label(s) for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id)) if s.state == "pending"]
         assert upcoming[:6] == ["fix", "push", "PR", "CI", "merge", "deploy"]
 
         golem.harness.script = [verdict("done", "The tests expected the old deck size.")]
@@ -307,7 +307,7 @@ def test_a_refused_deploy_is_fixed_and_merged_again(golem):
         golem.deployer.refuse = ["ports: not allowed; the deployer routes traffic itself"]
         await golem.step()
         job = golem.store.jobs()[0]
-        upcoming = [plan.label(s) for s in golem.store.steps(job.id) if s.state == "pending"]
+        upcoming = [plan.label(s) for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id)) if s.state == "pending"]
         assert upcoming[:7] == ["fix", "push", "PR", "CI", "merge", "deploy", "mvp"]
         golem.harness.script = [verdict("done")]
         await golem.step()
@@ -349,8 +349,18 @@ def test_no_ci_at_all_is_something_to_fix(golem, monkeypatch):
     run(go())
 
 
-def test_fixing_in_circles_asks_riggy_for_a_hint(golem, monkeypatch):
-    monkeypatch.setattr(scheduler, "MAX_FIXES", 1)
+def tire_after(golem, fixes: int) -> None:
+    """Ship's fix loop asks Riggy for a hint after this many fixes: its workflow, edited."""
+    ship = golem.store.workflow(key="ship")
+    graph = json.loads(json.dumps(golem.store.tab(ship.id, "").working))
+    for n in graph["nodes"]:
+        if n["id"] == "tired":
+            n["rows"][0]["value"] = fixes
+    golem.store.put_tab(ship.id, "", graph, graph, [], golem.scheduler.library.sign(graph))
+
+
+def test_fixing_in_circles_asks_riggy_for_a_hint(golem):
+    tire_after(golem, 1)
 
     async def go():
         room = await new_project(golem, [verdict("done"), verdict("done"), verdict("done")])
@@ -359,13 +369,15 @@ def test_fixing_in_circles_asks_riggy_for_a_hint(golem, monkeypatch):
         await golem.step()
         await golem.until("deploy")
         await golem.step()
+        await golem.step()  # Ship's hint block asks him
         job = golem.store.jobs()[0]
         assert job.state == "waiting"
         assert golem.chat.texts(room)[-1].startswith("I've tried to fix deploy 1 times and it still fails")
         await golem.say(room, "use port 8080")
         golem.harness.script = [verdict("done")]
+        await golem.until("fix")
         await golem.step()
-        assert "> use port 8080" in golem.harness.calls[-1].prompt
+        assert "# Your step: fix" in golem.harness.calls[-1].prompt and "> use port 8080" in golem.harness.calls[-1].prompt
 
     run(go())
 
@@ -776,19 +788,18 @@ def test_a_design_pass_with_nothing_to_design_builds_nothing(golem):
         golem.harness.script = by_label({"design": [{**verdict("done", "He likes the look as it is."), "skip": "He said keep the look."}]})
         await golem.finish()
         steps = {s.name: s for s in golem.store.steps(job.id)}
-        assert (steps["choose"].state, steps["choose"].summary) == ("skipped", "No options to pick from.")
-        assert (steps["guide"].state, steps["guide"].summary) == ("skipped", "Nothing to design: He said keep the look.")
-        assert steps["apply"].state == "skipped" and golem.store.job(job.id).state == "done"
+        assert steps["design"].port == "nothing" and golem.store.job(job.id).state == "done"
+        assert not {"choose", "guide", "apply"} & set(steps)  # the round's "nothing" output goes past them
         assert not any(c.label in ("guide", "apply") for c in golem.harness.calls)
 
         # Skipped from the status page instead: the same.
         job = golem.store.add_job("tree-cards", "change", "a design pass", "design")
         await golem.until("design")
         design = next(s for s in golem.store.steps(job.id) if s.name == "design")
-        golem.store.update_step(design.id, state="skipped", summary="Skipped from the status page.")
+        await golem.scheduler.skip_now(golem.store.job(job.id), design, "Skipped from the status page.")
         await golem.finish()
-        guide = next(s for s in golem.store.steps(job.id) if s.name == "guide")
-        assert (guide.state, guide.summary) == ("skipped", "No design round to build: it was skipped.")
+        names = [s.name for s in golem.store.steps(job.id)]
+        assert "guide" not in names and "review" in names and golem.store.job(job.id).state == "done"
 
     run(go())
 
@@ -800,7 +811,8 @@ def test_the_fake_harness_walks_a_design_pass(golem):
         golem.harness.script = None  # nothing scripted, as in local mode with HARNESS=fake
         await golem.finish()
         assert golem.store.job(job.id).state == "done"
-        assert next(s for s in golem.store.steps(job.id) if s.name == "guide").summary.startswith("Nothing to design: (fake)")
+        design = next(s for s in golem.store.steps(job.id) if s.name == "design")
+        assert design.design["skip"].startswith("(fake)") and "guide" not in [s.name for s in golem.store.steps(job.id)]
 
     run(go())
 
@@ -1446,7 +1458,8 @@ def test_dictated_settings_pick_the_playbook_model_and_effort(golem):
         call = golem.harness.calls[-1]
         assert (call.model, call.effort) == ("fable", "max")
         assert "# Your step: spec" in call.prompt and "**rigorous mode**" in call.prompt
-        assert len(golem.store.steps(golem.store.active_job("leaf-peeper").id)) == 35
+        job = golem.store.active_job("leaf-peeper")
+        assert len(plan.planned(golem.settings, golem.store, job)) == 35
         assert golem.store.runs()[0]["model"] == "fable/max"
 
     run(go())

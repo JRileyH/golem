@@ -253,8 +253,9 @@ def design_of(step: Step | None) -> Design | None:
 
 
 def makes(step: Step) -> bool:
-    """Whether a step makes options for Riggy to pick from (MAKERS)."""
-    return step.kind == "agent" and step.name in MAKERS
+    """Whether a step makes options for Riggy to pick from: an options or design block's (its
+    contract, engine.CONTRACTS), known once it's run by what it made, or by golem's names for them."""
+    return step.kind == "agent" and (step.name in MAKERS or bool(step.options) or bool(step.design))
 
 
 def shown(steps: list[Step], step: Step) -> tuple[Step | None, list[Option]]:
@@ -382,6 +383,18 @@ async def read_reply(harness: Harness, settings: Settings, text: str, found: lis
             chosen = [str(x).upper() for x in v.get("picked") or []]
             return Reply(v["decision"] == "more", [x for x in dict.fromkeys(chosen) if x in letters])
     return plain_reply(text, letters)
+
+
+async def read_choice(harness: Harness, settings: Settings, text: str, outputs: list[dict]) -> str:
+    """Which of a check-in block's outputs Riggy's reply means (prompts/classify.md): each has a
+    name and when to take it. The first if there's no model or the call fails."""
+    names = [o["name"] for o in outputs]
+    if settings.harness == "fake" or not text.strip():
+        return names[0]
+    choices = "\n".join(f"- `{o['name']}`: {o.get('about') or o['name']}" for o in outputs)
+    schema = {"type": "object", "properties": {"choice": {"enum": names}}, "required": ["choice"], "additionalProperties": False}
+    found = await _ask(harness, settings, "classify", {"$choices": choices, "$reply": text}, schema)
+    return found["choice"] if found and found.get("choice") in names else names[0]
 
 
 async def _ask(harness: Harness, settings: Settings, name: str, values: dict[str, str], schema: dict) -> dict | None:
