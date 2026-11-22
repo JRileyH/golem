@@ -25,13 +25,17 @@ each agent block's instructions.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from . import engine, layout
+from . import engine, layout, validate
+from .store import Store, Workflow
 
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
 STARTS = ("new", "change", "look", "propose", "adopt", "sub")
@@ -51,7 +55,7 @@ FIELDS = {  # what each block type may set, besides its kind key and wires
 
 
 @dataclass
-class Workflow:
+class Builtin:
     """A workflow as golem ships it."""
 
     key: str
@@ -65,8 +69,20 @@ class Workflow:
         return self.tabs.get(mode) or self.tabs[""]
 
 
-def load_all(folder: Path) -> dict[str, Workflow]:
-    """Every built-in workflow in the folder, by key, with its graphs."""
+_LOADED: dict[tuple, dict[str, Builtin]] = {}
+
+
+def load_all(folder: Path) -> dict[str, Builtin]:
+    """Every built-in workflow in the folder, by key, with its graphs. Read once per version of
+    the files: treat what it returns as read-only."""
+    stamp = (str(folder), *sorted((p.name, p.stat().st_mtime_ns, p.stat().st_size) for p in folder.glob("*.*")))
+    if stamp not in _LOADED:
+        _LOADED.clear()
+        _LOADED[stamp] = _load_all(folder)
+    return _LOADED[stamp]
+
+
+def _load_all(folder: Path) -> dict[str, Builtin]:
     specs = {}
     for path in sorted(folder.glob("*.yml")):
         spec = yaml.safe_load(path.read_text())
@@ -95,7 +111,7 @@ def load_all(folder: Path) -> dict[str, Workflow]:
             parts = SECTION_RE.split((folder / md).read_text()) if md else [""]
             if extra := set(parts[1::2]) - names:
                 raise ValueError(f"{md}: sections without an agent block: {', '.join(sorted(extra))}")
-        found[key] = Workflow(key, spec["name"], spec["start"], (spec.get("ingest") or "").strip(), bool(spec.get("fallback")), tabs)
+        found[key] = Builtin(key, spec["name"], spec["start"], (spec.get("ingest") or "").strip(), bool(spec.get("fallback")), tabs)
     return found
 
 
@@ -184,7 +200,7 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
     return {"type": kind, "name": value, **settings, "_id": item.get("id", value)}, wires
 
 
-def resolver(found: dict[str, Workflow]) -> engine.Resolver:
+def resolver(found: dict[str, Builtin]) -> engine.Resolver:
     """Opens containers from the built-ins: a container's tab, or with `auto` the job's mode's
     tab if the sub-workflow has one, else its default."""
 
@@ -199,20 +215,165 @@ def resolver(found: dict[str, Workflow]) -> engine.Resolver:
     return resolve
 
 
-def top(found: dict[str, Workflow], key: str, mode: str) -> engine.Sub:
+def top(found: dict[str, Builtin], key: str, mode: str) -> engine.Sub:
     """A workflow at the top of a job: its tab for the mode, else its default."""
     wf = found[key]
     tab = mode if mode in wf.tabs else ""
     return engine.Sub(key, wf.name, tab, wf.tabs[tab])
 
 
-def catalog(found: dict[str, Workflow], modes: tuple[str, ...] = ()):
+def catalog(found: dict[str, Builtin], modes: tuple[str, ...] = ()):
     """What validation needs of the built-ins: each sub-workflow's Outputs and tabs."""
-    from .validate import Catalog, SubInfo
-
     subs = {
-        key: SubInfo(wf.name, tuple(engine.outputs_of(wf.tabs[""])), tuple(t for t in wf.tabs if t))
+        key: validate.SubInfo(wf.name, tuple(engine.outputs_of(wf.tabs[""])), tuple(t for t in wf.tabs if t))
         for key, wf in found.items()
         if wf.start == "sub"
     }
-    return Catalog(subs, resolver(found), modes)
+    return validate.Catalog(subs, resolver(found), modes)
+
+
+# --- workflows in golem's database ----------------------------------------------------
+
+# The modes golem starts with, and what a request says to ask for one.
+MODES = {
+    "rigorous": 'He wants extra care taken: "be thorough", "take your time", "make it excellent", "rigorous mode".',
+    "reckless": 'He wants it fast over careful: "quick and dirty", "just hack it together", "reckless mode".',
+}
+FALLBACK = "fallback_"  # kv: the workflow (by key) each start type uses when nothing else fits
+
+
+def digest(b: Builtin) -> str:
+    return engine.digest({"name": b.name, "start": b.start, "ingest": b.ingest, "tabs": b.tabs})
+
+
+class Library:
+    """The workflows golem has, stored: what new jobs copy, and what Riggy edits. Built-ins come
+    from `workflows/` (seed); once he edits one, golem's later versions only say they're there."""
+
+    def __init__(self, store: Store, folder: Path, secret: str):
+        self.store = store
+        self.folder = folder
+        self.key = hashlib.sha256(f"golem workflows:{secret}".encode()).digest()
+
+    # --- signing ---------------------------------------------------------------
+
+    def sign(self, graph: dict) -> str:
+        """Golem's signature on a graph, keyed from a secret workers never get: a working graph
+        changed outside the editor (by a worker that could reach the database) isn't run."""
+        return hmac.new(self.key, json.dumps(graph, sort_keys=True).encode(), hashlib.sha256).hexdigest()
+
+    def signed(self, tab) -> bool:
+        return hmac.compare_digest(tab.sig, self.sign(tab.working))
+
+    def resign_if_rekeyed(self) -> bool:
+        """After the secret changed, every signature is golem's again (trusting what's stored then).
+        Whether it had to."""
+        check = hmac.new(self.key, b"check", hashlib.sha256).hexdigest()
+        if self.store.get("workflow_key") == check:
+            return False
+        for wf in self.store.workflows():
+            for mode, tab in self.store.tabs(wf.id).items():
+                self.store.put_tab(wf.id, mode, tab.graph, tab.working, tab.problems, self.sign(tab.working))
+        self.store.put("workflow_key", check)
+        return True
+
+    # --- golem's built-ins ------------------------------------------------------
+
+    def seed(self) -> list[str]:
+        """Golem's built-ins in the database: new ones added, unedited ones brought up to date,
+        and an edited one told when golem has a newer version. The modes golem starts with, once.
+        Returns the keys it wrote."""
+        self.resign_if_rekeyed()
+        found, wrote = load_all(self.folder), []
+        for key, b in found.items():
+            wf = self.store.workflow(key=key)
+            if wf is None:
+                handle = key if self.store.workflow(handle=key) is None else f"{key}_golem"
+                wf = self.store.add_workflow(key, handle, b.name, b.start, b.ingest, builtin=True)
+                self._write(wf, b)
+                wrote.append(key)
+            elif wf.seeded != digest(b):
+                if wf.edited:
+                    self.store.update_workflow(wf.id, upstream=digest(b))
+                else:
+                    self._write(wf, b)
+                    wrote.append(key)
+            if b.fallback and self.store.get(FALLBACK + b.start) is None:
+                self.store.put(FALLBACK + b.start, key)
+        if self.store.get("modes_seeded") is None:
+            for name, ingest in MODES.items():
+                if self.store.mode(name) is None:
+                    self.store.add_mode(name, ingest)
+            self.store.put("modes_seeded", "1")
+        return wrote
+
+    def reset(self, wf: Workflow) -> Workflow:
+        """A built-in back to golem's version."""
+        b = load_all(self.folder)[wf.key]
+        self._write(wf, b)
+        return self.store.workflow(wf.id)
+
+    def _write(self, wf: Workflow, b: Builtin) -> None:
+        for mode in self.store.tabs(wf.id):
+            if mode and mode not in b.tabs:
+                self.store.drop_tab(wf.id, mode)
+        for mode, graph in b.tabs.items():
+            self.store.put_tab(wf.id, mode, graph, graph, [], self.sign(graph))
+        self.store.update_workflow(wf.id, name=b.name, start=b.start, ingest=b.ingest, edited=False, seeded=digest(b), upstream="")
+
+    # --- opening workflows -------------------------------------------------------
+
+    def resolve(self, key: str, tab: str, mode: str) -> engine.Sub:
+        """A container's sub-workflow: its tab (`default`, a mode's) or, with `auto`, the job's
+        mode's if it has one, else its default. Its working graph: the latest with no problems."""
+        wf = self.store.workflow(key=key)
+        if wf is None:
+            raise engine.GraphError(f"no workflow called {key}")
+        want = mode if tab in ("auto", "") else ("" if tab == "default" else tab)
+        return self._sub(wf, want)
+
+    def top(self, wf: Workflow, mode: str) -> engine.Sub:
+        """A workflow at the top of a job: its tab for the mode, else its default."""
+        return self._sub(wf, mode)
+
+    def _sub(self, wf: Workflow, want: str) -> engine.Sub:
+        tab = self.store.tab(wf.id, want) or self.store.tab(wf.id, "")
+        if tab is None:
+            raise engine.GraphError(f"{wf.name} has no graph")
+        if not self.signed(tab):
+            raise engine.GraphError(f"{wf.name} was changed outside golem's editor, so golem won't run it")
+        return engine.Sub(wf.key, wf.name, tab.mode, tab.working)
+
+    def catalog(self) -> validate.Catalog:
+        subs = {}
+        for wf in self.store.workflows():
+            if wf.start == "sub":
+                tabs = self.store.tabs(wf.id)
+                default = tabs.get("")
+                subs[wf.key] = validate.SubInfo(
+                    wf.name, tuple(engine.outputs_of(default.working if default else {})), tuple(m for m in tabs if m), wf.archived
+                )
+        return validate.Catalog(subs, self.resolve, tuple(m.name for m in self.store.modes()))
+
+    def pin(self, wf: Workflow, start: str, mode: str) -> dict:
+        """A job's own copy of the workflow, for its mode (engine.flatten). Raises GraphError if
+        what's there now can't run."""
+        root = self.top(wf, mode)
+        report = validate.check(root.graph, start, self.catalog(), root.tab)
+        if not report.ok:
+            raise engine.GraphError(f"{wf.name} can't run: {report.errors[0].message}")
+        return engine.flatten(root, start, mode, self.resolve)
+
+    def fallback(self, start: str) -> Workflow | None:
+        """The workflow a start type uses when nothing else fits."""
+        key = self.store.get(FALLBACK + start)
+        wf = self.store.workflow(key=key) if key else None
+        return wf if wf and not wf.archived and wf.start == start else None
+
+    def choices(self, starts: tuple[str, ...]) -> list[Workflow]:
+        """The workflows a request could start, of these start types: not archived, and able to run."""
+        found = []
+        for wf in self.store.workflows(archived=False):
+            if wf.start in starts and self.store.tab(wf.id, "") is not None:
+                found.append(wf)
+        return found

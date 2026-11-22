@@ -48,6 +48,8 @@ async def main() -> None:
     # With the fake harness there's no real code to deploy: the pretend GitHub's commits don't exist.
     deploys = OfflineDeployer(settings.project_url("{slug}")) if settings.harness == "fake" else deployer
     scheduler = Scheduler(settings, store, chat, harness, workspace, prompts, deploys)
+    if wrote := scheduler.library.seed():  # golem's built-in workflows, new or brought up to date
+        log.info("wrote built-in workflows: %s", ", ".join(wrote))
     bot = Bot(settings, store, chat, scheduler, harness, workspace, prompts, deployer)
 
     server = uvicorn.Server(uvicorn.Config(create_app(settings, store, scheduler, bot, push), host="0.0.0.0", port=8000, access_log=False))

@@ -124,6 +124,7 @@ class Golem:
         self.scheduler = Scheduler(
             self.settings, self.store, self.talk, self.harness, self.workspace, self.prompts, self.deployer
         )
+        self.scheduler.library.seed()
         self.bot = Bot(
             self.settings, self.store, self.talk, self.scheduler, self.harness, self.workspace, self.prompts, self.deployer
         )

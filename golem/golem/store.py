@@ -55,13 +55,56 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',  -- what it's about in a few words ("Quiz Mode"); '' for none (plan.title)
     worktree INTEGER NOT NULL DEFAULT 0, -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
-    start TEXT NOT NULL DEFAULT 'change' -- where it came from and what it may do (STARTS)
+    start TEXT NOT NULL DEFAULT 'change', -- where it came from and what it may do (STARTS)
+    workflow TEXT NOT NULL DEFAULT '',   -- the workflow it runs, by key ('' from before workflows)
+    mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in: which of the workflow's tabs ('' for the default)
+    graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten); '' before it starts and once it's over
+    graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
+    vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL REFERENCES jobs(id),
     text TEXT NOT NULL,
     consumed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    step_id INTEGER,                 -- for one step rather than the next
+    node_id TEXT NOT NULL DEFAULT '' -- for one block of the workflow rather than the next (a check-in's reply_to)
+);
+-- Workflows (engine.py): golem's built-ins (workflows/), and Riggy's. All he sees of one is
+-- its current state; jobs keep their own copies, so editing one never touches work under way.
+CREATE TABLE IF NOT EXISTS workflows (
+    id INTEGER PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,        -- how containers name it; never changes
+    handle TEXT NOT NULL UNIQUE,     -- what `!with` calls it
+    name TEXT NOT NULL,
+    start TEXT NOT NULL,             -- new | change | look | propose | adopt | sub (store.STARTS, and sub)
+    ingest TEXT NOT NULL DEFAULT '', -- what it's for, in his words: what the request call chooses by
+    builtin INTEGER NOT NULL DEFAULT 0,
+    edited INTEGER NOT NULL DEFAULT 0,   -- a built-in Riggy has changed: golem's new versions don't replace it
+    seeded TEXT NOT NULL DEFAULT '',     -- a built-in's digest when golem last wrote it
+    upstream TEXT NOT NULL DEFAULT '',   -- golem's newer version's digest, for one he's changed ('' if none)
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+-- A workflow's graphs: its default tab ('') and one for each mode it has its own way for.
+CREATE TABLE IF NOT EXISTS workflow_tabs (
+    workflow_id INTEGER NOT NULL REFERENCES workflows(id),
+    mode TEXT NOT NULL DEFAULT '',
+    graph TEXT NOT NULL,             -- JSON: what he sees and edits
+    working TEXT NOT NULL,           -- JSON: the latest state with no problems, what new jobs copy
+    problems TEXT NOT NULL DEFAULT '[]',  -- JSON: what's wrong with `graph` (validate.Problem), if anything
+    sig TEXT NOT NULL DEFAULT '',    -- golem's signature on `working`: changed outside the editor, it isn't run
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (workflow_id, mode)
+);
+-- Modes: ways of working a request can ask for ("be thorough"), each with what to look for. A
+-- workflow's tab for the mode is used when it has one.
+CREATE TABLE IF NOT EXISTS modes (
+    name TEXT PRIMARY KEY,
+    ingest TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runs (
@@ -169,7 +212,16 @@ MIGRATIONS = {
         "parallel_jobs": "INTEGER NOT NULL DEFAULT 1",
     },
     # Jobs from before trees have 0 and finish in the project's checkout, where their work is.
-    "jobs": {"title": "TEXT NOT NULL DEFAULT ''", "worktree": "INTEGER NOT NULL DEFAULT 0", "start": "TEXT NOT NULL DEFAULT 'change'"},
+    "jobs": {
+        "title": "TEXT NOT NULL DEFAULT ''",
+        "worktree": "INTEGER NOT NULL DEFAULT 0",
+        "start": "TEXT NOT NULL DEFAULT 'change'",
+        "workflow": "TEXT NOT NULL DEFAULT ''",
+        "mode": "TEXT NOT NULL DEFAULT ''",
+        "graph": "TEXT NOT NULL DEFAULT ''",
+        "graph_hash": "TEXT NOT NULL DEFAULT ''",
+        "vars": "TEXT NOT NULL DEFAULT '{}'",
+    },
     "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
@@ -183,7 +235,7 @@ MIGRATIONS = {
         "port": "TEXT NOT NULL DEFAULT ''",
         "visit": "INTEGER NOT NULL DEFAULT 0",
     },
-    "notes": {"step_id": "INTEGER"},  # a note for one step rather than the next
+    "notes": {"step_id": "INTEGER", "node_id": "TEXT NOT NULL DEFAULT ''"},  # a note for one step (or block) rather than the next
 }
 # Columns golem no longer uses, dropped from older databases on open.
 DROPPED = {"messages": ("via",), "cards": ("tags",)}
@@ -192,6 +244,7 @@ TAG_COLOR = 7
 
 # Jobs in these states hold or want the worker slot, or wait on Riggy; anything else is finished.
 ACTIVE = ("queued", "running", "waiting", "parked")
+FINISHED = ("done", "failed", "killed")
 # Steps in these states are still to do: the first of them is the job's current step.
 OPEN = ("pending", "running", "waiting")
 MODES = ("reckless", "standard", "rigorous")
@@ -236,6 +289,46 @@ class Project:
     proposals_off: str = ""
     # Changes that may be under way at once; they take turns at building and shipping (turns.py).
     parallel_jobs: int = 1
+
+
+@dataclass
+class Workflow:
+    """A workflow as stored: what it is and where it can start. Its graphs are its tabs (Tab)."""
+
+    id: int
+    key: str  # how containers name it; never changes
+    handle: str  # what `!with` calls it
+    name: str
+    start: str
+    ingest: str
+    builtin: bool
+    edited: bool
+    seeded: str
+    upstream: str
+    archived: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class Tab:
+    """One of a workflow's graphs: its default ("") or a mode's."""
+
+    workflow_id: int
+    mode: str
+    graph: dict  # what Riggy sees and edits
+    working: dict  # the latest state with no problems: what new jobs copy
+    problems: list[dict]
+    sig: str
+    updated_at: str
+
+
+@dataclass
+class Mode:
+    name: str
+    ingest: str
+    position: int
+    created_at: str = ""
 
 
 @dataclass
@@ -307,6 +400,11 @@ class Job:
     title: str = ""  # what it's about in a few words ("Quiz Mode"); plan.title has one for every job
     worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
     start: str = "change"  # where it came from (STARTS)
+    workflow: str = ""  # the workflow it runs, by key; "" from before workflows
+    mode: str = ""  # which of the workflow's tabs: a mode, or "" for its default
+    graph: str = ""  # JSON: its own flattened copy (engine.flatten); "" until it starts and once it's over
+    graph_hash: str = ""
+    vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 
 
 @dataclass
@@ -593,6 +691,11 @@ class Store:
         return Job(**row) if row else None
 
     def update_job(self, job_id: int, **fields) -> Job:
+        """Change a job. One that's over lets go of its copy of its workflow: nothing will walk it again."""
+        if fields.get("state") in FINISHED:
+            fields.setdefault("graph", "")
+        if isinstance(fields.get("vars"), dict):
+            fields["vars"] = json.dumps(fields["vars"])
         fields["updated_at"] = now()
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
@@ -737,6 +840,124 @@ class Store:
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE steps SET {columns} WHERE id = ?", (*fields.values(), step_id))
         return self.step(step_id)
+
+    def advance(self, job_id: int, close: int | None, closed: dict, rows: list[Step], vars: dict, **job: object) -> list[Step]:
+        """A step's end and what comes after it, in one go: the step `close` updated with `closed`
+        (its state, the output it left by…), `rows` added after the job's last step (blocks
+        passed on the way, the next to do), the job's vars and any other `job` fields saved."""
+        for name in ("links", "options", "design"):
+            if name in closed:
+                closed[name] = json.dumps(closed[name])
+        with self.db:
+            self.db.execute("BEGIN")
+            if close is not None and closed:
+                columns = ", ".join(f"{name} = ?" for name in closed)
+                self.db.execute(f"UPDATE steps SET {columns} WHERE id = ?", (*closed.values(), close))
+            last = self.db.execute("SELECT MAX(position) AS last FROM steps WHERE job_id = ?", (job_id,)).fetchone()["last"] or 0
+            for i, s in enumerate(rows, start=last + 1):
+                self.db.execute(
+                    "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn,"
+                    " node_id, port, visit, model, effort, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links),
+                     s.turn, s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
+                )  # fmt: skip
+            fields = {"vars": json.dumps(vars), **job, "updated_at": now()}
+            if fields.get("state") in FINISHED:
+                fields.setdefault("graph", "")
+            columns = ", ".join(f"{name} = ?" for name in fields)
+            self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
+        return self.steps(job_id)
+
+    # --- workflows ------------------------------------------------------------
+
+    def workflows(self, archived: bool = True) -> list[Workflow]:
+        """Every workflow, built-ins first, then by name."""
+        where = "" if archived else " WHERE archived = 0"
+        return [_workflow(r) for r in self.db.execute(f"SELECT * FROM workflows{where} ORDER BY builtin DESC, name COLLATE NOCASE")]
+
+    def workflow(self, workflow_id: int | None = None, key: str | None = None, handle: str | None = None) -> Workflow | None:
+        if workflow_id is not None:
+            row = self.db.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
+        elif key is not None:
+            row = self.db.execute("SELECT * FROM workflows WHERE key = ?", (key,)).fetchone()
+        else:
+            row = self.db.execute("SELECT * FROM workflows WHERE handle = ? COLLATE NOCASE", (handle,)).fetchone()
+        return _workflow(row) if row else None
+
+    def add_workflow(self, key: str, handle: str, name: str, start: str, ingest: str = "", builtin: bool = False) -> Workflow:
+        cur = self.db.execute(
+            "INSERT INTO workflows (key, handle, name, start, ingest, builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (key, handle, name, start, ingest, int(builtin), now(), now()),
+        )
+        return self.workflow(cur.lastrowid)
+
+    def update_workflow(self, workflow_id: int, **fields: object) -> Workflow:
+        allowed = {"handle", "name", "start", "ingest", "edited", "seeded", "upstream", "archived"}
+        assert set(fields) <= allowed, fields
+        fields = {k: int(v) if isinstance(v, bool) else v for k, v in fields.items()}
+        fields["updated_at"] = now()
+        columns = ", ".join(f"{name} = ?" for name in fields)
+        self.db.execute(f"UPDATE workflows SET {columns} WHERE id = ?", (*fields.values(), workflow_id))
+        return self.workflow(workflow_id)
+
+    def tabs(self, workflow_id: int) -> dict[str, Tab]:
+        """A workflow's tabs by mode, the default ("") first."""
+        rows = self.db.execute("SELECT * FROM workflow_tabs WHERE workflow_id = ? ORDER BY mode != '', mode", (workflow_id,))
+        return {r["mode"]: _tab(r) for r in rows}
+
+    def tab(self, workflow_id: int, mode: str = "") -> Tab | None:
+        row = self.db.execute("SELECT * FROM workflow_tabs WHERE workflow_id = ? AND mode = ?", (workflow_id, mode)).fetchone()
+        return _tab(row) if row else None
+
+    def put_tab(self, workflow_id: int, mode: str, graph: dict, working: dict, problems: list[dict], sig: str) -> Tab:
+        self.db.execute(
+            "INSERT INTO workflow_tabs (workflow_id, mode, graph, working, problems, sig, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(workflow_id, mode) DO UPDATE SET graph = excluded.graph, working = excluded.working,"
+            " problems = excluded.problems, sig = excluded.sig, updated_at = excluded.updated_at",
+            (workflow_id, mode, json.dumps(graph), json.dumps(working), json.dumps(problems), sig, now()),
+        )
+        return self.tab(workflow_id, mode)
+
+    def drop_tab(self, workflow_id: int, mode: str) -> None:
+        assert mode, "a workflow always has its default tab"
+        self.db.execute("DELETE FROM workflow_tabs WHERE workflow_id = ? AND mode = ?", (workflow_id, mode))
+
+    # --- modes ----------------------------------------------------------------
+
+    def modes(self) -> list[Mode]:
+        return [Mode(**r) for r in self.db.execute("SELECT * FROM modes ORDER BY position, name")]
+
+    def mode(self, name: str) -> Mode | None:
+        """By name, any case."""
+        row = self.db.execute("SELECT * FROM modes WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+        return Mode(**row) if row else None
+
+    def add_mode(self, name: str, ingest: str = "") -> Mode:
+        last = self.db.execute("SELECT MAX(position) AS last FROM modes").fetchone()["last"]
+        self.db.execute(
+            "INSERT INTO modes (name, ingest, position, created_at) VALUES (?, ?, ?, ?)", (name, ingest, (last or 0) + 1, now())
+        )
+        return self.mode(name)
+
+    def update_mode(self, name: str, new_name: str | None = None, ingest: str | None = None) -> Mode:
+        """Rename a mode (its tabs and the projects that default to it keep it) or change what it's for."""
+        with self.db:
+            self.db.execute("BEGIN")
+            if ingest is not None:
+                self.db.execute("UPDATE modes SET ingest = ? WHERE name = ?", (ingest, name))
+            if new_name is not None and new_name != name:
+                self.db.execute("UPDATE modes SET name = ? WHERE name = ?", (new_name, name))
+                self.db.execute("UPDATE workflow_tabs SET mode = ? WHERE mode = ?", (new_name, name))
+                self.db.execute("UPDATE projects SET mode = ? WHERE mode = ?", (new_name, name))
+        return self.mode(new_name or name)
+
+    def delete_mode(self, name: str) -> None:
+        """The mode goes, with its tabs; projects that defaulted to it default to golem's fallback."""
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute("DELETE FROM workflow_tabs WHERE mode = ?", (name,))
+            self.db.execute("UPDATE projects SET mode = '' WHERE mode = ?", (name,))
+            self.db.execute("DELETE FROM modes WHERE name = ?", (name,))
 
     # --- defaults -------------------------------------------------------------
 
@@ -898,6 +1119,20 @@ def _step(row: sqlite3.Row | dict) -> Step:
     data["design"] = json.loads(data.get("design") or "{}")
     data["optional"] = bool(data["optional"])
     return Step(**data)
+
+
+def _workflow(row: sqlite3.Row) -> Workflow:
+    data = dict(row)
+    for name in ("builtin", "edited", "archived"):
+        data[name] = bool(data[name])
+    return Workflow(**data)
+
+
+def _tab(row: sqlite3.Row) -> Tab:
+    data = dict(row)
+    for name in ("graph", "working", "problems"):
+        data[name] = json.loads(data[name])
+    return Tab(**data)
 
 
 def _project(row: sqlite3.Row | dict) -> Project:

@@ -36,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from . import adopt, options, plan, proposals, teardown, turns
+from .workflows import Library
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
@@ -136,6 +137,8 @@ class Scheduler:
         self.deployer = deployer
         self.cards = Cards(settings, store, harness)
         self.upgrades = Upgrades(store, deployer, chat)
+        # The workflows jobs run (workflows.py), signed with a secret workers never get.
+        self.library = Library(store, settings.process_dir / "workflows", settings.web_password)
         self.running: dict[int, Running] = {}  # by job id
         self._wake = asyncio.Event()
 
