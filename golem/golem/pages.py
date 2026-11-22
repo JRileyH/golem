@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import brand, options, plan, progress, pwa
+from . import brand, options, plan, progress, pwa, stages
 from .control import SKIPPED
 from .insights import Eta, Report, Tally, estimate
 from .live import Line, view
@@ -49,6 +49,7 @@ DOES = {
     "makes another round. Skipping it lets the next step pick the strongest.",
     "alert": "Tells you it's live. Always the last step, after the last deploy.",
     "refresh": "Brings the checkout up to date with what's live, unless a job's work is under way in it.",
+    "test": "Runs the project's bin/test in the job's checkout: passes if it exits 0. If it fails, what it printed goes to the next block (a Fix, usually).",
     "answer": "Sends you the answer. A question changes nothing: no commits, pushes or deploys.",
     "sync": "Brings the job's branch up to date with main where its turn at building or shipping begins, when "
     "changes on a project take turns. If what shipped since conflicts with it, a resolve step goes in to merge them.",
@@ -571,6 +572,8 @@ def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallb
             name, how, base = "Every step", "unless set below", fallback
         else:
             name, base = kind, (every[0] or fallback[0], every[1] or fallback[1])
+            if kind.startswith("stage:") and (stage := stages.catalog().get(kind[6:])):
+                name = f"{stage.label} blocks"
         unset = (f"default: {base[0]}", f"default: {base[1]}")
         suggested = plan.SUGGESTED.get(kind)
         if suggested and suggested != (model, effort):
@@ -1280,6 +1283,14 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .new-more > summary { cursor:pointer; color:var(--muted); font-size:.9rem; } .new-more .new-row { margin-top:.6rem; }
 .new-form .error { color:var(--critical); font-weight:600; margin:0; font-size:.85rem; }
 .card.adopt > summary { cursor:pointer; font-weight:700; } .card.adopt .new-form { margin-top:.75rem; }
+/* Stage blocks (stages.py): what one is told, and Workflows → Blocks */
+pre.told { white-space:pre-wrap; word-break:break-word; font:.84rem/1.5 var(--mono); background:var(--bg);
+  padding:.75rem .85rem; border-radius:var(--radius); margin:.5rem 0; max-height:70vh; overflow:auto; }
+.block-part h3 { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .5rem; font-size:.95rem; margin:0 0 .5rem; }
+.block-part h3 .muted { font-weight:400; font-size:.85rem; }
+.block-part textarea { width:100%; box-sizing:border-box; font:.85rem/1.5 var(--mono); padding:.6rem .7rem;
+  border-radius:var(--radius); border:1px solid var(--line); background:var(--bg); color:var(--ink); resize:vertical; }
+.block-part form.stack { display:flex; flex-direction:column; gap:.5rem; }
 /* The header's way to a new project; on a wide screen the sidebar has it */
 .top .new-project { grid-column:3; justify-self:end; display:inline-flex; align-items:center; gap:.2rem; padding:.3rem .7rem; border-radius:var(--radius);
   background:var(--rust, var(--accent)); color:#fff; font-weight:700; font-size:.88rem; white-space:nowrap; text-decoration:none; }

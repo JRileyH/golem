@@ -29,8 +29,25 @@ changes work under way, and lets go of the copy when it's over.
 Each block has one way in and named outputs, each wired to one block; the first is
 the usual way on.
 
-- **Agent**: a headless Claude Code run that does one piece of work and commits it,
-  with its instructions, turns and (optionally) model and effort. With several
+- **Stage blocks** (`stages/`, `golem/golem/stages.py`): agent blocks that already know
+  their job, set up with a few settings instead of a prompt. Plan (writes a spec or a
+  mini-spec), Build (what it's about, a skeleton, the first version, the rest of the
+  plan, or everything in one pass), Review (fixes what it finds, or reports `pass` or
+  `fail`, its findings going on to the next block), Docs (says what changed, or what
+  Riggy can do now), Design (directions to pick from, the guide, or a restyle), Fix
+  (what failed, or an adopted repo's gaps), Look (answers, or proposes) and Options.
+  Plan, Build, Review and Docs have a care setting (quick, usual, thorough). Each can
+  add instructions of its own ("Also, for this step"), and say which earlier block it's
+  about; otherwise golem works that out (`golem/golem/about.py`): a Review or Docs is
+  about the work since the last of its stage, else since the job last shipped, else
+  the whole job (right after a Review, that review's fixes; after only planning, the
+  plan), held to the request and what earlier blocks made; a Build, about Riggy's
+  pick, his reply, the plan, or else the request. The text for each stage, setting and
+  care is in `stages/<stage>.md`; Workflows → Blocks changes it for every block of the
+  stage, and a job keeps the text it started with. **Test** runs the project's
+  `bin/test`: `pass` on exit 0, else `fail` with what it printed.
+- **Custom agent**: a headless Claude Code run that does one piece of work and commits it,
+  with instructions you write, turns and (optionally) model and effort. With several
   outputs, its verdict chooses one (each says when to take it); `blocked` asks Riggy
   and carries on. Contracts: `options` and `design` make things for a choose block to
   show (a design round finding nothing to design leaves by `nothing`), `propose` makes
@@ -61,7 +78,10 @@ working state. A loop guard asks Riggy before a job goes round too often.
 `<key>.yml` is a workflow: its name, start type, what it's for, and each tab's blocks
 as a list wired in order (a block's first output goes to the next; its others name a
 block by id). `<key>.md` (or `md:`) is the text every agent block gets, then a
-`## <name>` section of instructions per agent block.
+`## <name>` section of instructions per custom agent block. A stage block is
+`{stage: review, does: reports, fail: fix}`: its settings by name, its outputs wired
+as any block's. `stages/stages.yml` is the stages, their settings and usuals;
+`stages/<stage>.md` their text, a `## <part>` per part.
 
 - `web_app.yml`: new projects. Default (spec, scaffold and first deploy, MVP, your
   check-in, a design pass you pick the look in, the buildout, review, docs), rigorous

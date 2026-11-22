@@ -39,7 +39,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
-from . import newproject, projectpage
+from . import about, newproject, projectpage, stages
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -639,6 +639,37 @@ def create_app(
             return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
         return respond(request, "Workflows", flows.workflows_page(store, signed), signed, here="workflows", subnav=flows.tabs("workflows"))
 
+    async def blocks_page(request: Request) -> Response:
+        """Workflows → Blocks: golem's stage blocks and the text of each of their parts."""
+        signed = signed_in(request)
+        if not signed:
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+        return respond(request, "Blocks", flows.blocks_page(scheduler.library.blocks), signed, here="workflows", subnav=flows.tabs("blocks"))
+
+    async def stage_page(request: Request) -> Response:
+        signed = signed_in(request)
+        if not signed:
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+        key = request.path_params["stage"]
+        if key not in stages.catalog():
+            return HTMLResponse("No such stage.", 404)
+        title = f"{stages.catalog()[key].label} blocks"
+        return respond(request, title, flows.stage_page(scheduler.library.blocks, key), signed, here="workflows",
+                       up=("/workflows/blocks", "Blocks"), subnav=flows.tabs("blocks"))  # fmt: skip
+
+    async def workflow_told(request: Request) -> Response:
+        """What a block of a workflow tells its agent, as saved: the editor's "What it's told"."""
+        signed = signed_in(request)
+        if not signed:
+            return HTMLResponse("Sign in first.", 403)
+        wf, mode = one_workflow(request)
+        if wf is None:
+            return HTMLResponse("No such workflow.", 404)
+        body = flows.told(store, scheduler.library.blocks, wf, mode, request.query_params.get("node", ""))
+        if request.query_params.get("part") == "sheet":
+            return HTMLResponse(body, headers={"Cache-Control": "no-store"})
+        return respond(request, wf.name, f"<article class=card>{body}</article>", signed, here="workflows", up=(f"/workflows/{wf.id}", wf.name))
+
     async def modes_page(request: Request) -> Response:
         """The modes requests can ask for, what each is for, and golem's default."""
         signed = signed_in(request)
@@ -695,7 +726,8 @@ def create_app(
         report = scheduler.library.save(wf, mode, graph)
         saved = store.tab(wf.id, mode)
         return JSONResponse({"ok": report.ok, "problems": [p.as_dict() for p in report.errors],
-                             "warnings": [p.as_dict() for p in report.warnings], "base": engine.digest(saved.graph)})  # fmt: skip
+                             "warnings": [p.as_dict() for p in report.warnings], "base": engine.digest(saved.graph),
+                             "graph": saved.graph, "hints": about.hints(plan.blocks_in_order(saved.graph))})  # fmt: skip
 
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
@@ -756,7 +788,7 @@ def create_app(
         return response
 
     async def act(request: Request) -> Response:
-        form = await _form(request)
+        form = await _form(request, 120_000)  # a block's text, URL-encoded, can be long
         if not signed_in(request) or not _same_site(request):
             return _back(form, "Sign in first.")
         action, job, step = form.get("action", ""), _int(form.get("job")), _int(form.get("step"))
@@ -827,6 +859,10 @@ def create_app(
                     message = await control.note(job, value, step, position)
                 case "rename":
                     message = control.rename(slug, value)
+                case "block-text":
+                    message = control.block_text(form.get("stage", ""), form.get("part", ""), value)
+                case "block-reset":
+                    message = control.block_reset(form.get("stage", ""), form.get("part", ""))
                 case "project-slug" | "project-delete":
                     project = store.project(slug)
                     if project is None or bot is None:
@@ -902,6 +938,8 @@ def create_app(
             Route("/static/{name}", static),
             Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
             Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),
+            Route("/workflows/blocks", blocks_page), Route("/workflows/blocks/{stage}", stage_page),
+            Route("/workflows/{workflow_id:int}/told", workflow_told),
             Route("/workflows/{workflow_id:int}.json", workflow_json),
             Route("/workflows/{workflow_id:int}/save", workflow_save, methods=["POST"]),
             Route("/login", login, methods=["POST"]),
@@ -930,9 +968,9 @@ async def _json(request: Request, cap: int = 600_000) -> dict | None:
     return found if isinstance(found, dict) else None
 
 
-async def _form(request: Request) -> dict[str, str]:
+async def _form(request: Request, cap: int = 20_000) -> dict[str, str]:
     """A plain URL-encoded form, read without needing python-multipart."""
-    body = (await request.body())[:20_000].decode(errors="replace")
+    body = (await request.body())[:cap].decode(errors="replace")
     return {k: v[0] for k, v in parse_qs(body, keep_blank_values=True).items()}
 
 

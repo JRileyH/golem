@@ -38,7 +38,9 @@ phone.
     move and delete; **History** has what was said before jobs had their own
     activity.
   - **Workflows:** how golem works through each kind of request, block by
-    block, drawn and edited; and the modes requests can ask for.
+    block, drawn and edited; **Blocks**, the text of golem's stage blocks (Plan,
+    Build, Review, Docs…), which you set up with a few settings instead of
+    writing a prompt, to read and change; and the modes requests can ask for.
   - **Settings:** signing in and out, notifications, pausing all work, workers,
     golem's version, links to Insights and the public projects page, the tags,
     and the model and effort for each kind of step.

@@ -1117,12 +1117,12 @@ def test_a_new_workflow_is_made_edited_and_saved_with_its_problems(golem, page):
     blank = golem.store.tab(wf.id, "").working
 
     # Saved with something wrong: kept as he left it, marked, and new jobs keep the last working state.
-    broken = {"nodes": [*data["graph"]["nodes"], {"id": "build", "type": "agent", "name": "build", "turns": 50, "x": 0, "y": 100, "extra": "dropped"}],
+    broken = {"nodes": [*data["graph"]["nodes"], {"id": "build", "type": "agent", "name": "build", "turns": 50, "x": 0, "y": 100, "junk": "dropped"}],
               "edges": data["graph"]["edges"]}  # fmt: skip
     answer = save(page, wf.id, broken, base=data["base"]).json()
     assert answer["ok"] is False and {p["node"] for p in answer["problems"]} >= {"build"}
     tab = golem.store.tab(wf.id, "")
-    assert "extra" not in tab.graph["nodes"][-1] and tab.working == blank and tab.problems
+    assert "junk" not in tab.graph["nodes"][-1] and tab.working == blank and tab.problems
     assert golem.store.workflow(wf.id).edited
 
     # Fixed: it's what new jobs copy now.
@@ -1208,3 +1208,43 @@ def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_la
     golem.store.update_job(a.id, state="waiting")
     assert chosen(newest_first()).id == a.id  # what needs him first
     assert "/p/trees/history" not in page.get("/p/trees").text  # nothing said before jobs had their own activity
+
+
+def test_blocks_are_golems_stage_texts_to_read_and_change(golem, page):
+    assert page.get("/workflows/blocks", follow_redirects=False).status_code == 303
+    sign_in(page)
+    html = page.get("/workflows/blocks").text
+    assert "<a href='/workflows/blocks/review'><b>Review</b></a>" in html and "what it does: fixes, reports" in html
+    assert "class=on aria-current=page>Blocks</a>" in html and page.get("/workflows/blocks/dance").status_code == 404
+    html = page.get("/workflows/blocks/docs").text
+    assert "<code>message.changed</code>" in html and "Tells Riggy: what changed" in html and "Use golem" not in html
+    location = act(page, action="block-text", stage="docs", part="message.changed", value="Message: what changed.", back="/workflows/blocks/docs#message.changed")
+    assert location.startswith("/workflows/blocks/docs?msg=Saved%20Docs") and location.endswith("#message.changed")
+    html = page.get("/workflows/blocks/docs").text
+    assert "Message: what changed.</textarea>" in html and "<span class=badge>changed</span>" in html and "Use golem's</button>" in html
+    assert "1 changed" in page.get("/workflows/blocks").text
+    assert "golem%27s%20again" in act(page, action="block-reset", stage="docs", part="message.changed")
+    assert "Write%20something" in act(page, action="block-text", stage="docs", part="message.changed", value=" ")
+    assert "no%20part" in act(page, action="block-text", stage="docs", part="nope", value="x")
+
+
+def test_the_editor_offers_stage_blocks_and_says_what_each_is_told(golem, page):
+    sign_in(page)
+    wf = golem.scheduler.library.create("Staged", "change")
+    data = page.get(f"/workflows/{wf.id}.json?edit=1").json()
+    review = next(k for k in data["catalog"] if k.get("stage") == "review")
+    assert review["group"] == "Stages" and review["ports"] == {"does.fixes": ["done"], "does.reports": ["pass", "fail"]}
+    assert review["defaults"] == {"turns": 150, "optional": True, "does": "fixes", "care": "usual"}
+    assert [f["kind"] for f in review["fields"]][:4] == ["text", "choice", "choice", "about"]
+    assert any(k["type"] == "test" and k["group"] == "Stages" for k in data["catalog"])
+    graph = data["graph"]
+    graph["nodes"] += [{"id": "build", "type": "agent", "stage": "build", "name": "build", "x": 0, "y": 100},
+                       {"id": "check", "type": "agent", "stage": "review", "name": "check", "does": "reports", "x": 0, "y": 200}]  # fmt: skip
+    saved = page.post(f"/workflows/{wf.id}/save", json={"mode": "", "graph": graph, "base": data["base"]}).json()
+    nodes = {n["id"]: n for n in saved["graph"]["nodes"]}
+    assert [o["name"] for o in nodes["check"]["outputs"]] == ["pass", "fail"] and nodes["build"]["turn"] == "build"  # as golem keeps them
+    assert "instructions" not in nodes["build"] and not any("needs instructions" in p["message"] for p in saved["problems"])
+    html = page.get(f"/workflows/{wf.id}/told?node=check&part=sheet").text
+    assert "What check is told" in html and "Don&#x27;t fix anything: say what&#x27;s wrong." in html
+    assert "Review it with skills/review.md against" in html  # its lines joined up, to read in a narrow box
+    assert page.get(f"/workflows/{wf.id}/told?node=nope&part=sheet").text.startswith("<p class=empty>")

@@ -61,7 +61,9 @@
       tell();
     }
 
-    const byType = () => Object.fromEntries(ed.catalog.map((c) => [c.type, c]));
+    const byType = () => Object.fromEntries(ed.catalog.filter((c) => !c.stage).map((c) => [c.type, c]));
+    // A stage block (Plan, Build, Review…) is an agent block with its stage's settings: its palette entry says which.
+    const kindOf = (n) => (n.stage && ed.catalog.find((c) => c.stage === n.stage)) || byType()[n.type];
     const node = (id) => graph.nodes.find((n) => n.id === id);
 
     function portsOf(n) {
@@ -71,6 +73,13 @@
       if (t === 'condition') return ['true', 'false'];
       if (t === 'choose') return ['picked', 'more'];
       if (t === 'script' || t === 'checks' || t === 'deploy') return ['pass', 'fail'];
+      if (t === 'agent' && n.stage) {
+        const k = kindOf(n);
+        if (k && k.ports) {
+          for (const s of k.settings || []) if (k.ports[`${s}.${n[s]}`]) return k.ports[`${s}.${n[s]}`];
+          return k.ports[''] || Object.values(k.ports)[0] || ['done'];
+        }
+      }
       if (t === 'agent') {
         if (n.contract === 'design') return ['directions', 'nothing'];
         if (n.contract) return ['done'];
@@ -87,6 +96,11 @@
       if (t === 'input') return ['Input', 'where a container goes in'];
       if (t === 'end') return ['End', "tells Riggy it's done"];
       if (t === 'output') return [n.name || 'Output', 'an output of the container'];
+      if (t === 'agent' && n.stage) {
+        const k = kindOf(n);
+        const bits = [k ? k.label.toLowerCase() : n.stage, ...((k && k.settings) || []).map((s) => n[s]), n.care && n.care !== 'usual' ? n.care : '', n.optional ? 'optional' : ''];
+        return [n.name || n.stage, bits.filter(Boolean).join(' · ')];
+      }
       if (t === 'agent') return [n.name || 'agent', ['agent · ' + (n.turns || '?') + ' turns', n.contract, n.optional ? 'optional' : ''].filter(Boolean).join(' · ')];
       if (t === 'script') return [n.name || 'script', '$ ' + (n.command || '')];
       if (t === 'counter') return ['Count ' + (n.counter || ''), 'adds one'];
@@ -115,7 +129,7 @@
     }
 
     function info(n) {
-      const kind = byType()[n.type];
+      const kind = kindOf(n);
       return kind ? kind.fields.filter((f) => n[f.key] !== undefined && n[f.key] !== '').map((f) => [f.label, typeof n[f.key] === 'object' ? JSON.stringify(n[f.key]) : String(n[f.key])]) : [];
     }
 
@@ -166,6 +180,8 @@
         const answer = await r.json();
         if (!r.ok) { tell(answer.error || "Couldn't save."); save.disabled = false; return; }
         base = answer.base; problems = answer.problems || []; warnings = answer.warnings || []; dirty = false;
+        if (answer.graph) graph = answer.graph;  // as golem keeps it: a stage block's outputs filled in
+        if (answer.hints) ed.hints = answer.hints;
         redraw(); showInspector(); tell();
       } catch (err) { tell("Couldn't save: is golem there?"); save.disabled = false; }
     }
@@ -206,7 +222,8 @@
       const taken = (x, y) => graph.nodes.some((o) => Math.abs(o.x - x) < W && Math.abs(o.y - y) < H + 20);
       while (taken(n.x, n.y)) n.y += 110;  // below what's there, not on top of it
       for (const f of kind.fields) if (f.default !== undefined) n[f.key] = f.default;
-      if (kind.type === 'agent') { n.name = freshId('agent'); n.instructions = ''; }
+      if (kind.stage) { n.stage = kind.stage; Object.assign(n, kind.defaults || {}); n.name = freshId(kind.stage); }
+      else if (kind.type === 'agent') { n.name = freshId('agent'); n.instructions = ''; }
       if (kind.type === 'container') { const first = Object.keys(ed.subs)[0]; if (first) n.workflow = first; n.tab = 'auto'; }
       if (kind.type === 'condition') { n.join = 'all'; n.rows = []; }
       n.id = freshId(n.name || n.counter || (kind.type === 'output' ? 'out-' + (n.name || 'done') : kind.type));
@@ -312,7 +329,7 @@
         inspector.append(label);
         return;
       }
-      const kind = byType()[n.type] || { label: n.type, help: '', fields: [] };
+      const kind = kindOf(n) || { label: n.type, help: '', fields: [] };
       inspector.append(make('h3', {}, kind.label));
       if (kind.help) inspector.append(make('p', { class: 'muted' }, kind.help));
       inspector.append(make('p', { class: 'muted editor-id' }, `id: ${n.id}`));
@@ -349,6 +366,27 @@
           input = make('select', {}); input.append(...options(f.options.map((v) => [v, v || '(usual)']), n[f.key]));
           input.addEventListener('change', () => { first = true; set(input.value); redraw(); });
           break;
+        case 'choice':  // a stage's setting: its outputs may change with it
+          input = make('select', {}); input.append(...options(f.options, n[f.key] ?? f.options[0][0]));
+          input.addEventListener('change', () => {
+            change(() => { n[f.key] = input.value; const outs = portsOf(n); graph.edges = graph.edges.filter((e) => e.from !== n.id || outs.includes(e.port)); });
+            showInspector();
+          });
+          break;
+        case 'about': {
+          const hint = (ed.hints || {})[n.id];
+          const others = graph.nodes.filter((x) => x.type === 'agent' && x.id !== n.id).map((x) => [x.id, x.name || x.id]);
+          input = make('select', {}); input.append(...options([['', 'Auto' + (hint ? ` (${hint})` : '')], ...others], n[f.key]));
+          input.addEventListener('change', () => { first = true; set(input.value); });
+          break;
+        }
+        case 'preview': {
+          const a = make('a', { href: `/workflows/${ed.workflow.id}/told?node=${encodeURIComponent(n.id)}&mode=${encodeURIComponent(ed.mode || '')}`, 'data-sheet': '' },
+            dirty ? 'What it’s told (as last saved)' : 'What it’s told');
+          const box = make('p', { class: 'editor-field' });
+          box.append(a);
+          return box;
+        }
         case 'port':
           input = make('select', {}); input.append(...options([['', '(its first output)'], ...portsOf(n).map((p) => [p, p])], n[f.key]));
           input.addEventListener('change', () => { first = true; set(input.value); });
