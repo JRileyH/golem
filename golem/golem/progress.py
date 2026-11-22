@@ -36,6 +36,7 @@ NAMES = {
     "sync": "Catch up with main",
     "checkin": "You try it",
     "choose": "You pick one",
+    "hint": "Your hint",
     "setup": "Get ready",
     "refresh": "Catch up",
     "examine": "Look into it",
@@ -53,7 +54,9 @@ class Piece:
 
     @property
     def name(self) -> str:
-        return NAMES.get(self.step.name if self.step.kind == "agent" else self.step.kind, self.step.name.replace("-", " ").capitalize())
+        s = self.step
+        own = s.kind == "agent" or (s.kind in ("checkin", "choose", "script") and s.name != s.kind)  # a block named for itself
+        return NAMES.get(s.name if own else s.kind, s.name.replace("-", " ").capitalize())
 
     @property
     def live(self) -> bool:
