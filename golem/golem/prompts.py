@@ -35,6 +35,7 @@ class Prompts:
         feedback: list[str],
         lessons: str,
         outputs: list[dict] = (),
+        after: str = "",
     ) -> str:
         """An agent step: its block's instructions (with what the blocks before found, Scheduler.instructions)
         in golem's frame. A block with several outputs ends with the one it takes instead of done."""
@@ -66,6 +67,7 @@ class Prompts:
             intro=intro,
             done=format_done(steps),
             step=step.name,
+            after=after or "Golem decides what comes after your step by the job's workflow.",
             instructions=instructions,
             earlier=earlier,
             feedback=format_feedback(feedback),

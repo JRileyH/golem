@@ -592,7 +592,8 @@ class Scheduler:
         else:
             lessons = self.lessons_path.read_text() if self.lessons_path.exists() else ""
             steps = plan.shown(self.store.steps(job.id))
-            prompt, resume = self.prompts.step(project, job, intro, instructions, step, steps, branch, feedback, lessons, outputs), None
+            prompt, resume = self.prompts.step(project, job, intro, instructions, step, steps, branch, feedback, lessons, outputs,
+                                               self.after(job, step, outputs)), None  # fmt: skip
 
         contract = block.get("contract") or ""
         schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
@@ -641,6 +642,16 @@ class Scheduler:
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
         return Outcome("done", message, links, port=port)
+
+    def after(self, job: Job, step: Step, outputs: list[dict]) -> str:
+        """For the worker: what comes after its step, as the job's workflow has it, so its
+        instructions' words about the next steps can be checked against what's really next."""
+        if outputs:
+            return "What comes next depends on the verdict you choose (below)."
+        ahead = plan.upcoming(plan.planned(self.settings, self.store, job), step)
+        if ahead == "nothing":
+            return "Yours is the job's last step."
+        return f"After your step: {ahead}."
 
     def instructions(self, job: Job, step: Step, block: dict) -> tuple[str, str]:
         """The text every agent block of the job's workflow gets, and this step's own: its block's

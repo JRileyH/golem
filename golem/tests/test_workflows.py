@@ -66,7 +66,10 @@ def test_each_builtin_walks_the_steps_its_playbook_had(builtins, book, mode):
     snap = snapshot(builtins, key, mode)
     path = engine.happy_path(snap)
     assert [as_step(snap["nodes"][n]) for n in path] == old_steps(book, mode)
-    assert snap["intros"][""] == golden()[book]["intro"]
+    # The intro is the playbook's, then (for those that build for the web) the quality bar its steps had from step.md.
+    intro = snap["intros"][""]
+    assert intro.startswith(golden()[book]["intro"])
+    assert intro[len(golden()[book]["intro"]) :].strip().startswith("# Quality bar") or intro == golden()[book]["intro"]
 
 
 @pytest.mark.parametrize("book, mode", CASES)

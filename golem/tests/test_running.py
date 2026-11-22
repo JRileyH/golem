@@ -68,6 +68,9 @@ def test_an_agent_with_several_outputs_chooses_the_way_on(golem):
         judge = next(c for c in golem.harness.calls if c.label == "judge")
         assert judge.schema["properties"]["verdict"]["enum"] == ["pass", "fail", "blocked"]
         assert "## How this step ends" in judge.prompt and "- `fail`: it doesn't yet" in judge.prompt
+        build = next(c for c in golem.harness.calls if c.label == "build")
+        assert "After your step: judge." in build.prompt and "What comes next depends on the verdict you choose" in judge.prompt
+        assert "# Quality bar" not in build.prompt  # Riggy's own workflow: no web-app rules it didn't ask for
         assert golem.store.job(job.id).graph == ""  # finished: its copy is gone
 
     run(go())
