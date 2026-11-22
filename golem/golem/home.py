@@ -1,145 +1,22 @@
-"""The web app's top level, one tab each: Home, Projects and Settings.
-
-Home is what Riggy came to see: what needs him (answered right there: try the site and
-say how it is, pick an option, answer a question), what's being worked on and when it's
-next live, what's coming up, and what finished lately; and a box for a new idea. Projects
-is the conversations, like a messaging app's list: golem's own (new ideas and its news)
-first, then each project's, latest first, opening its page (conversation.py). Settings has
-signing in, notifications, pausing all work, how many workers run at once, the tags, and
-each kind of step's model and effort.
+"""Settings, the web app's top-level tab for golem itself: signing in, notifications, pausing
+all work, how many workers run at once, the version, the tags, and each kind of step's model
+and effort. (Now and Projects are now.py's.)
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 from html import escape
 
-from . import brand, plan, pwa
+from . import pwa
 from .insights import Report
-from .pages import (ICONS_SVG, LaneData, _dt, _hidden, _short, action_form, ask_card, badge, defaults_table, dots,
-                    headline, signin_card, when)  # fmt: skip
-from .store import MAX_WORKERS, Said, Tag
+from .pages import (_hidden, action_form, defaults_table, signin_card)  # fmt: skip
+from .store import MAX_WORKERS, Tag
 from .upgrade import SHOWN, Upgrades
-from .watch import span
 
-RECENT = timedelta(days=7)  # finished jobs shown on Home
-RECENT_SHOWN = 5
 TIGHT = 700 * 2**20  # less memory than this each and a worker's build and browser may not fit
 # c1-c8, named for the mineral pigments they're the colors of: blue, orange, teal-green, yellow, pink, green, purple, red
 COLORS = ("lapis", "rust", "verdigris", "ochre", "madder", "moss", "amethyst", "cinnabar")
-
-
-def home(active: list[LaneData], idle: list[LaneData], signed_in: bool, now: datetime) -> str:
-    """`active`: projects with a job under way, in the queue's order; `idle`: the others, with their last job."""
-    needs = [lane for lane in active if lane.job.state == "waiting"]
-    working = [lane for lane in active if lane not in needs and _started(lane) and not lane.project.paused]
-    later = [lane for lane in active if lane not in needs and lane not in working]
-    recent = sorted(
-        (lane for lane in idle if lane.job and lane.job.updated_at and now - _dt(lane.job.updated_at) < RECENT),
-        key=lambda lane: lane.job.updated_at, reverse=True,
-    )[:RECENT_SHOWN]  # fmt: skip
-    html = "" if signed_in else signin_card("/")
-    if needs:
-        html += "<h2 class=section-title>Needs you</h2>" + "".join(_needs(lane, signed_in) for lane in needs)
-    if working:
-        html += "<h2 class=section-title>Working on</h2>" + "".join(_glance(lane, now) for lane in working)
-    if later:
-        html += "<h2 class=section-title>Up next</h2><ol class=compact>" + "".join(_later(lane, now) for lane in later) + "</ol>"
-    if recent:
-        html += "<h2 class=section-title>Finished lately</h2><ol class=compact>" + "".join(_recent(lane, now) for lane in recent) + "</ol>"
-    if not (needs or working or later):
-        what = "Describe an idea below and golem starts on it." if signed_in else "Sign in to describe an idea."
-        html += f"<p class=empty>Nothing under way. {what}</p>"
-    return html
-
-
-def _started(lane: LaneData) -> bool:
-    return any(s.started_at for s in lane.steps)
-
-
-def _needs(lane: LaneData, signed_in: bool) -> str:
-    p = lane.project
-    return (
-        f"<section class='card c{lane.color}' id='p-{escape(p.slug)}'><header class=card-head>"
-        f"<h2><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a></h2>{badge(lane)}</header>"
-        f"<p class=sub>{escape(plan.title(lane.job))}</p>"
-        + ask_card(lane, signed_in, back="/", reply=True)
-        + "</section>"
-    )
-
-
-def _glance(lane: LaneData, now: datetime) -> str:
-    p = lane.project
-    return (
-        f"<a class='card glance c{lane.color}' id='p-{escape(p.slug)}' href='/p/{escape(p.slug)}'><header class=card-head>"
-        f"<h2><span class=swatch></span>{escape(p.name)}</h2>{badge(lane)}</header>"
-        f"<div class=line><span>{headline(lane, now)}</span></div>"
-        f"<div class=line>{dots(lane)}<span>{escape(plan.title(lane.job))}</span></div></a>"
-    )
-
-
-def _later(lane: LaneData, now: datetime) -> str:
-    p, job = lane.project, lane.job
-    first = next((s for s in lane.steps if s.state == "pending"), None)
-    eta = lane.etas.get(first.position) if first else None
-    at = "paused" if p.paused else when(eta.start, now) if eta else f"#{lane.position}" if lane.position else "queued"
-    what = plan.what(job)
-    return (
-        f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
-        f"<span class=muted>{what}: {escape(plan.title(job))}</span><span class=when>{at}</span></li>"
-    )
-
-
-def _recent(lane: LaneData, now: datetime) -> str:
-    p, job = lane.project, lane.job
-    word = {"done": "live", "killed": "stopped", "failed": "failed"}.get(job.state, job.state)
-    return (
-        f"<li class=c{lane.color}><a href='/p/{escape(p.slug)}'><span class=swatch></span>{escape(p.name)}</a>"
-        f"<span class=muted>{word}: {escape(plan.title(job))}</span>"
-        f"<span class=when>{span(now - _dt(job.updated_at))} ago</span></li>"
-    )
-
-
-# --- projects ---------------------------------------------------------------------------
-
-
-@dataclass
-class Thread:
-    """One conversation in the list."""
-
-    href: str
-    name: str
-    color: int  # 0 for golem's own
-    status: str  # a badge, or ""
-    last: Said | None
-    about: str  # what shows when there's no message to show
-    at: str  # when it last moved, for the order
-    settings: str = ""  # its settings page; golem's own has none
-
-
-def projects(threads: list[Thread], signed_in: bool, now: datetime) -> str:
-    rows = []
-    for t in threads:
-        text = (t.last.text or "A picture") if signed_in and t.last else t.about
-        who = "You: " if signed_in and t.last and t.last.who == "riggy" else ""
-        ago = f"{span(now - _dt(t.at))}" if t.at else ""
-        gear = (
-            f"<a class=gear href='{escape(t.settings)}' aria-label='Settings for {escape(t.name)}' title=Settings>{ICONS_SVG['settings']}</a>"
-            if signed_in and t.settings
-            else ""
-        )
-        face = brand.mark() if t.color == 0 else escape(t.name[:1].upper())  # golem's own wears its mark
-        rows.append(
-            f"<li class=c{t.color}><a class=thread href='{escape(t.href)}'><span class=avatar>{face}</span>"
-            f"<b>{escape(t.name)}</b><span class=when>{ago}</span>"
-            f"<span class=last>{t.status}{escape(who + _short(text, 120))}</span></a>{gear}</li>"
-        )
-    html = f"<ol class=threads>{''.join(rows)}</ol>"
-    if not signed_in:
-        html += "<p class=hint>Sign in (Settings) to see the conversations.</p>"
-    return html + "<p class=hint><a href=/projects>The public page of live projects ↗</a></p>"
 
 
 # --- settings ---------------------------------------------------------------------------

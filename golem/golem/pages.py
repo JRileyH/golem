@@ -32,8 +32,10 @@ from .watch import span
 SHIP = progress.SHIP  # shown together as one "ship" row in a job's full list of steps
 ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "failed": "✗", "pending": ""}
 MARKS = {"done": "✓", "skipped": "–", "now": "", "waiting": "?", "failed": "✕", "todo": ""}  # a piece of work's
-TABS = (("home", "/", "Home"), ("projects", "/p", "Projects"), ("settings", "/settings", "Settings"))
-TAB_OF = {"home": "home", "settings": "settings", "insights": "settings"}  # any other page (a project's, the inbox) is under Projects
+TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("workflows", "/workflows", "Workflows"), ("settings", "/settings", "Settings"))
+SIGNED_IN_TABS = ("workflows",)  # what's what agents are told: Riggy's alone
+# Which tab a page is under: any other (a project's, a job's, a new project) is under Projects.
+TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "workflows": "workflows"}
 # What golem's own steps do, for their sheets.
 DOES = {
     "setup": "Makes sure the repo, the checkout and the job's issue exist.",
@@ -117,11 +119,13 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
     refreshed part: a workflow's graph (flows.stage), which keeps itself up to date."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
-    marks = {"home": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
+    marks = {"now": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
     tabs = "<nav class=tabs aria-label=Sections>" + "".join(
         f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
         for key, href, label in TABS
+        if signed_in or key not in SIGNED_IN_TABS
     ) + "</nav>"
+    new = "<a class=new-project href=/new aria-label='New project'><b>+</b><span> New project</span></a>" if signed_in else ""
     banner = "<div class='banner paused'>Work is paused. Nothing new starts until it's resumed (Settings).</div>" if paused else ""
     flash_html = f"<div class=flash role=status>{escape(flash)}</div>" if flash else ""
     latest = "<button type=button class=to-latest hidden aria-label='To the latest message'>↓</button>" if bottom else ""
@@ -133,7 +137,7 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <link rel=icon href=/favicon.svg type="image/svg+xml">
 <link rel=manifest href=/manifest.webmanifest>{pwa.touch_icon()}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
-<div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1></header>{subnav}</div>
+<div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1>{new}</header>{subnav}</div>
 {banner}{flash_html}<main id=lanes>{body}</main>{stage}<div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
@@ -159,16 +163,17 @@ def static_scripts(stage: str) -> str:
 
 
 def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, str]) -> str:
-    """The way around on a wide screen: the top level, then golem's own conversation and every
-    project's, each with a way straight to its settings. After `main` in the page, so the page's
-    own content comes first to a screen reader; the style puts it on the left."""
-    items = (("home", "/", "Home"), ("projects", "/p", "Projects"), ("insights", "/insights", "Insights"), ("settings", "/settings", "Settings"))
+    """The way around on a wide screen: the top level, a new project, then every project, each with
+    a way straight to its settings. After `main` in the page, so the page's own content comes first
+    to a screen reader; the style puts it on the left."""
     top = "".join(
-        f"<a href='{href}' class='item{' on' if key == here else ''}'{' aria-current=page' if key == here else ''}>"
-        f"{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
-        for key, href, label in items
+        f"<a href='{href}' class='item{' on' if key == TAB_OF.get(here, 'projects' if here else '') else ''}'"
+        f"{' aria-current=page' if key == TAB_OF.get(here, '') else ''}>{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
+        for key, href, label in TABS
+        if signed_in or key not in SIGNED_IN_TABS
     )
-    rows = [f"<li{' class=on' if here == 'inbox' else ''}><a href='/inbox#end'><span class=swatch></span><span class=name>golem</span></a></li>"]
+    new = f"<a href=/new class='item new{' on' if here == 'new' else ''}'><b class=plus>+</b><span>New project</span></a>" if signed_in else ""
+    rows = []
     for p in nav:
         state = f"<i class='state {p.state}' aria-label='{'needs you' if p.state == 'waiting' else 'working'}'></i>" if p.state else ""
         gear = (
@@ -177,12 +182,12 @@ def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, 
             else ""
         )
         rows.append(
-            f"<li class='c{p.color}{' on' if p.slug == here else ''}'><a href='/p/{escape(p.slug)}#end'><span class=swatch></span>"
+            f"<li class='c{p.color}{' on' if p.slug == here else ''}'><a href='/p/{escape(p.slug)}'><span class=swatch></span>"
             f"<span class=name>{escape(p.name)}</span>{state}</a>{gear}</li>"
         )
     return (
-        f"<nav class=side aria-label=golem><a class=brand href='/'>{brand.LOCKUP}</a>{top}"
-        f"<h2>Conversations</h2><ul class=side-projects>{''.join(rows)}</ul></nav>"
+        f"<nav class=side aria-label=golem><a class=brand href='/'>{brand.LOCKUP}</a>{top}{new}"
+        f"<h2>Projects</h2><ul class=side-projects>{''.join(rows) or '<li class=empty>None yet.</li>'}</ul></nav>"
     )
 
 
@@ -207,6 +212,9 @@ def _count_mark(n: int) -> str:
 ICONS_SVG = {
     "insights": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 20V11h3.5v9zm6.25 0V4h3.5v16zM16.5 20v-6H20v6z'/></svg>",
     "home": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/></svg>",
+    # Now: a pulse, what's happening; Workflows: three blocks wired together.
+    "now": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M2 13h4.2l2.3-6 4 12 3-9 1.6 3H22v2h-5.9l-.6-1.2-3.1 9.3-4-12.1L7.6 15H2z'/></svg>",
+    "workflows": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M3 3h8v6H8v3h5v-2h8v6h-8v-2H8v3h3v6H3v-6h3V9H3zm2 2v2h4V5zm10 7v2h4v-2zM5 17v2h4v-2z'/></svg>",
     "projects": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 4h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/>"
     "<path d='M19 8h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-2-2v-.5h6a3 3 0 0 0 3-3z'/></svg>",
     "settings": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm8.4 2.1-1.7-.3a7 7 0 0 0-.7-1.7l1-1.4"
@@ -689,6 +697,32 @@ def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallb
 # --- pieces ---------------------------------------------------------------------------
 
 
+ROUTE_MARKS = {"done": "✓", "now": "▶", "waiting": "?", "failed": "✗", "skipped": "↷", "next": "•", "todo": ""}
+
+
+def route_strip(job: Job, chips: list, small: bool = False, ahead: int | None = None) -> str:
+    """A job's route through its workflow, as chips (route.py): where it's been, lit by how each
+    went, then what's likely next, faded. A loop says ×N; a container fills as it goes. Each chip
+    opens its block's sheet. `small`: a compact strip for lists. `ahead`: show at most this many
+    of the blocks still to come, and how many more there are."""
+    items = []
+    later = [c for c in chips if c.predicted]
+    hidden = later[ahead:] if ahead is not None else []
+    for c in chips:
+        if c in hidden:
+            continue
+        again = f"<small>×{c.visits}</small>" if c.visits > 1 else ""
+        fill = f" style='--fill:{round(c.fill * 100)}%'" if c.container else ""
+        kind = " box" if c.container else ""
+        items.append(
+            f"<li class='rc {c.state}{kind}'{fill}><a href='{escape(step_href(job, c.last))}' data-sheet title='{escape(c.label)}: {c.state}'>"
+            f"<i aria-hidden=true>{ROUTE_MARKS.get(c.state, '')}</i>{escape(c.label)}{again}</a></li>"
+        )
+    if hidden:
+        items.append(f"<li class='rc todo more'><a href='/p/{escape(job.slug)}/jobs/{job.id}'>+{len(hidden)} more</a></li>")
+    return f"<ol class='route{' small' if small else ''}' aria-label='Its way through its workflow'>{''.join(items)}</ol>" if items else ""
+
+
 def trail(steps: list[Step], job: Job) -> str:
     """The way a job went through its workflow, block by block: each step that ran or was passed
     over, and the output it left by where it chose one."""
@@ -1164,6 +1198,60 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .row.pending b { font-weight:500; } .row.skipped b { text-decoration:line-through; color:var(--muted); }
 .chips { display:inline-flex; flex-wrap:wrap; gap:.25rem; }
 .chip { font-size:.78rem; padding:.05rem .4rem; border-radius:1px; border:1px solid var(--line); color:var(--muted); }
+/* A job's route through its workflow (route.py) */
+.route { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem 0; list-style:none; padding:0; margin:.45rem 0 .2rem; }
+.rc { display:flex; align-items:center; }
+.rc + .rc::before { content:""; width:.55rem; height:2px; background:var(--line); }
+.rc.done + .rc::before, .rc.skipped + .rc::before { background:var(--s-fin); }
+.rc a { display:inline-flex; align-items:center; gap:.25rem; padding:.18rem .5rem; border-radius:var(--radius); font-size:.8rem; line-height:1.3;
+  color:var(--ink); text-decoration:none; background:var(--bg); border:1px solid var(--line); white-space:nowrap; }
+.rc a:hover { border-color:var(--accent); }
+.rc i { font-style:normal; font-weight:700; font-size:.72rem; }
+.rc small { font-size:.7rem; font-weight:700; color:var(--run-fg); }
+.rc.done a { background:var(--fin-bg); color:var(--fin-fg); border-color:transparent; }
+.rc.now a, .rc.next a { background:var(--run-bg); color:var(--run-fg); border-color:var(--s-run); }
+.rc.now a { box-shadow:0 0 0 2px color-mix(in srgb, var(--s-run) 35%, transparent); }
+.rc.waiting a { background:var(--wait-bg); color:var(--wait-fg); border-color:var(--s-wait); font-weight:700; }
+.rc.failed a { background:var(--bad-bg); color:var(--bad-fg); border-color:transparent; }
+.rc.skipped a { opacity:.6; border-style:dashed; }
+.rc.todo a { color:var(--muted); border-style:dashed; opacity:.75; }
+.rc.box a { background:linear-gradient(to right, var(--fin-bg) var(--fill, 0%), var(--bg) var(--fill, 0%)); border-color:var(--line); color:var(--ink); }
+.rc.box.now a, .rc.box.next a { border-color:var(--s-run); } .rc.box.waiting a { border-color:var(--s-wait); } .rc.box.failed a { border-color:var(--s-bad); }
+.rc.box.done a { background:var(--fin-bg); color:var(--fin-fg); border-color:transparent; }
+.route.small .rc a { padding:.08rem .38rem; font-size:.72rem; } .route.small .rc + .rc::before { width:.35rem; }
+/* Now and Projects (now.py): jobs, a card or a row each, drawn by their route */
+.card.job .card-head h2, .project-card .card-head h2, .proposals-now .card-head h2 { display:flex; flex-wrap:wrap; align-items:baseline; gap:.15rem .55rem; }
+.job-title { font:600 .95rem/1.3 var(--body); color:var(--ink); }
+a.job-title:hover { color:var(--accent); }
+.card.job .sub { margin:.15rem 0 0; }
+.card.job .note { margin:.35rem 0 0; color:var(--muted); font-size:.88rem; }
+.jobs-list { list-style:none; padding:0; margin:0 0 1rem; display:flex; flex-direction:column; gap:.45rem; }
+.jobs-list > li { background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge); padding:.55rem .8rem .45rem; }
+.jobs-list .row-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:.15rem .6rem; }
+.jobs-list .row-head > a:first-child { font:700 .95rem var(--display); color:var(--ink); display:inline-flex; align-items:center; gap:.4rem; }
+.jobs-list .row-head .when { margin-left:auto; color:var(--muted); font-size:.82rem; }
+.jobs-list .said { margin:.3rem 0 0; color:var(--muted); font-size:.88rem; }
+main:has(> .project-grid) { max-width:min(100%, 78rem); }
+.project-card .shot { display:block; margin:-.85rem -1rem .6rem; aspect-ratio:16/9; overflow:hidden; border-radius:var(--radius) var(--radius) 0 0; background:var(--bg); }
+.project-card .shot img { width:100%; height:100%; object-fit:cover; object-position:top; display:block; }
+.proposals-now summary { cursor:pointer; list-style:none; } .proposals-now summary::-webkit-details-marker { display:none; }
+.proposals-now summary .count-pill { margin-left:auto; }
+.project-grid { display:grid; gap:.9rem; grid-template-columns:repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); align-items:start; }
+.project-card .meta { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; font-size:.85rem; margin:.3rem 0; }
+.project-card .latest { margin:.6rem 0 0; font-size:.9rem; }
+.tag-chip { font-size:.72rem; font-weight:700; padding:.05rem .45rem; border-radius:1px; background:var(--pc, var(--line)); color:#fff; }
+.news { margin:0 0 1rem; padding:.6rem .9rem; border-radius:var(--radius); background:var(--card); box-shadow:0 2px 0 var(--edge); font-size:.9rem; }
+.news.live { background:var(--wait-bg); color:var(--wait-fg); } .news p { margin:.1rem 0; }
+.news details summary { cursor:pointer; color:var(--muted); font-size:.85rem; } .news ul { margin:.4rem 0 0; padding-left:1rem; }
+.news li .when { color:var(--muted); font-size:.8rem; margin-right:.3rem; }
+/* The header's way to a new project; on a wide screen the sidebar has it */
+.top .new-project { grid-column:3; justify-self:end; display:inline-flex; align-items:center; gap:.2rem; padding:.3rem .7rem; border-radius:var(--radius);
+  background:var(--rust, var(--accent)); color:#fff; font-weight:700; font-size:.88rem; white-space:nowrap; text-decoration:none; }
+.top .new-project b { font-size:1.05rem; line-height:1; }
+@media (max-width:30rem) { .top .new-project span { display:none; } }
+@media (min-width:64rem) { .top .new-project { display:none; } }
+.side .item.new { margin-top:.4rem; color:var(--nav-ink); } .side .item.new .plus { width:20px; text-align:center; font-size:1.2rem; line-height:1; }
+.side-projects .empty { color:var(--nav-muted); font-size:.85rem; padding:.3rem .7rem; }
 .chip.done { background:var(--fin-bg); color:var(--fin-fg); border-color:transparent; } .chip.failed { background:var(--bad-bg); color:var(--bad-fg); border-color:transparent; }
 .chip.running { background:var(--run-bg); color:var(--run-fg); border-color:transparent; }
 .links { display:flex; flex-wrap:wrap; gap:.25rem .7rem; font-size:.85em; margin-top:.2rem; }

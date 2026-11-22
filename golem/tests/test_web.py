@@ -71,8 +71,9 @@ def sheet_of(job, s) -> str:
 
 def test_anyone_sees_what_is_under_way(golem, page):
     assert page.get("/healthz").json() == {"ok": True, "harness": "claude"}
-    html = page.get("/").text
-    assert "Up next" in html and "Trees &lt;b&gt;" in html and "new project: a flashcard game" in html
+    html = page.get("/").text  # Now: every job, by where it is, drawn by its route
+    assert "Up next" in html and "Trees &lt;b&gt;" in html and "a flashcard game" in html and "Web app" in html
+    assert "class='route small'" in html and "class='rc todo'" in html and " more</a>" in html  # the next few blocks, then how many more
     assert "Sign in" in html and "/act" not in html  # no controls signed out
     assert page.get("/?part=lanes").text.startswith("<section class='card signin-card'>")  # what the page refreshes with
 
@@ -106,8 +107,8 @@ def test_the_running_step_shows_its_live_tail_without_secrets(golem, page):
     golem.store.db.execute("UPDATE runs SET started_at = '2026-10-23T10:00:00+00:00'")
     (golem.settings.job_logs(job.id) / "progress.txt").write_text("The brief makes sense.\n")
 
-    html = page.get("/").text  # Home: what's being worked on, at a glance
-    assert "Working on" in html and "Plan it: " in html and " so far" in html
+    html = page.get("/").text  # Now: what's running, and where
+    assert "Running" in html and "Plan it: " in html and " so far" in html and "class='rc now'" in html
     html = page.get("/p/trees").text
     assert "<ul class=notes><li>The brief makes sense.</li></ul>" in html
     assert "1:00</time><span>💬 Reading the brief." in html
@@ -763,7 +764,7 @@ def test_the_inbox_takes_new_ideas(golem, app):
     golem.harness.script = [TREES]
     assert say(app, "inbox", "a flashcard game for identifying northeastern us trees") == "/p/tree-cards#end"  # on to its page
     assert golem.store.project("tree-cards") is not None
-    assert "Describe a new idea" in app.get("/").text  # Home takes ideas too
+    assert "href=/new" in app.get("/").text  # Now has the way to a new project
     html = app.get("/inbox").text
     assert "a flashcard game for identifying northeastern us trees" in html and "New project: Tree Cards" in html
     assert "Describe a new idea" in html  # the box to write more
@@ -794,8 +795,8 @@ def test_a_project_page_is_its_conversation(golem, app):
     assert "Tree Cards" in html and "class=pieces" in html and "You said: “a flashcard game" in html
     assert "href='/p/tree-cards/settings'" in html
     assert "A note for the job&#x27;s next step" in html and "Options first" not in html  # a job's under way
-    html = app.get("/p").text  # the list of conversations: golem's own, then the projects', each opening at its latest
-    assert html.index("href='/inbox#end'") < html.index("href='/p/tree-cards#end'") and "You said: “a flashcard game" in html
+    html = app.get("/p").text  # every project as a card, with its latest job's route
+    assert "class=project-grid" in html and "href='/p/tree-cards'" in html and "Tree Flashcard Game" in html and "class='route small'" in html
 
     golem.store.update_job(job.id, state="done")
     assert "Options first" in app.get("/p/tree-cards").text
@@ -832,7 +833,8 @@ def test_every_page_is_a_click_from_anywhere(golem, page):
     html = page.get("/p/trees/settings").text  # a project's own tabs: its conversation, settings and the job under way
     assert "<a href='/p/trees'>Conversation</a><a href='/p/trees/settings' class=on aria-current=page>Settings</a>" in html
     assert f"<a href='/jobs/{page.job.id}'>Job #{page.job.id}</a>" in html
-    assert "<li class='c1 on'><a href='/p/trees#end'>" in html  # lit up in the sidebar
+    assert "<li class='c1 on'><a href='/p/trees'>" in html  # lit up in the sidebar
+    assert "href='/workflows'" in html and "href=/new" in html  # Workflows, and a new project, for Riggy
     assert "class=gear href='/p/birds/settings'" in page.get("/p").text  # straight to its settings from the list
     page.post("/logout", follow_redirects=False)
     html = page.get("/p/trees").text

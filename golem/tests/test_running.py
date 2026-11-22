@@ -359,3 +359,37 @@ def test_a_second_change_waits_for_the_first_on_a_project_that_takes_one_at_a_ti
         assert golem.scheduler.pick(at="9999").id == second.id
 
     run(go())
+
+
+# --- a job drawn small (route.py) ------------------------------------------------------------
+
+from golem import route  # noqa: E402
+
+
+def test_a_jobs_route_is_its_blocks_in_order_loops_once_and_containers_as_one(golem):
+    async def go():
+        await idle_project(golem)
+        add_workflow(golem, "judged", JUDGED, JUDGED_MD)
+        job = change_job(golem, "judged")
+        golem.harness.script = by_label({"judge": [verdict("fail", "Not yet."), verdict("pass", "Works.")]})
+        await golem.until("push")
+        job = golem.store.job(job.id)
+        chips = route.chips(job, plan.planned(golem.settings, golem.store, job))
+        assert [(c.label, c.state, c.visits) for c in chips] == [
+            ("set up", "done", 1), ("build", "done", 2), ("judge", "done", 2), ("Ship", "next", 1),
+        ]  # counters and conditions left out; the end's alert too
+        ship = chips[-1]
+        assert ship.container and ship.fill == 0 and ship.last.name == "push"
+        await golem.step()  # pushed
+        ship = route.chips(golem.store.job(job.id), plan.planned(golem.settings, golem.store, golem.store.job(job.id)))[-1]
+        assert 0 < ship.fill < 1 and ship.state == "next"
+
+    run(go())
+
+
+def test_a_job_not_started_is_all_still_to_come(golem):
+    golem.store.add_project("trees", "Trees", "s")
+    job = golem.store.add_job("trees", "new", "idea", "standard")
+    chips = route.chips(job, plan.planned(golem.settings, golem.store, job))
+    assert chips[0].label == "set up" and {c.state for c in chips} == {"todo"} and all(c.predicted for c in chips)
+    assert [c.label for c in chips].count("Ship") == 4  # golem's Ship sub-workflow, four times, each one chip

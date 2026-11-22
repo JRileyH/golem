@@ -38,6 +38,7 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Redire
 from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, options, pages, plan, pwa, turns, workflows
+from . import now as now_page
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -170,49 +171,6 @@ def create_app(
         places = {j.id: 1 if j.state == "running" else i - extra for i, j in enumerate(order, start=1)}
         return {"order": places, "colors": colors(), "known": known, "etas": etas}
 
-    def lanes(signed: bool, now: datetime) -> tuple[list[LaneData], list[LaneData]]:
-        """Projects with a job under way, in the queue's order, and the others with their last job.
-        A project that allows several changes at once has a lane for each change under way."""
-        ctx = context(now)
-        order = ctx["order"]
-        active, busy, seen = [], set(), set()
-        jobs = sorted(store.jobs(ACTIVE, limit=1000), key=lambda j: (order.get(j.id, 999), j.id))
-        for job in jobs:
-            project = store.project(job.slug)
-            key = (job.slug, job.id) if project.parallel_jobs > 1 and job.start not in LOOKS else job.slug
-            if key in seen:
-                continue
-            seen.add(key)
-            busy.add(job.slug)
-            active.append(lane(job, project, order.get(job.id), signed, ctx))
-        idle = []
-        recent = store.jobs(limit=500)
-        for project in store.projects():
-            if project.slug not in busy:
-                last = next((j for j in recent if j.slug == project.slug), None)
-                idle.append(lane(last, project, None, signed, ctx))
-        live.forget({r["id"] for j in jobs for r in store.runs(j.id)[-1:]})
-        return active, idle
-
-    def threads(signed: bool) -> list[home.Thread]:
-        """Golem's own conversation, then each project's, the latest first; each opens at its latest message."""
-        palette = colors()
-        recent = store.jobs(limit=500)
-        out = []
-        for project in store.projects():
-            job = store.active_job(project.slug) or next((j for j in recent if j.slug == project.slug), None)
-            said = store.messages(project.slug, limit=1)
-            last = said[-1] if said else None
-            at = max(x for x in (last.at if last else "", job.updated_at if job else "", project.created_at) if x is not None)
-            data = LaneData(project, job, plan.planned(settings, store, job) if job else [], _state(store, job, []) if job else "idle",
-                            [], [], set(), set(), None, "", "", palette.get(project.slug, 1))  # fmt: skip
-            out.append(home.Thread(f"/p/{project.slug}#end", project.name, data.color, pages.badge(data), last, project.summary, at,
-                                   f"/p/{project.slug}/settings"))  # fmt: skip
-        out.sort(key=lambda t: t.at, reverse=True)
-        said = store.messages(INBOX, limit=1) + store.messages(STATUS, limit=1)
-        last = max(said, key=lambda m: m.id) if said else None
-        return [home.Thread("/inbox#end", "golem", 0, "", last, "New ideas, and golem's news.", last.at if last else ""), *out]
-
     def job_html(job: Job, signed: bool) -> str:
         project = store.project(job.slug)
         now = datetime.now(UTC)
@@ -326,15 +284,60 @@ def create_app(
     async def healthz(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "harness": settings.harness})
 
+    def job_lanes(signed: bool, now: datetime) -> tuple[list[LaneData], list[LaneData]]:
+        """A lane for every unfinished job, in the queue's order, and for the latest finished ones."""
+        ctx = context(now)
+        order = ctx["order"]
+        active = sorted(store.jobs(ACTIVE, limit=1000), key=lambda j: (order.get(j.id, 999), j.id))
+        lanes_ = [lane(j, store.project(j.slug), order.get(j.id), signed, ctx) for j in active if store.project(j.slug)]
+        recent = [j for j in store.jobs(limit=60) if j.state not in ACTIVE and store.project(j.slug)][: now_page.RECENT_SHOWN]
+        finished = [lane(j, store.project(j.slug), None, signed, ctx) for j in recent]
+        live.forget({r["id"] for j in active for r in store.runs(j.id)[-1:]})
+        return lanes_, finished
+
+    def flow_names() -> dict[str, str]:
+        return {w.key: w.name for w in store.workflows()}
+
+    def news() -> now_page.News:
+        """What's true of golem right now (paused is the page's own banner), and what it said lately."""
+        conditions = []
+        if store.get("limit_notice") == "1":
+            conditions.append("Out of Claude usage: jobs are parked and retry every 30 minutes.")
+        if scheduler.upgrades.holding():
+            conditions.append("Upgrading golem: nothing new starts until it's back.")
+        return now_page.News(conditions, store.messages(STATUS, limit=5))
+
     async def index(request: Request) -> Response:
+        """Now: every job golem has, what needs Riggy first."""
         signed = signed_in(request)
         now = datetime.now(UTC)
-        bottom = conversation.composer(INBOX, "idle") if signed and bot else ""
-        return respond(request, "golem", home.home(*lanes(signed, now), signed, now), signed, bottom, here="home")
+        active, finished = job_lanes(signed, now)
+        waiting = {}
+        if signed:
+            for p in store.projects():
+                if open_ := store.proposals(p.slug, ("open",)):
+                    waiting[p.slug] = (p, open_)
+        body = now_page.page(active, finished, waiting, news(), flow_names(), signed, now)
+        return respond(request, "golem", body, signed, here="now")
 
     async def projects_list(request: Request) -> Response:
+        """Every project as a card, with its latest job's route: the busiest and latest first."""
         signed = signed_in(request)
-        return respond(request, "Projects", home.projects(threads(signed), signed, datetime.now(UTC)), signed, here="projects")
+        now = datetime.now(UTC)
+        ctx = context(now)
+        recent = store.jobs(limit=500)
+        cards = []
+        images = {}
+        for project in store.projects():
+            mine = [j for j in recent if j.slug == project.slug]
+            job = store.active_job(project.slug, questions=False) or next((j for j in mine if j.start not in LOOKS), None) or (mine[0] if mine else None)
+            cards.append(lane(job, project, ctx["order"].get(job.id) if job else None, signed, ctx))
+            card = store.card(project.slug)
+            if card and card.image:
+                images[project.slug] = f"/cards/{card.image}?v={quote(card.updated_at)}"
+        cards.sort(key=lambda x: (x.job is None or x.job.state not in ACTIVE, -(_dt_seconds(x.job.updated_at) if x.job else 0)))
+        tags = {t.name: t.color for t in store.tags()}
+        return respond(request, "Projects", now_page.projects(cards, flow_names(), tags, images, signed, now), signed, here="projects")
 
     async def settings_page(request: Request) -> Response:
         signed = signed_in(request)
@@ -781,6 +784,13 @@ def create_app(
             Route("/act", act, methods=["POST"]),
         ]
     )
+
+
+def _dt_seconds(at: str | None) -> float:
+    try:
+        return datetime.fromisoformat(at).timestamp() if at else 0.0
+    except ValueError:
+        return 0.0
 
 
 async def _json(request: Request, cap: int = 600_000) -> dict | None:
