@@ -1037,10 +1037,101 @@ def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
     assert "When golem can't tell which" in html  # changes have several workflows to fall back between
     web = golem.store.workflow(key="web_app")
     html = page.get(f"/workflows/{web.id}?mode=rigorous").text
-    assert ">rigorous</a>" in html and "class=on aria-current=page>rigorous" in html and "data-mode=view" in html
+    assert "class=on aria-current=page>rigorous</a>" in html and "data-mode=edit" in html and "/static/editor.js?v=" in html
     view = page.get(f"/workflows/{web.id}.json?mode=rigorous").json()
     names = [n["label"] for n in view["nodes"]]
     assert "spec-review" in names and view["problems"] == [] and view["poll"] == 0
     ship = next(n for n in view["nodes"] if n["type"] == "container")
     assert ship["open"] == f"/workflows/{golem.store.workflow(key='ship').id}" and ship["ports"] == ["shipped"]
     assert page.get("/workflows/999").status_code == 404
+
+
+# --- the editor ------------------------------------------------------------------------
+
+
+def save(page, wf_id: int, graph: dict, mode: str = "", base: str = "", origin: str = "https://golem.unlaunched.dev"):
+    return page.post(f"/workflows/{wf_id}/save", json={"mode": mode, "graph": graph, "base": base}, headers={"origin": origin})
+
+
+def test_a_new_workflow_is_made_edited_and_saved_with_its_problems(golem, page):
+    sign_in(page)
+    r = page.post("/act", data={"action": "workflow-new", "value": "API flow", "start": "change", "back": "/workflows"}, follow_redirects=False)
+    wf = golem.store.workflow(handle="api_flow")
+    assert r.headers["location"].startswith(f"/workflows/{wf.id}?msg=") and wf.start == "change"
+    data = page.get(f"/workflows/{wf.id}.json?edit=1").json()
+    assert [n["type"] for n in data["graph"]["nodes"]] == ["start", "end"] and data["problems"] == []
+    assert {k["type"] for k in data["catalog"]} >= {"agent", "script", "condition", "container", "checkin", "end"} and "ship" in data["subs"]
+    blank = golem.store.tab(wf.id, "").working
+
+    # Saved with something wrong: kept as he left it, marked, and new jobs keep the last working state.
+    broken = {"nodes": [*data["graph"]["nodes"], {"id": "build", "type": "agent", "name": "build", "turns": 50, "x": 0, "y": 100, "extra": "dropped"}],
+              "edges": data["graph"]["edges"]}  # fmt: skip
+    answer = save(page, wf.id, broken, base=data["base"]).json()
+    assert answer["ok"] is False and {p["node"] for p in answer["problems"]} >= {"build"}
+    tab = golem.store.tab(wf.id, "")
+    assert "extra" not in tab.graph["nodes"][-1] and tab.working == blank and tab.problems
+    assert golem.store.workflow(wf.id).edited
+
+    # Fixed: it's what new jobs copy now.
+    good = {"nodes": [{"id": "start", "type": "start", "x": 0, "y": 0}, {"id": "setup", "type": "setup", "x": 0, "y": 110},
+                      {"id": "build", "type": "agent", "name": "build", "instructions": "Build the API.", "turns": 50, "x": 0, "y": 220},
+                      {"id": "end", "type": "end", "x": 0, "y": 330}],
+            "edges": [{"from": "start", "port": "next", "to": "setup"}, {"from": "setup", "port": "next", "to": "build"},
+                      {"from": "build", "port": "done", "to": "end"}]}  # fmt: skip
+    answer = save(page, wf.id, good, base=answer["base"]).json()
+    assert answer["ok"] and answer["problems"] == [] and golem.store.tab(wf.id, "").working["nodes"][2]["instructions"] == "Build the API."
+    # A save from a page opened before that one is turned away, not lost.
+    r = save(page, wf.id, good, base=data["base"])
+    assert r.status_code == 409 and r.json()["stale"]
+
+
+def test_the_editor_needs_riggy_and_this_site(golem, page):
+    web = golem.store.workflow(key="web_app")
+    graph = golem.store.tab(web.id, "").graph
+    assert save(page, web.id, graph).status_code == 403
+    sign_in(page)
+    assert save(page, web.id, graph, origin="https://evil.example").status_code == 403
+    assert save(page, web.id, {"nodes": "nope"}).status_code == 400
+    assert save(page, web.id, graph, mode="fancy").status_code == 404
+    assert page.post(f"/workflows/{web.id}/save", content=b"x" * 700_000, headers={"origin": "https://golem.unlaunched.dev"}).status_code == 400
+
+
+def test_changing_a_sub_workflows_outputs_flags_the_workflows_that_use_it(golem, page):
+    sign_in(page)
+    ship = golem.store.workflow(key="ship")
+    renamed = {}
+    for mode in ("reckless", ""):
+        graph = json.loads(json.dumps(golem.store.tab(ship.id, mode).graph))
+        for n in graph["nodes"]:
+            if n["type"] == "output":
+                n["name"] = "live"
+        renamed[mode] = save(page, ship.id, graph, mode=mode).json()["ok"]
+    assert renamed == {"reckless": False, "": True}  # one at a time, its tabs' Outputs differed; then they match
+    assert golem.store.tab(ship.id, "reckless").problems == []  # checked again once the default matched
+    web = golem.store.workflow(key="web_app")
+    problems = golem.store.tab(web.id, "").problems
+    assert problems and any("shipped" in p["message"] for p in problems)
+    view = page.get("/workflows").text
+    assert "has problems" in view
+    # Golem's version, back with a button; the workflows using it are fine again.
+    assert "golem%27s%20version" in act(page, action="workflow-reset", workflow=ship.id)
+    assert golem.store.tab(web.id, "").problems == [] and not golem.store.workflow(ship.id).edited
+
+
+def test_tabs_settings_and_archiving(golem, page):
+    sign_in(page)
+    change = golem.store.workflow(key="change")
+    golem.store.add_mode("careful", "He says to take care.")
+    r = page.post("/act", data={"action": "tab-add", "workflow": change.id, "value": "careful", "from": "rigorous", "back": "/"}, follow_redirects=False)
+    assert r.headers["location"].startswith(f"/workflows/{change.id}?mode=careful")
+    assert golem.store.tab(change.id, "careful").graph == golem.store.tab(change.id, "rigorous").graph
+    assert "already%20has" in act(page, action="tab-add", workflow=change.id, value="careful")
+    assert "Deleted" in act(page, action="tab-delete", workflow=change.id, value="careful")
+    assert golem.store.tab(change.id, "careful") is None
+    assert "Saved%20Make%20a%20change" in act(page, action="workflow-settings", workflow=change.id, name="Make a change", handle="fix", ingest="Changes.")
+    assert golem.store.workflow(change.id).handle == "fix"
+    assert "already" in act(page, action="workflow-settings", workflow=change.id, name="x", handle="options", ingest="")
+    assert "fallback" in act(page, action="workflow-archive", workflow=change.id, value="on")  # the fallback can't go
+    options = golem.store.workflow(key="options")
+    assert "Archived" in act(page, action="workflow-archive", workflow=options.id, value="on")
+    assert "options" not in [k.key for k in golem.bot.kinds()] if hasattr(golem, "bot") else True

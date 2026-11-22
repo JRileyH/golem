@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, config, conversation, flows, gallery, home, insights, options, pages, plan, pwa, turns
+from . import brand, config, conversation, engine, flows, gallery, home, insights, options, pages, plan, pwa, turns, workflows
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -550,9 +550,9 @@ def create_app(
         wf, mode = one_workflow(request)
         if wf is None:
             return HTMLResponse("No such workflow.", 404)
-        src = f"/workflows/{wf.id}.json" + (f"?mode={quote(mode)}" if mode else "")
+        src = f"/workflows/{wf.id}.json?edit=1" + (f"&mode={quote(mode)}" if mode else "")
         return respond(request, wf.name, flows.workflow_page(store, wf, mode), signed, here="settings", up=("/workflows", "Workflows"),
-                       stage=flows.stage(src, "view"))  # fmt: skip
+                       stage=flows.stage(src, "edit"))  # fmt: skip
 
     async def workflow_json(request: Request) -> Response:
         if not signed_in(request):
@@ -560,7 +560,34 @@ def create_app(
         wf, mode = one_workflow(request)
         if wf is None:
             return JSONResponse({"error": "No such workflow."}, 404)
-        return JSONResponse(flows.workflow_view(store, wf, mode), headers={"Cache-Control": "no-store"})
+        found = flows.editor_data(store, wf, mode) if request.query_params.get("edit") else flows.workflow_view(store, wf, mode)
+        return JSONResponse(found, headers={"Cache-Control": "no-store"})
+
+    async def workflow_save(request: Request) -> Response:
+        """The editor's Save: the tab as Riggy left it, with what's wrong with it (it saves anyway;
+        new jobs keep its last working state until it's fixed)."""
+        if not signed_in(request) or not _same_site(request):
+            return JSONResponse({"error": "Sign in first."}, 403)
+        wf = store.workflow(request.path_params["workflow_id"])
+        if wf is None:
+            return JSONResponse({"error": "No such workflow."}, 404)
+        body = await _json(request)
+        if body is None:
+            return JSONResponse({"error": "That's too big, or not JSON."}, 400)
+        mode = str(body.get("mode") or "")
+        tab = store.tab(wf.id, mode)
+        if tab is None:
+            return JSONResponse({"error": f"{wf.name} has no {mode or 'default'} tab."}, 404)
+        if body.get("base") and body["base"] != engine.digest(tab.graph):
+            return JSONResponse({"error": "It was saved somewhere else since you opened it: reload to see that, then make your change again.", "stale": True}, 409)
+        try:
+            graph = workflows.clean(body.get("graph"))
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        report = scheduler.library.save(wf, mode, graph)
+        saved = store.tab(wf.id, mode)
+        return JSONResponse({"ok": report.ok, "problems": [p.as_dict() for p in report.errors],
+                             "warnings": [p.as_dict() for p in report.warnings], "base": engine.digest(saved.graph)})  # fmt: skip
 
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
@@ -674,6 +701,22 @@ def create_app(
                     message = control.fallback_mode(value)
                 case "fallback-workflow":
                     message = control.fallback_workflow(form.get("start", ""), value)
+                case "workflow-new":
+                    wf = control.new_workflow(value, form.get("start", ""))
+                    return RedirectResponse(f"/workflows/{wf.id}?msg=" + quote(f"Made {wf.name}: wire its blocks from Start to End."), 303)
+                case "workflow-settings":
+                    message = control.workflow_settings(_int(form.get("workflow")), form.get("name", ""), form.get("handle", ""), form.get("ingest", ""))
+                case "workflow-archive":
+                    message = control.archive_workflow(_int(form.get("workflow")), value == "on")
+                case "workflow-reset":
+                    message = control.reset_workflow(_int(form.get("workflow")))
+                case "tab-add":
+                    message = control.add_tab(_int(form.get("workflow")), value, form.get("from", ""))
+                    wf = store.workflow(_int(form.get("workflow")))
+                    if wf and store.tab(wf.id, value):
+                        return RedirectResponse(f"/workflows/{wf.id}?mode={quote(value)}&msg=" + quote(message), 303)
+                case "tab-delete":
+                    message = control.drop_tab(_int(form.get("workflow")), value)
                 case "note":
                     message = await control.note(job, value, step, position)
                 case "upgrade":
@@ -732,11 +775,24 @@ def create_app(
             Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
             Route("/workflows", workflows_list), Route("/workflows/{workflow_id:int}", workflow_page),
             Route("/workflows/{workflow_id:int}.json", workflow_json),
+            Route("/workflows/{workflow_id:int}/save", workflow_save, methods=["POST"]),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),
             Route("/act", act, methods=["POST"]),
         ]
     )
+
+
+async def _json(request: Request, cap: int = 600_000) -> dict | None:
+    """A JSON body, if it is one and isn't too big."""
+    raw = await request.body()
+    if len(raw) > cap:
+        return None
+    try:
+        found = json.loads(raw)
+    except ValueError:
+        return None
+    return found if isinstance(found, dict) else None
 
 
 async def _form(request: Request) -> dict[str, str]:

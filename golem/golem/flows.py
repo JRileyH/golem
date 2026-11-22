@@ -267,7 +267,14 @@ def workflows_page(store: Store, signed: bool) -> str:
         if rows:
             groups.append(f"<section class=card><h2>Starts a {escape(name)}</h2><ul class=workflows>{''.join(rows)}</ul></section>")
     lead = "<p class=lead>How golem works through each kind of request: blocks wired together, from Start to End.</p>"
-    return lead + "".join(groups) + modes_card(store)
+    starts = "".join(f"<option value={s}>{escape(n)}</option>" for s, n in START_NAMES.items())
+    new = (
+        "<section class='card settings'><h2>New workflow</h2><form method=post action=/act class=row-form>"
+        "<input type=hidden name=action value=workflow-new><input type=hidden name=back value=/workflows>"
+        "<input name=value placeholder='Its name, like Game maker' required maxlength=60 aria-label='Name'>"
+        f"<label>Starts a <select name=start aria-label='What it starts for'>{starts}</select></label><button>Make it</button></form></section>"
+    )
+    return lead + new + "".join(groups) + modes_card(store)
 
 
 def modes_card(store: Store) -> str:
@@ -304,12 +311,74 @@ def modes_card(store: Store) -> str:
 
 
 def workflow_page(store: Store, wf: Workflow, mode: str) -> str:
-    """A workflow's head: what it's for, and its tabs (default, and one per mode it has)."""
+    """A workflow's head: what it's for, its tabs (default, and one per mode it has, with + for
+    another), and its settings."""
     tabs = store.tabs(wf.id)
+    back = f"/workflows/{wf.id}" + (f"?mode={escape(mode)}" if mode else "")
+    hidden = lambda **f: "".join(f"<input type=hidden name={k} value='{escape(str(v))}'>" for k, v in {**f, "workflow": wf.id, "back": back}.items())  # noqa: E731
     links = "".join(
-        f"<a href='/workflows/{wf.id}{'?mode=' + escape(m) if m else ''}'{' class=on aria-current=page' if m == mode else ''}>{escape(m or 'default')}</a>"
-        for m in tabs
+        f"<a href='/workflows/{wf.id}{'?mode=' + escape(m) if m else ''}'{' class=on aria-current=page' if m == mode else ''}>{escape(m or 'default')}"
+        + (" <span class=flow-bad title='has problems'>!</span>" if t.problems else "") + "</a>"
+        for m, t in tabs.items()
     )
-    meta = f"<p class=muted>Starts a {escape(START_NAMES.get(wf.start, wf.start))} · <code>!with {escape(wf.handle)}</code></p>"
+    unused = [m.name for m in store.modes() if m.name not in tabs]
+    add = (
+        f"<form method=post action=/act class=inline>{hidden(action='tab-add', **{'from': mode})}"
+        f"<select name=value aria-label='Mode for a new tab'>{''.join(f'<option>{escape(m)}</option>' for m in unused)}</select>"
+        "<button title='A tab for a mode: a copy of this one to change'>+ Tab</button></form>"
+        if unused else ""
+    )  # fmt: skip
+    drop = (
+        f"<form method=post action=/act class=inline onsubmit='return confirm({escape(json.dumps(f'Delete the {mode} tab?'))})'>"
+        f"{hidden(action='tab-delete', value=mode)}<button class=danger>Delete this tab</button></form>"
+        if mode else ""
+    )
+    meta = f"<p class=muted>Starts a {escape(START_NAMES.get(wf.start, wf.start))} · <code>!with {escape(wf.handle)}</code>"
+    meta += " · golem's own" + (" (you've changed it)" if wf.edited else "") if wf.builtin else ""
+    meta += "</p>"
+    problems = tabs.get(mode).problems if tabs.get(mode) else []
+    note = (
+        f"<p class=flow-note>This tab has {len(problems)} problem{'s' if len(problems) != 1 else ''}: new jobs keep using its last working state until they're fixed.</p>"
+        if problems else ""
+    )
+    upstream = (
+        f"<p class=flow-note>Golem has a newer version of {escape(wf.name)}. "
+        f"<form method=post action=/act class=inline>{hidden(action='workflow-reset')}<button>Use golem's version</button></form></p>"
+        if wf.upstream else ""
+    )
+    settings = (
+        f"<details class=workflow-settings><summary>Settings</summary><form method=post action=/act class=stack>{hidden(action='workflow-settings')}"
+        f"<label>Name <input name=name value='{escape(wf.name)}' required maxlength=60></label>"
+        f"<label><code>!with</code> name <input name=handle value='{escape(wf.handle)}' required maxlength=30 pattern='[a-z][a-z0-9_-]*'></label>"
+        f"<label>What it's for <span class=muted>(golem picks a workflow for a request by this)</span>"
+        f"<textarea name=ingest rows=3 maxlength=1000>{escape(wf.ingest)}</textarea></label><button>Save settings</button></form>"
+        f"<div class=row-form><form method=post action=/act class=inline>{hidden(action='workflow-archive', value='off' if wf.archived else 'on')}"
+        f"<button>{'Bring it back' if wf.archived else 'Archive'}</button></form>"
+        + (f"<form method=post action=/act class=inline onsubmit='return confirm({escape(json.dumps('Put back golem’s version? Your changes go.'))})'>"
+           f"{hidden(action='workflow-reset')}<button class=danger>Reset to golem's version</button></form>" if wf.builtin and wf.edited else "")
+        + "</div></details>"
+    )  # fmt: skip
     ingest = f"<p>{escape(wf.ingest)}</p>" if wf.ingest else ""
-    return f"<section class='card workflow-head'>{meta}{ingest}<nav class=flow-tabs aria-label=Tabs>{links}</nav></section>"
+    return (
+        f"<section class='card workflow-head'>{meta}{ingest}<nav class=flow-tabs aria-label=Tabs>{links}{add}{drop}</nav>"
+        f"{upstream}{note}{settings}</section>"
+    )
+
+
+def editor_data(store: Store, wf: Workflow, mode: str) -> dict:
+    """What the editor needs: the tab's graph as it's stored, what's wrong with it, the blocks it
+    can add with their fields, and the sub-workflows a container can open."""
+    from .workflows import editor_catalog
+
+    tab = store.tab(wf.id, mode) or store.tab(wf.id, "")
+    subs = {}
+    for w in store.workflows():
+        if w.start == "sub" and w.id != wf.id:
+            tabs = store.tabs(w.id)
+            subs[w.key] = {"id": w.id, "name": w.name, "outputs": engine.outputs_of(tabs[""].working) if "" in tabs else [],
+                           "tabs": [m for m in tabs if m], "archived": w.archived}  # fmt: skip
+    return {
+        "graph": tab.graph, "problems": tab.problems, "base": engine.digest(tab.graph), "start": wf.start, "mode": tab.mode,
+        "workflow": {"id": wf.id, "name": wf.name}, "catalog": editor_catalog(), "subs": subs, "modes": [m.name for m in store.modes()],
+        "labels": {t: plan.LABELS.get(t, t) for t in engine.CODE}, "notes": CODE_NOTES,
+    }  # fmt: skip

@@ -22,10 +22,10 @@
   const portAt = (node, port) => ({ x: portX(node, Math.max(node.ports.indexOf(port), 0)), y: node.y + H });
   const inAt = (node) => ({ x: node.x + W / 2, y: node.y });
 
-  function wirePath(a, b) {
-    // Down the page to the next block: a gentle S. Past blocks in the same column: round their
+  function wirePath(a, b, past = false) {
+    // Down the page to the next block: a gentle S. Past blocks in its way (`past`): round their
     // left. Back up the page (a loop): round the right of both blocks.
-    if (b.y > a.y + 140 && Math.abs(a.x - b.x) < W * 0.6) {
+    if (past && b.y > a.y + 24) {
       const side = Math.min(a.x, b.x) - W * 0.7;
       return `M${a.x},${a.y} C${a.x},${a.y + 40} ${side},${a.y + 40} ${side},${(a.y + b.y) / 2} S${b.x},${b.y - 40} ${b.x},${b.y}`;
     }
@@ -65,7 +65,9 @@
         const a = byId[e.from], b = byId[e.to];
         if (!a || !b) continue;
         const lit = ['done', 'failed', 'skipped'].includes(a.state) && b.state && b.state !== 'todo';
-        el('path', { d: wirePath(portAt(a, e.port), inAt(b)), class: 'flow-wire' + (lit ? ' lit' : ''), 'marker-end': 'url(#flow-arrow)', 'data-from': e.from, 'data-port': e.port }, wires);
+        const p = portAt(a, e.port), q = inAt(b);
+        const past = data.nodes.some((n) => n !== a && n !== b && n.y > a.y + H / 2 && n.y + H < b.y + 4 && p.x > n.x - 10 && p.x < n.x + W + 10);
+        el('path', { d: wirePath(p, q, past), class: 'flow-wire' + (lit ? ' lit' : ''), 'marker-end': 'url(#flow-arrow)', 'data-from': e.from, 'data-port': e.port }, wires);
       }
       const blocks = el('g', { class: 'flow-blocks' }, world);
       for (const n of data.nodes) drawNode(blocks, n);
@@ -109,7 +111,7 @@
       const x0 = Math.min(...xs) - PAD, y0 = Math.min(...ys) - PAD;
       const x1 = Math.max(...xs) + W * 1.8 + PAD, y1 = Math.max(...ys) + H + PAD * 1.5;
       const box = svg.getBoundingClientRect();
-      const k = Math.min(MAX, Math.max(MIN, Math.min(box.width / (x1 - x0), box.height / (y1 - y0))));
+      const k = Math.min(1, Math.max(MIN, Math.min(box.width / (x1 - x0), box.height / (y1 - y0))));
       view.k = k;
       view.tx = (box.width - (x1 - x0) * k) / 2 - x0 * k;
       view.ty = Math.min(PAD, (box.height - (y1 - y0) * k) / 2) - y0 * k;
@@ -236,8 +238,14 @@
       } else timer = setTimeout(load, 10000);
     }
     flow.load = load;
+    flow.focus = () => focus();
+    flow.toWorld = (clientX, clientY) => {
+      const box = svg.getBoundingClientRect();
+      return { x: (clientX - box.left - view.tx) / view.k, y: (clientY - box.top - view.ty) / view.k };
+    };
     document.dispatchEvent(new CustomEvent('flow:mounted', { detail: flow }));
-    load();
+    if (root.dataset.mode === 'edit') flow.editing = true;  // editor.js loads and draws it
+    else load();
   }
 
   window.golemFlow = { mount, W, H, el, wirePath, portAt, inAt };

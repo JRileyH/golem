@@ -1363,6 +1363,42 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .workflows { list-style:none; padding:0; margin:0; } .workflows li { padding:.6rem 0; border-top:1px solid var(--line); }
 .workflows li:first-child { border-top:0; } .workflows p { margin:.2rem 0 0; }
 .trail { list-style:none; padding:0; margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem; }
+/* The workflow editor (static/editor.js) */
+.editor-bar { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; margin:0 0 .5rem; }
+.editor-bar button { min-height:36px; }
+.editor-status { color:var(--muted); font-size:.88rem; margin-left:.3rem; } .editor-status.bad { color:var(--bad-fg); }
+.editor-palette { position:relative; } .editor-palette > summary { list-style:none; cursor:pointer; padding:.45rem .8rem; border-radius:var(--radius);
+  background:var(--rust, var(--accent)); color:#fff; font-weight:600; } .editor-palette > summary::-webkit-details-marker { display:none; }
+.editor-kinds { position:absolute; z-index:5; top:calc(100% + .3rem); left:0; display:grid; grid-template-columns:repeat(3, minmax(9rem, 1fr)); gap:.6rem 1rem;
+  padding:.8rem; background:var(--card); border-radius:var(--radius); box-shadow:0 6px 24px rgba(0,0,0,.22); width:max-content; max-width:min(40rem, 90vw); }
+.editor-kinds h4 { margin:0 0 .3rem; font:700 .78rem/1.2 var(--display); color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.editor-kinds button { display:block; width:100%; text-align:left; margin:0 0 .25rem; }
+.editor-kinds > div:has(> h4 + button + button + button + button + button) { grid-column:span 2; columns:2; column-gap:.6rem; }
+.editor-kinds > div:has(> h4 + button + button + button + button + button) h4 { column-span:all; }
+.editor-problems { margin:0 0 .5rem; padding:.4rem .8rem .4rem 1.6rem; background:var(--bad-bg); color:var(--bad-fg); border-radius:var(--radius); font-size:.88rem; }
+.editor-inspector { position:absolute; z-index:3; top:3.4rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); width:min(23rem, 42%);
+  max-height:calc(100% - 4.5rem); overflow:auto; padding:.8rem 1rem; background:var(--card); border-radius:var(--radius);
+  box-shadow:0 6px 24px rgba(0,0,0,.18); }
+.editor-inspector h3 { font:700 1.05rem/1.3 var(--display); margin:0 0 .2rem; }
+.editor-inspector .editor-id { font:12px var(--mono); margin:.1rem 0 .6rem; }
+.editor-inspector > label { display:flex; flex-direction:column; gap:.3rem; font-weight:600; font-size:.86rem; }
+.editor-inspector > label textarea { width:100%; box-sizing:border-box; font:12.5px/1.45 var(--mono); }
+.editor-field { display:flex; flex-direction:column; gap:.2rem; margin:.55rem 0; font-size:.86rem; font-weight:600; border:0; padding:0; }
+.editor-field legend { font-weight:600; padding:0; margin-bottom:.2rem; }
+.editor-field.check { flex-direction:row-reverse; justify-content:flex-end; align-items:center; gap:.5rem; }
+.editor-field input, .editor-field textarea, .editor-field select { font:inherit; font-weight:400; width:100%; box-sizing:border-box; }
+.editor-field.check input { width:auto; }
+.editor-field textarea { font:12.5px/1.45 var(--mono); }
+.editor-field small { font-weight:400; }
+.editor-row { display:flex; gap:.3rem; align-items:center; margin:.2rem 0; } .editor-row input, .editor-row select { min-width:0; }
+.flow-node.selected .flow-box { stroke:var(--accent); stroke-width:3.5; }
+.flow[data-mode=edit] .flow-node { cursor:move; } .flow[data-mode=edit] .flow-port { cursor:crosshair; r:6; }
+.flow[data-mode=edit] .flow-port:hover { fill:var(--accent); }
+.editor-wiring { stroke:var(--accent); stroke-dasharray:6 4; opacity:1; }
+.workflow-settings { margin-top:.6rem; } .workflow-settings summary { cursor:pointer; font-weight:600; }
+.stack { display:flex; flex-direction:column; gap:.5rem; margin:.6rem 0; } .stack label { display:flex; flex-direction:column; gap:.2rem; font-weight:600; font-size:.88rem; }
+.stack input, .stack textarea { font:inherit; font-weight:400; }
+.flow-bad { color:var(--s-bad); font-weight:800; }
 """
 
 # Refresh the page's main part every 10 seconds without losing what's open, scrolled or being typed; show

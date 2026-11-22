@@ -29,11 +29,12 @@ from dataclasses import replace
 from . import options, plan
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
-from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
 MODE_RE = re.compile(r"[a-z][a-z0-9-]{0,19}")  # a mode's name: what `!with change:rigorous` says
+HANDLE_RE = re.compile(r"[a-z][a-z0-9_-]{0,29}")  # what `!with` calls a workflow
 INGEST_CHARS = 1000
 
 
@@ -402,6 +403,67 @@ class Control:
             raise ControlError("That workflow can't be the fallback there.")
         self.store.put(f"fallback_{start}", wf.key)
         return f"{wf.name} is the fallback now."
+
+    def _workflow(self, workflow_id: int):
+        wf = self.store.workflow(workflow_id) if workflow_id else None
+        if wf is None:
+            raise ControlError("No such workflow.")
+        return wf
+
+    def new_workflow(self, name: str, start: str):
+        if start not in (*STARTS, "sub"):
+            raise ControlError("Which kind of request does it start for?")
+        if not name.strip():
+            raise ControlError("Give it a name.")
+        return self.scheduler.library.create(name, start)
+
+    def workflow_settings(self, workflow_id: int, name: str, handle: str, ingest: str) -> str:
+        wf = self._workflow(workflow_id)
+        handle = handle.strip().lower()
+        if not HANDLE_RE.fullmatch(handle):
+            raise ControlError("Its !with name is one word: lowercase letters, digits, _ and -, at most 30 characters.")
+        other = self.store.workflow(handle=handle)
+        if other and other.id != wf.id:
+            raise ControlError(f"{other.name} is already !with {handle}.")
+        if not name.strip():
+            raise ControlError("Give it a name.")
+        self.store.update_workflow(wf.id, name=name.strip()[:60], handle=handle, ingest=ingest.strip()[:INGEST_CHARS], edited=True)
+        return f"Saved {name.strip()[:60]}."
+
+    def archive_workflow(self, workflow_id: int, archived: bool) -> str:
+        wf = self._workflow(workflow_id)
+        if archived and any(self.store.get(f"fallback_{s}") == wf.key for s in STARTS):
+            raise ControlError(f"{wf.name} is a fallback: make another the fallback first.")
+        self.store.update_workflow(wf.id, archived=archived)
+        if wf.start == "sub":
+            self.scheduler.library.recheck_containing(wf.key)
+        return f"Archived {wf.name}: nothing new starts with it." if archived else f"{wf.name} is back."
+
+    def reset_workflow(self, workflow_id: int) -> str:
+        wf = self._workflow(workflow_id)
+        if not wf.builtin:
+            raise ControlError("Only golem's own workflows go back to golem's version.")
+        self.scheduler.library.reset(wf)
+        self.scheduler.library.recheck_containing(wf.key)
+        return f"{wf.name} is golem's version again."
+
+    def add_tab(self, workflow_id: int, mode: str, copy_of: str) -> str:
+        wf = self._workflow(workflow_id)
+        found = self.store.mode(mode)
+        if found is None:
+            raise ControlError(f"No mode called {mode}: make it on the Workflows page first.")
+        if self.store.tab(wf.id, found.name):
+            raise ControlError(f"{wf.name} already has a {found.name} tab.")
+        self.scheduler.library.add_tab(wf, found.name, copy_of)
+        return f"{wf.name} has a {found.name} tab: a copy to change. Requests in {found.name} mode run it."
+
+    def drop_tab(self, workflow_id: int, mode: str) -> str:
+        wf = self._workflow(workflow_id)
+        if not mode or self.store.tab(wf.id, mode) is None:
+            raise ControlError("That tab isn't there (the default tab always is).")
+        self.store.drop_tab(wf.id, mode)
+        self.store.update_workflow(wf.id, edited=True)
+        return f"Deleted {wf.name}'s {mode} tab: requests in {mode} mode run its default."
 
     async def note(self, job_id: int, text: str, step_id: int = 0, position: int = 0) -> str:
         job, project = self._job(job_id)

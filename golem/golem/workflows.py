@@ -364,6 +364,67 @@ class Library:
             raise engine.GraphError(f"{wf.name} can't run: {report.errors[0].message}")
         return engine.flatten(root, start, mode, self.resolve)
 
+    # --- editing ---------------------------------------------------------------
+
+    def save(self, wf: Workflow, mode: str, graph: dict) -> validate.Report:
+        """Save a tab as Riggy left it. Whatever's wrong with it is kept with it, to show on its
+        blocks; new jobs copy its latest working state (which this becomes if nothing's wrong).
+        Workflows that contain this one are checked again: a sub-workflow's outputs may have changed."""
+        report = self.check(wf, mode, graph)
+        tab = self.store.tab(wf.id, mode)
+        working = graph if report.ok else (tab.working if tab else blank(wf.start))
+        self.store.put_tab(wf.id, mode, graph, working, [p.as_dict() for p in report.errors], self.sign(working))
+        self.store.update_workflow(wf.id, edited=True)
+        for other, t in self.store.tabs(wf.id).items():  # rules across tabs: the others may be fine, or not, now
+            if other != mode:
+                again = self.check(wf, other, t.graph)
+                kept = t.graph if again.ok else t.working
+                self.store.put_tab(wf.id, other, t.graph, kept, [p.as_dict() for p in again.errors], self.sign(kept))
+        self.recheck_containing(wf.key)
+        return report
+
+
+    def check(self, wf: Workflow, mode: str, graph: dict) -> validate.Report:
+        report = validate.check(graph, wf.start, self.catalog(), mode)
+        tabs = {m: t.graph for m, t in self.store.tabs(wf.id).items()} | {mode: graph}
+        across = validate.check_tabs(tabs, wf.start)
+        report.errors += across.errors
+        return report
+
+
+    def recheck_containing(self, key: str, depth: int = 0) -> None:
+        """Check again every workflow with a container for `key`, and those containing them."""
+        if depth > 8:
+            return
+        for other in self.store.workflows():
+            for mode, tab in self.store.tabs(other.id).items():
+                if any(n.get("type") == "container" and n.get("workflow") == key for n in tab.graph.get("nodes") or []):
+                    report = self.check(other, mode, tab.graph)
+                    working = tab.graph if report.ok else tab.working
+                    self.store.put_tab(other.id, mode, tab.graph, working, [p.as_dict() for p in report.errors], self.sign(working))
+                    if other.start == "sub":
+                        self.recheck_containing(other.key, depth + 1)
+
+
+    def create(self, name: str, start: str) -> Workflow:
+        """A new workflow of Riggy's: a key that never changes, a handle for `!with`, a blank graph."""
+        base = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:30] or "workflow"
+        handle, n = base, 1
+        while self.store.workflow(handle=handle) or self.store.workflow(key=handle):
+            n += 1
+            handle = f"{base}_{n}"
+        wf = self.store.add_workflow(handle, handle, name.strip()[:60] or "Workflow", start)
+        graph = blank(start)
+        self.store.put_tab(wf.id, "", graph, graph, [], self.sign(graph))
+        return wf
+
+
+    def add_tab(self, wf: Workflow, mode: str, copy_of: str) -> None:
+        """A tab for a mode, starting as a copy of another of the workflow's tabs."""
+        source = self.store.tab(wf.id, copy_of) or self.store.tab(wf.id, "")
+        self.store.put_tab(wf.id, mode, source.graph, source.working, source.problems, self.sign(source.working))
+        self.store.update_workflow(wf.id, edited=True)
+
     def fallback(self, start: str) -> Workflow | None:
         """The workflow a start type uses when nothing else fits."""
         key = self.store.get(FALLBACK + start)
@@ -377,3 +438,124 @@ class Library:
             if wf.start in starts and self.store.tab(wf.id, "") is not None:
                 found.append(wf)
         return found
+
+
+# --- editing (the editor, static/editor.js) ----------------------------------------------
+
+ID_RE = re.compile(r"[A-Za-z0-9][\w-]{0,59}")
+MAX_NODES = 300
+TEXT_CAP = 20_000  # an agent's instructions, a check-in's message
+FIELD_CAP = 2_000
+# What each kind of block keeps, besides its id, type and position: anything else sent is dropped.
+KEEPS = {
+    "agent": ("name", "instructions", "turns", "model", "effort", "turn", "contract", "optional", "skip_to", "outputs"),
+    "script": ("name", "command", "timeout", "turn", "optional", "skip_to"),
+    "counter": ("counter",),
+    "condition": ("name", "join", "rows"),
+    "checkin": ("name", "message", "reply_to", "turn", "optional", "skip_to", "outputs"),
+    "choose": ("name", "optional", "skip_to"),
+    "container": ("workflow", "tab", "name"),
+    "output": ("name",),
+}
+
+
+def clean(graph: object) -> dict:
+    """A graph as the editor sent it, kept to what golem knows: its blocks' own settings only,
+    strings and sizes capped. Raises ValueError for something that isn't a graph at all."""
+    if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list) or not isinstance(graph.get("edges"), list):
+        raise ValueError("That isn't a workflow graph.")
+    if len(graph["nodes"]) > MAX_NODES:
+        raise ValueError(f"A workflow has at most {MAX_NODES} blocks.")
+    nodes, seen = [], set()
+    for raw in graph["nodes"]:
+        if not isinstance(raw, dict) or raw.get("type") not in engine.TYPES:
+            raise ValueError("A block golem doesn't know.")
+        nid = str(raw.get("id", ""))
+        if not ID_RE.fullmatch(nid) or nid in seen:
+            raise ValueError(f"A block's id ({nid[:20]!r}) is missing, repeated or has odd characters.")
+        seen.add(nid)
+        node = {"id": nid, "type": raw["type"], "x": _number(raw.get("x")), "y": _number(raw.get("y"))}
+        for key in KEEPS.get(raw["type"], ()):
+            if key in raw and raw[key] not in (None, ""):
+                node[key] = _value(key, raw[key])
+        nodes.append(node)
+    edges = []
+    for e in graph["edges"]:
+        if isinstance(e, dict) and all(isinstance(e.get(k), str) for k in ("from", "port", "to")):
+            edges.append({"from": e["from"][:60], "port": e["port"][:60], "to": e["to"][:60]})
+    return {"v": 1, "intro": str(graph.get("intro") or "")[:TEXT_CAP], "nodes": nodes, "edges": edges}
+
+
+def _number(value: object) -> int:
+    try:
+        return max(-100_000, min(100_000, int(float(value))))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _value(key: str, value: object) -> object:
+    if key in ("turns", "timeout"):
+        return _number(value)
+    if key == "optional":
+        return bool(value)
+    if key == "outputs":
+        outs = [o for o in value if isinstance(o, dict)][:12] if isinstance(value, list) else []
+        return [{"name": str(o.get("name", ""))[:40].strip(), "about": str(o.get("about", ""))[:FIELD_CAP]} for o in outs]
+    if key == "rows":
+        rows = [r for r in value if isinstance(r, dict)][:12] if isinstance(value, list) else []
+        return [{"of": str(r.get("of", ""))[:20], "name": str(r.get("name", ""))[:60], "op": str(r.get("op", "=="))[:6],
+                 "value": str(r.get("value", ""))[:40]} for r in rows]  # fmt: skip
+    return str(value)[: TEXT_CAP if key in ("instructions", "message") else FIELD_CAP]
+
+
+def blank(start: str) -> dict:
+    """A new workflow's graph: Start wired to End (Input to an Output, for a sub-workflow)."""
+    if start == "sub":
+        nodes = [{"id": "input", "type": "input", "x": 0, "y": 0}, {"id": "out-done", "type": "output", "name": "done", "x": 0, "y": 220}]
+        return {"v": 1, "intro": "", "nodes": nodes, "edges": [{"from": "input", "port": engine.NEXT, "to": "out-done"}]}
+    nodes = [{"id": "start", "type": "start", "x": 0, "y": 0}, {"id": "end", "type": "end", "x": 0, "y": 220}]
+    return {"v": 1, "intro": "", "nodes": nodes, "edges": [{"from": "start", "port": engine.NEXT, "to": "end"}]}
+
+
+def editor_catalog() -> list[dict]:
+    """The blocks the editor's palette offers, with the fields its inspector shows for each."""
+    from .store import EFFORTS, MODELS
+
+    turn = {"key": "turn", "label": "Turn it takes", "kind": "select", "options": ["", *engine.TURNS],
+            "help": "Changes on one project take turns building and shipping; empty is the block's usual."}  # fmt: skip
+    optional = {"key": "optional", "label": "Riggy can skip it", "kind": "checkbox"}
+    skip_to = {"key": "skip_to", "label": "When skipped, leave by", "kind": "port"}
+    outputs = {"key": "outputs", "label": "Outputs", "kind": "outputs",
+               "help": "With several, the agent chooses one with its verdict: say when to take each."}  # fmt: skip
+    return [
+        {"type": "agent", "label": "Agent", "group": "Work", "help": "A headless Claude Code run that does one piece of work and commits it.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text"}, {"key": "instructions", "label": "Instructions", "kind": "textarea"},
+                    {"key": "turns", "label": "Turns", "kind": "number", "min": 1, "max": 1000, "default": 150},
+                    {"key": "model", "label": "Model", "kind": "select", "options": ["", *MODELS]},
+                    {"key": "effort", "label": "Effort", "kind": "select", "options": ["", *EFFORTS]},
+                    {"key": "contract", "label": "Returns", "kind": "select", "options": ["", *engine.CONTRACTS],
+                     "help": "options or design: things for a choose block to show; propose: proposals."},
+                    outputs, turn, optional, skip_to]},  # fmt: skip
+        {"type": "script", "label": "Script", "group": "Work", "help": "A command run in the job's checkout: passes on exit 0.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text"}, {"key": "command", "label": "Command", "kind": "text"},
+                    {"key": "timeout", "label": "Timeout (seconds)", "kind": "number", "min": 1, "max": 3600, "default": 600}, turn, optional, skip_to]},  # fmt: skip
+        {"type": "checkin", "label": "Ask Riggy", "group": "Riggy", "help": "Posts a message and waits for his reply.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text"},
+                    {"key": "message", "label": "Message", "kind": "textarea", "help": "Empty: try the live site. $last, $url, $failed, $failure and counters fill in."},
+                    {"key": "reply_to", "label": "His reply goes to", "kind": "agent"}, outputs, turn, optional, skip_to]},  # fmt: skip
+        {"type": "choose", "label": "Riggy picks", "group": "Riggy", "help": "Shows the options the block before made and waits for his pick.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text"}, optional, skip_to]},
+        {"type": "counter", "label": "Counter", "group": "Logic", "help": "Adds one to a count, kept for the job.",
+         "fields": [{"key": "counter", "label": "Counts", "kind": "text", "default": "tries"}]},
+        {"type": "condition", "label": "Condition", "group": "Logic", "help": "True or false, from counts, visits or the mode.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text"}, {"key": "join", "label": "True when", "kind": "select", "options": ["all", "any"]},
+                    {"key": "rows", "label": "Rows", "kind": "rows"}]},  # fmt: skip
+        {"type": "container", "label": "Sub-workflow", "group": "Logic", "help": "A whole sub-workflow as one block.",
+         "fields": [{"key": "workflow", "label": "Sub-workflow", "kind": "sub"}, {"key": "tab", "label": "Tab", "kind": "tab"},
+                    {"key": "name", "label": "Name", "kind": "text"}]},  # fmt: skip
+        *({"type": t, "label": (plan_label := {"push-main": "Push to main", "pr": "PR", "checks": "CI"}.get(t, t.capitalize())), "group": "Golem",
+           "help": f"Golem's own: {plan_label.lower()}.", "fields": []} for t in engine.CODE),  # fmt: skip
+        {"type": "end", "label": "End", "group": "Ends", "help": "Tells Riggy it's done.", "fields": []},
+        {"type": "output", "label": "Output", "group": "Ends", "help": "One way out of a sub-workflow: the container's output.",
+         "fields": [{"key": "name", "label": "Name", "kind": "text", "default": "done"}]},
+    ]
