@@ -69,8 +69,20 @@ def main() -> None:
     walk.finish(looked)
     store.add_proposals("recipes", looked.id, "features",
                         [("Unit memory", "Remember grams or cups per recipe."), ("Share links", "A link that opens the scaled recipe.")])  # fmt: skip
+    moss = walk.project("moss-map", "Moss Map", "Log the mosses on your walks, on a map.")
+    old = walk.job(moss, "new", "web_app", "reckless", "a map of mosses I find on walks", "Moss Map")
+    walk.finish(old)
+    job = walk.job(moss, "change", "options", "", "a new look for the map pins", "Map Pin Styles")
+    walk.to(job, "options")
+    made = walk.current(job)
+    pins = [("A", "Leaf pins", "A small leaf for each find, tinted by moss type."), ("B", "Dots and rings", "A dot, with a ring when you've found it more than once."),
+            ("C", "Hand-drawn", "Pencil-sketch pins, like a field notebook.")]  # fmt: skip
+    store.update_step(made.id, options=[{"letter": k, "title": t, "description": d, "files": [f"src/pins/{k.lower()}.svg"], "images": []} for k, t, d in pins])
+    walk.to(job, "your pick")
+    walk.wait(job, "Three styles for the map pins. Pick one, or say what you'd change.")
+
     store.add_message(STATUS, "golem", "Upgraded golem to 4af06fb: workflows.")
-    print("Demo projects: tree-cards, leaf-peeper, birds, tip-calc, recipes.")
+    print("Demo projects: tree-cards, leaf-peeper, birds, tip-calc, recipes, moss-map.")
 
 
 class Walker:
@@ -150,6 +162,7 @@ SAID = {
     "examine": "It's quiet because the first clip is normalised lower; I'd raise it.", "propose": "Looked at its features.",
     "fix": "Fixed the failing test.", "setup": "Repo, checkout and issue ready.", "push": "Pushed.", "pr": "PR #1 is open.",
     "checks": "CI passed.", "merge": "Merged.", "deploy": "Live.", "guide": "Wrote the design guide.", "apply": "Restyled it.",
+    "options": "Three styles for the map pins.",
 }  # fmt: skip
 
 
