@@ -15,6 +15,7 @@ goes to the next block unless it names another; its other outputs name theirs by
           - setup
           - {agent: change, turns: 400}
           - {agent: review, turns: 150, optional: true, turn: none}
+          - {stage: docs, message: changed}   # a stage block: golem's text, set up (stages.py)
           - {use: ship, tab: default}     # a container: the `ship` sub-workflow
           - end
 
@@ -34,13 +35,14 @@ from pathlib import Path
 
 import yaml
 
-from . import engine, layout, validate
+from . import engine, layout, stages, validate
 from .store import Store, Workflow
 
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
 STARTS = ("new", "change", "look", "propose", "adopt", "sub")
 # What each kind of entry in a block list is, by its key.
-KINDS = ("agent", "do", "use", "checkin", "choose", "counter", "condition", "script", "output")
+KINDS = ("agent", "do", "use", "checkin", "choose", "counter", "condition", "script", "output", "stage")
+STAGE_FIELDS = ("turns", "optional", "turn", "model", "effort", "skip_to", "id", "name", "care", "extra", "about")
 FIELDS = {  # what each block type may set, besides its kind key and wires
     "agent": ("turns", "optional", "turn", "contract", "outputs", "model", "effort", "skip_to", "id"),
     "do": ("id",),
@@ -169,7 +171,8 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
     kind = kinds[0]
     value = item[kind]
     rest = {k: v for k, v in item.items() if k != kind}
-    settings = {k: rest.pop(k) for k in FIELDS[kind] if k in rest}
+    fields = (*STAGE_FIELDS, *stages.setting_keys()) if kind == "stage" else FIELDS[kind]
+    settings = {k: rest.pop(k) for k in fields if k in rest}
     wires = {str(k): str(v) for k, v in rest.items()}  # anything else names an output
     if kind == "agent":
         if value not in sections:
@@ -179,6 +182,12 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
         if outputs:
             node["outputs"] = outputs
         return {**node, "_id": settings.get("id", value)}, wires
+    if kind == "stage":
+        if value not in stages.catalog():
+            raise ValueError(f"unknown stage {value!r}")
+        node = stages.derive({"type": "agent", "stage": value, "name": settings.get("name", value), **settings})
+        node.pop("id", None)
+        return {**node, "_id": settings.get("id", node["name"])}, wires
     if kind == "do":
         if value not in engine.CODE:
             raise ValueError(f"unknown block {value!r}")
@@ -254,6 +263,8 @@ class Library:
         self.store = store
         self.folder = folder
         self.key = hashlib.sha256(f"golem workflows:{secret}".encode()).digest()
+        stages.use(folder / "stages")
+        self.blocks = stages.Blocks(store, secret)  # the stage blocks' texts (Workflows → Blocks)
 
     # --- signing ---------------------------------------------------------------
 
@@ -284,6 +295,7 @@ class Library:
         and an edited one told when golem has a newer version. The modes golem starts with, once.
         Returns the keys it wrote."""
         self.resign_if_rekeyed()
+        self.blocks.seed()
         found, wrote = load_all(self.folder), []
         for key, b in found.items():
             wf = self.store.workflow(key=key)
@@ -362,7 +374,17 @@ class Library:
         report = validate.check(root.graph, start, self.catalog(), root.tab)
         if not report.ok:
             raise engine.GraphError(f"{wf.name} can't run: {report.errors[0].message}")
-        return engine.flatten(root, start, mode, self.resolve)
+        return self.freeze(engine.flatten(root, start, mode, self.resolve))
+
+    def freeze(self, snap: dict) -> dict:
+        """Each stage block of a job's copy takes the texts it uses with it, as they are now, so
+        changing them later never touches the job; and its instructions, put together without
+        what it's about (known when it runs), for anyone looking at it."""
+        for node in (snap.get("nodes") or {}).values():
+            if node.get("type") == "agent" and node.get("stage"):
+                node["parts"] = self.blocks.parts_for(node)
+                node["instructions"] = stages.compose(node, node["parts"])
+        return snap
 
     # --- editing ---------------------------------------------------------------
 
@@ -448,7 +470,8 @@ TEXT_CAP = 20_000  # an agent's instructions, a check-in's message
 FIELD_CAP = 2_000
 # What each kind of block keeps, besides its id, type and position: anything else sent is dropped.
 KEEPS = {
-    "agent": ("name", "instructions", "turns", "model", "effort", "turn", "contract", "optional", "skip_to", "outputs"),
+    "agent": ("name", "instructions", "turns", "model", "effort", "turn", "contract", "optional", "skip_to", "outputs",
+              "stage", "care", "extra", "about", *stages.setting_keys()),  # fmt: skip
     "script": ("name", "command", "timeout", "turn", "optional", "skip_to"),
     "counter": ("counter",),
     "condition": ("name", "join", "rows"),
@@ -478,7 +501,7 @@ def clean(graph: object) -> dict:
         for key in KEEPS.get(raw["type"], ()):
             if key in raw and raw[key] not in (None, ""):
                 node[key] = _value(key, raw[key])
-        nodes.append(node)
+        nodes.append(stages.derive(node))
     edges = []
     for e in graph["edges"]:
         if isinstance(e, dict) and all(isinstance(e.get(k), str) for k in ("from", "port", "to")):
@@ -505,7 +528,7 @@ def _value(key: str, value: object) -> object:
         rows = [r for r in value if isinstance(r, dict)][:12] if isinstance(value, list) else []
         return [{"of": str(r.get("of", ""))[:20], "name": str(r.get("name", ""))[:60], "op": str(r.get("op", "=="))[:6],
                  "value": str(r.get("value", ""))[:40]} for r in rows]  # fmt: skip
-    return str(value)[: TEXT_CAP if key in ("instructions", "message") else FIELD_CAP]
+    return str(value)[: TEXT_CAP if key in ("instructions", "message", "extra") else FIELD_CAP]
 
 
 def blank(start: str) -> dict:
@@ -528,7 +551,9 @@ def editor_catalog() -> list[dict]:
     outputs = {"key": "outputs", "label": "Outputs", "kind": "outputs",
                "help": "With several, the agent chooses one with its verdict: say when to take each."}  # fmt: skip
     return [
-        {"type": "agent", "label": "Agent", "group": "Work", "help": "A headless Claude Code run that does one piece of work and commits it.",
+        *stage_catalog(turn, optional, skip_to),
+        {"type": "agent", "label": "Custom agent", "group": "Work",
+         "help": "A headless Claude Code run with instructions you write: for work no stage does.",
          "fields": [{"key": "name", "label": "Name", "kind": "text"}, {"key": "instructions", "label": "Instructions", "kind": "textarea"},
                     {"key": "turns", "label": "Turns", "kind": "number", "min": 1, "max": 1000, "default": 150},
                     {"key": "model", "label": "Model", "kind": "select", "options": ["", *MODELS]},
@@ -554,8 +579,45 @@ def editor_catalog() -> list[dict]:
          "fields": [{"key": "workflow", "label": "Sub-workflow", "kind": "sub"}, {"key": "tab", "label": "Tab", "kind": "tab"},
                     {"key": "name", "label": "Name", "kind": "text"}]},  # fmt: skip
         *({"type": t, "label": (plan_label := {"push-main": "Push to main", "pr": "PR", "checks": "CI"}.get(t, t.capitalize())), "group": "Golem",
-           "help": f"Golem's own: {plan_label.lower()}.", "fields": []} for t in engine.CODE),  # fmt: skip
+           "help": f"Golem's own: {plan_label.lower()}.", "fields": []} for t in engine.CODE if t != "test"),  # fmt: skip
         {"type": "end", "label": "End", "group": "Ends", "help": "Tells Riggy it's done.", "fields": []},
         {"type": "output", "label": "Output", "group": "Ends", "help": "One way out of a sub-workflow: the container's output.",
          "fields": [{"key": "name", "label": "Name", "kind": "text", "default": "done"}]},
     ]
+
+
+def stage_catalog(turn: dict, optional: dict, skip_to: dict) -> list[dict]:
+    """The palette's Stages: each stage block with its settings, and the outputs each setting
+    gives it (stages.derive), so the editor can redraw them as they change; and Test."""
+    from .store import EFFORTS, MODELS
+
+    found = []
+    for stage in stages.catalog().values():
+        fields: list[dict] = [{"key": "name", "label": "Name", "kind": "text"}]
+        ports = {}
+        for s in stage.settings:
+            fields.append({"key": s.key, "label": s.label, "kind": "choice", "options": [list(o) for o in s.options]})
+            for value, _ in s.options:
+                ports[f"{s.key}.{value}"] = engine.ports(stages.derive({"type": "agent", "stage": stage.key, s.key: value}))
+        if stage.care:
+            fields.append({"key": "care", "label": "Care", "kind": "choice",
+                           "options": [["usual", "usual"], ["quick", "quick: light tests, one pass"], ["thorough", "thorough: more tests, more checks"]]})  # fmt: skip
+        fields += [
+            {"key": "about", "label": "About", "kind": "about",
+             "help": "What it works on. Auto: golem works it out from where the job's been."},  # fmt: skip
+            {"key": "extra", "label": "Also, for this step", "kind": "textarea",
+             "help": "Instructions of its own, after golem's: what's special about it here."},  # fmt: skip
+            {"key": "turns", "label": "Turns", "kind": "number", "min": 1, "max": 1000},
+            {"key": "model", "label": "Model", "kind": "select", "options": ["", *MODELS]},
+            {"key": "effort", "label": "Effort", "kind": "select", "options": ["", *EFFORTS]},
+            turn, optional, skip_to,
+            {"key": "told", "label": "What it's told", "kind": "preview"},
+        ]
+        base = stages.derive({"type": "agent", "stage": stage.key})
+        defaults = {"turns": base["turns"], **({"optional": True} if stage.optional else {}), **{s.key: s.default for s in stage.settings},
+                    **({"care": "usual"} if stage.care else {})}  # fmt: skip
+        found.append({"type": "agent", "stage": stage.key, "label": stage.label, "group": "Stages", "help": stage.help, "fields": fields,
+                      "defaults": defaults, "ports": ports or {"": engine.ports(base)}, "settings": [s.key for s in stage.settings]})  # fmt: skip
+    found.append({"type": "test", "label": "Test", "group": "Stages", "fields": [],
+                  "help": "Runs the project's bin/test: passes if it exits 0, else fails with what it printed, for a Fix after it."})  # fmt: skip
+    return found

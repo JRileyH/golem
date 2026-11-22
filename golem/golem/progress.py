@@ -39,6 +39,7 @@ NAMES = {
     "hint": "Your hint",
     "setup": "Get ready",
     "refresh": "Catch up",
+    "test": "Test it",
     "examine": "Look into it",
     "answer": "Answer you",
 }

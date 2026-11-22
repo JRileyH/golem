@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from . import engine
+from . import engine, stages
 
 HUMAN = ("checkin", "choose")
 MAKERS = ("options", "design")  # agent contracts a choose block shows the options of
@@ -129,7 +129,7 @@ def _structure(graph: dict, start: str, catalog: Catalog, report: Report) -> Non
         if n["type"] == "container":
             info = catalog.subs.get(n.get("workflow", ""))
             outputs[n["id"]] = list(info.outputs) if info else []
-    _blocks(nodes, by, catalog, report)
+    _blocks(nodes, by, catalog, report, graph)
     wired: dict[str, dict[str, str]] = {}
     for e in graph.get("edges") or []:
         src, port, to = e.get("from"), e.get("port"), e.get("to")
@@ -172,7 +172,7 @@ def _structure(graph: dict, start: str, catalog: Catalog, report: Report) -> Non
     _loops(nodes, by, wired, report)
 
 
-def _blocks(nodes: list[dict], by: dict[str, dict], catalog: Catalog, report: Report) -> None:
+def _blocks(nodes: list[dict], by: dict[str, dict], catalog: Catalog, report: Report, graph: dict) -> None:
     """Each block's own settings."""
     names: dict[str, str] = {}
     for n in nodes:
@@ -190,7 +190,9 @@ def _blocks(nodes: list[dict], by: dict[str, dict], catalog: Catalog, report: Re
             elif name in names:
                 report.error(f"Two agent blocks are called {name}", nid, field="name")
             names[name] = nid
-            if not (n.get("instructions") or "").strip():
+            if n.get("stage"):
+                _stage(n, nodes, graph, report)
+            elif not (n.get("instructions") or "").strip():
                 report.error(f"{_name(n)} needs instructions: what the agent should do", nid, field="instructions")
             turns = n.get("turns")
             if not isinstance(turns, int) or not TURNS_RANGE[0] <= turns <= TURNS_RANGE[1]:
@@ -406,3 +408,50 @@ def _cycles(wired: dict[str, dict[str, str]]) -> list[list[str]]:
         if v not in index:
             visit(v)
     return found
+
+
+def _stage(n: dict, nodes: list[dict], graph: dict, report: Report) -> None:
+    """A stage block's own rules: a stage golem has, settings it has, and an About that's an earlier
+    block. Its text is golem's, so it needs no instructions."""
+    nid, stage = n["id"], stages.catalog().get(n["stage"])
+    if stage is None:
+        report.error(f"There's no {n['stage']} stage", nid, field="stage")
+        return
+    for s in stage.settings:
+        if n.get(s.key) is not None and not s.allows(n[s.key]):
+            report.error(f"{s.label} is one of {', '.join(v for v, _ in s.options)}", nid, field=s.key)
+    if n.get("care") and n["care"] not in stages.CARE:
+        report.error(f"Care is one of {', '.join(stages.CARE)}", nid, field="care")
+    about = n.get("about")
+    if about:
+        target = next((m for m in nodes if m.get("id") == about), None)
+        if target is None or target.get("type") != "agent" or about == nid:
+            report.error("About is another agent block in this workflow", nid, field="about")
+        elif nid not in _leads_to(graph, about):
+            report.error(f"About is a block that comes before this one: {_name(target)} doesn't lead here", nid, field="about")
+    if n["stage"] == "fix" and n.get("fixes", "failed") == "failed":
+        into = [e for e in _edges(graph) if e["to"] == nid]
+        if into and not any(e.get("port") == "fail" for e in into):
+            report.warn(f"Nothing that fails leads to {_name(n)}: it'll have nothing to fix", nid)
+
+
+def _leads_to(graph: dict, start: str) -> set[str]:
+    """Every block a job can get to from `start`, by any output."""
+    out: dict[str, list[str]] = {}
+    for e in _edges(graph):
+        out.setdefault(e["from"], []).append(e["to"])
+    seen, todo = set(), deque([start])
+    while todo:
+        for nxt in out.get(todo.popleft(), []):
+            if nxt not in seen:
+                seen.add(nxt)
+                todo.append(nxt)
+    return seen
+
+
+def _edges(graph: dict) -> list[dict]:
+    """A graph's wires as a list, whether it keeps them so (as edited) or by block (a job's copy)."""
+    edges = graph.get("edges") or []
+    if isinstance(edges, dict):
+        return [{"from": f, "port": p, "to": t} for f, outs in edges.items() for p, t in outs.items()]
+    return [e for e in edges if isinstance(e, dict) and "from" in e and "to" in e]

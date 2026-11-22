@@ -1,0 +1,125 @@
+# Golem's stage blocks: agent blocks that already know their job (golem/golem/stages.py).
+#
+# Each stage has settings rather than a prompt; the first option of each is its default. Its text
+# is in <stage>.md, a `## <part>` section per part: `base` (every block of the stage), `plan` (a
+# Review of only planning work), `<setting>.<option>` and `care.<level>` (quick, usual,
+# thorough). Golem puts the parts a block uses together, with a section saying what the step is
+# about (golem/golem/about.py) and the block's own extra instructions. Riggy can change any
+# part's text in Workflows → Blocks.
+#
+# `turns`, `turn`, `contract` and `outputs` are the stage's, or a map from `<setting>.<option>` to
+# the value for that option, with `default` for the rest. `produces` is what a block leaves for
+# later ones to hold to, by option.
+
+plan:
+  label: Plan
+  help: Plans the work before anything is built.
+  turns: 80
+  turn: none
+  care: true
+  settings:
+    writes:
+      label: Writes
+      options:
+        spec: a spec, for a new project
+        mini-spec: a mini-spec, for a change
+  produces:
+    writes.spec: [docs/brief.md, docs/specs/mvp.md]
+    writes.mini-spec: [the mini-spec in docs/specs/]
+
+build:
+  label: Build
+  help: Builds it, with tests, and checks it in a browser.
+  turns: 400
+  turn: build
+  care: true
+  settings:
+    builds:
+      label: Builds
+      options:
+        auto: "what it's about: his pick, his reply, the plan or his request"
+        skeleton: a skeleton that deploys
+        first-version: the first version (an MVP)
+        rest: the rest of the plan
+        everything: everything, in one pass
+
+review:
+  label: Review
+  help: A fresh pair of eyes on the work since the last review, else since it last shipped.
+  turns: 150
+  turn: none
+  optional: true
+  care: true
+  settings:
+    does:
+      label: What it does
+      options:
+        fixes: fixes what it finds
+        reports: "reports: pass or fail, with what to fix"
+  outputs:
+    does.reports:
+      - {name: pass, about: "It's good to go as it is."}
+      - {name: fail, about: "Something needs fixing: your message says what, for the next step."}
+
+docs:
+  label: Docs
+  help: Brings the docs and lessons up to date with the work, and says what changed.
+  turns: 60
+  turn: none
+  optional: true
+  care: true
+  settings:
+    message:
+      label: Tells Riggy
+      options:
+        changed: what changed
+        now: what he can do now
+
+design:
+  label: Design
+  help: "The project's look: directions to pick from, the design guide, or the app restyled from it."
+  turns: {default: 400, makes.guide: 200}
+  turn: {default: none, makes.guide: build, makes.restyle: build}
+  settings:
+    makes:
+      label: Makes
+      options:
+        directions: directions for him to pick from
+        guide: the design guide, from his pick
+        restyle: the app, restyled from the guide
+  contract:
+    makes.directions: design
+  produces:
+    makes.guide: [docs/design.md]
+
+fix:
+  label: Fix
+  help: Fixes what failed before it, or the gaps golem's checks found in a repo it's adopting.
+  turns: 200
+  settings:
+    fixes:
+      label: Fixes
+      options:
+        failed: what failed
+        gaps: "an adopted repo's gaps"
+
+look:
+  label: Look
+  help: Looks into the project and answers his question, or proposes an improvement. Builds nothing.
+  turns: 80
+  turn: none
+  settings:
+    does:
+      label: What it does
+      options:
+        answer: answers his question
+        propose: proposes an improvement
+  contract:
+    does.propose: propose
+
+options:
+  label: Options
+  help: Makes a few options for Riggy to pick from; a Riggy picks block after it shows them.
+  turns: 200
+  turn: none
+  contract: options

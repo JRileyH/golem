@@ -30,7 +30,7 @@ from .store import LOOKS, Step
 CODE = {
     "setup": ("next",), "vet": ("next",), "refresh": ("next",), "push": ("next",), "push-main": ("next",),
     "pr": ("next",), "checks": ("pass", "fail"), "merge": ("next",), "deploy": ("pass", "fail"),
-    "answer": ("next",), "proposals": ("next",),
+    "answer": ("next",), "proposals": ("next",), "test": ("pass", "fail"),
 }  # fmt: skip
 # Golem's own blocks that ship: one change at a time per project goes from push to deploy (turns.py).
 SHIPS = ("push", "push-main", "pr", "checks", "merge", "deploy")

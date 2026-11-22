@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import adopt, engine, legacy, options, plan, proposals, teardown, turns
+from . import about, adopt, engine, legacy, options, plan, proposals, stages, teardown, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -62,6 +62,7 @@ DOING: ContextVar[tuple[int | None, int | None]] = ContextVar("doing", default=(
 WRAPUP_TURNS = 15
 FIX_TURNS = 150
 SCRIPT_TIMEOUT = 600  # seconds a script block runs before golem stops it, unless it says
+TEST_TIMEOUT = 1200  # seconds a Test block gives bin/test
 SCRIPT_TAIL = 4096  # bytes of a failed script's output the next agent block gets
 SURVEY_TURNS = 100  # install, run the tests, read for what it needs
 # With HARNESS=fake there's no worker to survey a repo golem adopts: its own checks still run.
@@ -652,7 +653,8 @@ class Scheduler:
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
-        return Outcome("done", message, links, port=port)
+        passed_on = message if block.get("stage") and port == "fail" else None  # a Review that reports: what to fix, for the next block
+        return Outcome("done", message, links, port=port, context=passed_on)
 
     def after(self, job: Job, step: Step, outputs: list[dict]) -> str:
         """For the worker: what comes after its step, as the job's workflow has it, so its
@@ -679,6 +681,9 @@ class Scheduler:
                 return intro, self.prompts.render(step.name, problem=step.problem or "")
             return intro, ""
         text = block.get("instructions") or ""
+        if block.get("stage"):  # golem's text for its settings, taken when the job started, and what it's about now
+            found = about.about(snap.get("nodes") or {}, self.store.steps(job.id), step, job.request)
+            text = stages.compose(block, block.get("parts") or self.library.blocks.parts_for(block), found.text, found.variant)
         if "$problem" in text:
             return intro, Template(text).safe_substitute(problem=step.problem or "(nothing reported)")
         if step.problem:
@@ -1139,11 +1144,23 @@ class Scheduler:
             await self.send_image(project, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
 
     async def do_script(self, job: Job, project: Project, step: Step) -> Outcome:
-        """A script block: its command run in the job's checkout, as a worker would run it (its
-        environment, ports and TMPDIR). Passes on exit 0; otherwise fails, and the end of what it
-        printed goes to the next agent block. Its output is kept with the job's logs."""
+        """A script block: its command run in the job's checkout (run)."""
         block = plan.node(job, step) or {}
-        command, timeout = block.get("command") or "", int(block.get("timeout") or SCRIPT_TIMEOUT)
+        return await self.run(job, project, step, block.get("command") or "", int(block.get("timeout") or SCRIPT_TIMEOUT))
+
+    async def do_test(self, job: Job, project: Project, step: Step) -> Outcome:
+        """A Test block: the project's own `bin/test`, run in the job's checkout (run)."""
+        block = plan.node(job, step) or {}
+        if not (self.checkout(project, job) / "bin" / "test").is_file():
+            problem = ("This project has no `bin/test`. Add one: an executable script that runs the project's tests (as CI does) "
+                       "and exits 0 when they pass.")  # fmt: skip
+            return Outcome("failed", "No bin/test to run", problem=problem, port="fail")
+        return await self.run(job, project, step, "bin/test", int(block.get("timeout") or TEST_TIMEOUT))
+
+    async def run(self, job: Job, project: Project, step: Step, command: str, timeout: int) -> Outcome:
+        """A command run in the job's checkout, as a worker would run it (its environment, ports
+        and TMPDIR). Passes on exit 0; otherwise fails, and the end of what it printed goes to the
+        next agent block. Its output is kept with the job's logs."""
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{_safe(step.name)}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)

@@ -30,6 +30,7 @@ LABELS = {
     "proposals": "proposals for you",
     "vet": "check it over",
     "sync": "catch up with main",
+    "test": "test",
 }
 TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
@@ -42,7 +43,7 @@ CLASSES = {
     "setup": "plan", "vet": "plan", "spec": "plan", "spec-review": "plan", "options": "plan", "design": "plan",
     "scaffold": "build", "mvp": "build", "buildout": "build", "build": "build", "change": "build", "adopt": "build",
     "guide": "build", "apply": "build",
-    "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish",
+    "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
     "checkin": "wait", "choose": "wait",
     "push": "ship", "push-main": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
     "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look",
@@ -229,8 +230,12 @@ SUGGESTED = {
     "propose": ("opus", "high"),  # finding what's worth doing, unprompted, takes judgment
     "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
     "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
-}
-SUGGESTED_KEY = "suggested_defaults_1"  # a new key fills in the whole set again, where unset
+    # Stage blocks (stages.py), by stage, after a block's own name:
+    "stage:plan": ("opus", "xhigh"), "stage:build": ("opus", "high"), "stage:review": ("opus", "xhigh"),
+    "stage:docs": ("sonnet", "medium"), "stage:design": ("opus", "high"), "stage:fix": ("opus", "high"),
+    "stage:look": ("sonnet", "high"), "stage:options": ("opus", "high"),
+}  # fmt: skip
+SUGGESTED_KEY = "suggested_defaults_2"  # a new key fills in the whole set again, where unset
 
 
 @dataclass
@@ -248,11 +253,13 @@ class Engine:
 
 def engine(settings: Settings, store: Store, project: Project, step: Step, block: dict | None = None) -> Engine:
     """The most specific choice wins: this step's, the project's, the workflow block's own, the
-    default for steps like it (by name: docs, spec, fix…), the default for every step, then
-    GOLEM_MODEL and GOLEM_EFFORT."""
+    default for steps like it (by name: docs, spec, fix…), then for its stage's blocks, the
+    default for every step, then GOLEM_MODEL and GOLEM_EFFORT."""
     defaults = store.defaults()
     named, every = defaults.get(step.name, ("", "")), defaults.get("*", ("", ""))
     block = block or {}
+    stage = block.get("stage") or ""
+    staged = defaults.get(f"stage:{stage}", ("", "")) if stage else ("", "")
     found = []
     for i, fallback in enumerate((settings.default_model, settings.default_effort)):
         choices = [
@@ -260,6 +267,7 @@ def engine(settings: Settings, store: Store, project: Project, step: Step, block
             (project.model if i == 0 else project.effort, "the project"),
             (block.get("model" if i == 0 else "effort") or "", "its workflow"),
             (named[i], f"the {step.name} default"),
+            (staged[i], f"the {stage} blocks' default"),
             (every[i], "the default"),
             (fallback, "the default"),
         ]

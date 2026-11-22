@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from . import options, plan
+from . import options, plan, stages
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
@@ -92,7 +92,7 @@ class Control:
                 for node in plan.blocks_in_order(tab.graph):
                     if node["type"] == "agent" and node.get("name") and node["name"] not in names:
                         names.append(node["name"])
-        return [*names, *(n for n in ("fix", "resolve", "survey") if n not in names)]
+        return [*names, *(n for n in ("fix", "resolve", "survey") if n not in names), *(f"stage:{k}" for k in stages.catalog())]
 
     def skippable(self, job: Job, step: Step) -> bool:
         """Whether an upcoming step can be skipped: optional, and not under way."""
@@ -295,6 +295,26 @@ class Control:
             raise ControlError(f"There's a {same.name} tag already.")
         self.store.add_tag(name)
         return f"Added the {name} tag. golem uses it from the next new idea."
+
+    def block_text(self, stage: str, part: str, text: str) -> str:
+        """A stage part's text, as Riggy wrote it: every block of the stage uses it from the next job."""
+        found = stages.catalog().get(stage)
+        if found is None:
+            raise ControlError("There's no stage like that.")
+        if not text.strip():
+            raise ControlError("Write something, or put golem's text back.")
+        try:
+            self.scheduler.library.blocks.save(stage, part, text[:20_000])
+        except KeyError:
+            raise ControlError(f"{found.label} has no part {part}.") from None
+        return f"Saved {found.label}'s {part}: new jobs use it."
+
+    def block_reset(self, stage: str, part: str) -> str:
+        found = stages.catalog().get(stage)
+        if found is None:
+            raise ControlError("There's no stage like that.")
+        self.scheduler.library.blocks.reset(stage, part)
+        return f"{found.label}'s {part} is golem's again."
 
     def rename(self, slug: str, name: str) -> str:
         """A project's name; its address stays (bot.move changes that)."""

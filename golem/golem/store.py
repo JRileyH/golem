@@ -99,6 +99,18 @@ CREATE TABLE IF NOT EXISTS workflow_tabs (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (workflow_id, mode)
 );
+-- The text of each part of a stage block (stages.py): golem's, or Riggy's once he's changed it.
+CREATE TABLE IF NOT EXISTS stage_texts (
+    stage TEXT NOT NULL,
+    part TEXT NOT NULL,              -- base, plan, <setting>.<option> or care.<level>
+    text TEXT NOT NULL,
+    seeded TEXT NOT NULL DEFAULT '', -- the digest of golem's text it came from
+    edited INTEGER NOT NULL DEFAULT 0,
+    upstream TEXT NOT NULL DEFAULT '',  -- golem's newer text's digest, once he's changed his
+    sig TEXT NOT NULL DEFAULT '',    -- golem's signature: changed outside the web app, golem's text is used
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (stage, part)
+);
 -- Modes: ways of working a request can ask for ("be thorough"), each with what to look for. A
 -- workflow's tab for the mode is used when it has one.
 CREATE TABLE IF NOT EXISTS modes (
@@ -955,6 +967,21 @@ class Store:
             (workflow_id, mode, json.dumps(graph), json.dumps(working), json.dumps(problems), sig, now()),
         )
         return self.tab(workflow_id, mode)
+
+    def stage_texts(self) -> dict[tuple[str, str], dict]:
+        rows = self.db.execute("SELECT * FROM stage_texts").fetchall()
+        return {(r["stage"], r["part"]): {**dict(r), "edited": bool(r["edited"])} for r in rows}
+
+    def put_stage_text(self, stage: str, part: str, text: str, seeded: str, edited: bool, upstream: str, sig: str) -> None:
+        self.db.execute(
+            "INSERT INTO stage_texts (stage, part, text, seeded, edited, upstream, sig, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT(stage, part) DO UPDATE SET text = excluded.text, seeded = excluded.seeded, edited = excluded.edited,"
+            " upstream = excluded.upstream, sig = excluded.sig, updated_at = excluded.updated_at",
+            (stage, part, text, seeded, int(edited), upstream, sig, now()),
+        )
+
+    def drop_stage_text(self, stage: str, part: str) -> None:
+        self.db.execute("DELETE FROM stage_texts WHERE stage = ? AND part = ?", (stage, part))
 
     def drop_tab(self, workflow_id: int, mode: str) -> None:
         assert mode, "a workflow always has its default tab"
