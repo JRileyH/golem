@@ -1,0 +1,45 @@
+key: design
+name: Design pass
+start: change
+ingest: >-
+  He wants the whole project to get a new look of its own, its feel and brand, not
+  one piece of it: "redesign it", "give it a design pass", "I want it to feel like
+  an old field guide", "it looks generic, give it some personality", "rebrand it
+  with a logo and colors". Golem then makes a design doc with a few directions, he
+  picks, and golem builds the look and writes it down for later work. One screen or
+  one piece is not this: "redo the library page as a grid" is a change, "show me
+  some logo ideas" is options.
+tabs:
+  default:
+    md: design.md
+    blocks:
+      - setup
+      - {use: design_round, nothing: review}
+      - {agent: guide, turns: 200}
+      - {agent: apply, turns: 400}
+      - {agent: review, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end
+  rigorous:
+    md: design.md
+    blocks:
+      - setup
+      - {use: design_round, nothing: review}
+      - {agent: guide, turns: 200}
+      - {agent: apply, turns: 400}
+      - {agent: review, turns: 150, optional: true, turn: none}
+      - {agent: second-pass, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end
+  reckless:
+    md: design.md
+    blocks:
+      - setup
+      - {use: design_round, nothing: docs}
+      - {agent: guide, turns: 200}
+      - {agent: apply, turns: 400}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end

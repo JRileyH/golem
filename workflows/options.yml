@@ -1,0 +1,43 @@
+key: options
+name: Options
+start: change
+ingest: >-
+  He wants to see a few alternatives and choose between them before anything is
+  built: "show me three art styles", "I'd like to decide on a new color scheme,
+  give me some options", "mock up a couple of layouts and I'll pick", "what could
+  the logo look like?". Golem then makes options for him to pick from and builds
+  the one he picks.
+tabs:
+  default:
+    md: options.md
+    blocks:
+      - setup
+      - {agent: options, turns: 200, turn: none, contract: options}
+      - {choose: choose, optional: true, more: options}
+      - {agent: change, turns: 400}
+      - {agent: review, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end
+  rigorous:
+    md: options.md
+    blocks:
+      - setup
+      - {agent: options, turns: 200, turn: none, contract: options}
+      - {choose: choose, optional: true, more: options}
+      - {agent: change, turns: 400}
+      - {agent: review, turns: 150, optional: true, turn: none}
+      - {agent: second-pass, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end
+  reckless:
+    md: options.md
+    blocks:
+      - setup
+      - {agent: options, turns: 200, turn: none, contract: options}
+      - {choose: choose, optional: true, more: options}
+      - {agent: change, turns: 400}
+      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {use: ship, tab: default}
+      - end

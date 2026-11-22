@@ -1,0 +1,57 @@
+key: web_app
+name: Web app
+start: new
+fallback: true
+ingest: >-
+  Something to build and host as a web project: an app, a game, a tool or a site
+  with pages people open in a browser.
+tabs:
+  default:
+    md: web_app.md
+    blocks:
+      - setup
+      - {agent: spec, turns: 80, turn: none}
+      - {agent: scaffold, turns: 200}
+      - {use: ship}
+      - {agent: mvp, turns: 400}
+      - {use: ship}
+      - {checkin: checkin, optional: true, reply_to: buildout}
+      - {agent: design, turns: 400, optional: true, turn: none, contract: design, skip_to: nothing, nothing: ship-3}
+      - {choose: choose, optional: true, more: design}
+      - {agent: guide, turns: 200}
+      - {agent: apply, turns: 400}
+      - {use: ship}
+      - {agent: buildout, turns: 400}
+      - {agent: review, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 80, optional: true, turn: none}
+      - {use: ship}
+      - end
+  rigorous:
+    md: web_app.rigorous.md
+    blocks:
+      - setup
+      - {agent: spec, turns: 120, turn: none}
+      - {agent: spec-review, turns: 80, optional: true, turn: none}
+      - {agent: scaffold, turns: 200}
+      - {use: ship}
+      - {agent: mvp, turns: 500}
+      - {use: ship}
+      - {checkin: checkin, optional: true, reply_to: buildout}
+      - {agent: design, turns: 400, optional: true, turn: none, contract: design, skip_to: nothing, nothing: ship-3}
+      - {choose: choose, optional: true, more: design}
+      - {agent: guide, turns: 200}
+      - {agent: apply, turns: 400}
+      - {use: ship}
+      - {agent: buildout, turns: 500}
+      - {agent: review, turns: 200, optional: true, turn: none}
+      - {agent: second-pass, turns: 150, optional: true, turn: none}
+      - {agent: docs, turns: 100, optional: true, turn: none}
+      - {use: ship}
+      - end
+  reckless:
+    md: web_app.reckless.md
+    blocks:
+      - setup
+      - {agent: build, turns: 400}
+      - {use: ship}
+      - end

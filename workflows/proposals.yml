@@ -1,0 +1,13 @@
+key: proposals
+name: Proposals
+start: propose
+fallback: true
+ingest: Golem's own look at a live project for improvements to propose, when it has nothing else to do.
+tabs:
+  default:
+    md: proposals.md
+    blocks:
+      - refresh
+      - {agent: propose, turns: 80, turn: none, contract: propose}
+      - proposals
+      - end

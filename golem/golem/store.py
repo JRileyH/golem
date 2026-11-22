@@ -100,7 +100,10 @@ CREATE TABLE IF NOT EXISTS steps (
     effort TEXT,
     options TEXT NOT NULL DEFAULT '[]', -- JSON: an options step's options (options.py)
     design TEXT NOT NULL DEFAULT '{}',  -- JSON: a design round's doc, pages, questions and pick (options.Design)
-    turn TEXT NOT NULL DEFAULT ''       -- the turn it takes on its project: build | ship | none; '' from before (turns.py)
+    turn TEXT NOT NULL DEFAULT '',      -- the turn it takes on its project: build | ship | none; '' from before (turns.py)
+    node_id TEXT NOT NULL DEFAULT '',   -- the block of the job's workflow it's a visit to (engine.py); '' from before
+    port TEXT NOT NULL DEFAULT '',      -- the output it left by, once it's done
+    visit INTEGER NOT NULL DEFAULT 0    -- which visit to its block it is: 1, 2… (loops come back)
 );
 -- What the projects page shows for a live project (cards.py).
 CREATE TABLE IF NOT EXISTS cards (
@@ -176,6 +179,9 @@ MIGRATIONS = {
         "options": "TEXT NOT NULL DEFAULT '[]'",
         "design": "TEXT NOT NULL DEFAULT '{}'",
         "turn": "TEXT NOT NULL DEFAULT ''",
+        "node_id": "TEXT NOT NULL DEFAULT ''",
+        "port": "TEXT NOT NULL DEFAULT ''",
+        "visit": "INTEGER NOT NULL DEFAULT 0",
     },
     "notes": {"step_id": "INTEGER"},  # a note for one step rather than the next
 }
@@ -324,6 +330,9 @@ class Step:
     options: list[dict] = field(default_factory=list)  # an options step's, as options.Option fields
     design: dict = field(default_factory=dict)  # a design step's round, as options.Design fields
     turn: str = ""  # the turn it takes on its project: build | ship | none; "" if not written down (plan.turn_of)
+    node_id: str = ""  # the block of the job's workflow it's a visit to; "" from before workflows
+    port: str = ""  # the output it left by, once done (engine.advance)
+    visit: int = 0  # which visit to its block: loops come back
 
 
 class Store:
@@ -707,9 +716,10 @@ class Store:
                 )
             for i, s in enumerate(steps, start=after + 1):
                 self.db.execute(
-                    "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links), s.turn),
+                    "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn,"
+                    " node_id, port, visit, model, effort, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links), s.turn,
+                     s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
                 )
 
     def steps(self, job_id: int) -> list[Step]:

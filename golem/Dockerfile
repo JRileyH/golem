@@ -52,6 +52,7 @@ RUN useradd --create-home --uid 1000 golem \
 
 # Process files: root-owned, so agents can read but not edit them.
 COPY playbooks /opt/golem/playbooks
+COPY workflows /opt/golem/workflows
 COPY skills /opt/golem/skills
 COPY prompts /opt/golem/prompts
 

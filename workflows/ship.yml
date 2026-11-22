@@ -1,0 +1,33 @@
+key: ship
+name: Ship
+start: sub
+tabs:
+  default:
+    md: ship.md
+    blocks:
+      - push
+      - pr
+      - {do: checks, fail: tired}
+      - merge
+      - {do: deploy, fail: tired}
+      - {output: shipped}
+      - {condition: tired, all: [[counter, fixes, ">=", 4]], "true": hint, "false": fix}
+      - checkin: hint
+        reply_to: fix
+        turn: ship
+        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or `!kill` to drop the job."
+      - {agent: fix, turns: 150, turn: ship}
+      - {counter: fixes, next: push}
+  reckless:
+    md: ship.md
+    blocks:
+      - push-main
+      - {do: deploy, fail: tired}
+      - {output: shipped}
+      - {condition: tired, all: [[counter, fixes, ">=", 4]], "true": hint, "false": fix}
+      - checkin: hint
+        reply_to: fix
+        turn: ship
+        message: "I've tried to fix $failed $fixes times and it still fails: $failure.\n\nReply with a hint and I'll try again, or `!kill` to drop the job."
+      - {agent: fix, turns: 150, turn: ship}
+      - {counter: fixes, next: push-main}

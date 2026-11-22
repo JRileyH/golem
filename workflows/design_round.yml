@@ -1,0 +1,11 @@
+key: design_round
+name: Design round
+start: sub
+tabs:
+  default:
+    md: design_round.md
+    blocks:
+      - {agent: design, turns: 400, turn: none, contract: design, nothing: out-nothing}
+      - {choose: choose, optional: true, more: design}
+      - {output: picked}
+      - {output: nothing}

@@ -1,0 +1,15 @@
+key: adopt
+name: Adopt
+start: adopt
+fallback: true
+ingest: Taking on a repo golem didn't make, from !adopt.
+tabs:
+  default:
+    md: adopt.md
+    blocks:
+      - vet
+      - setup
+      - {condition: gaps, all: [[counter, gaps, ">", 0]], "true": adopt, "false": ship}
+      - {agent: adopt, turns: 300}
+      - {use: ship, tab: default}
+      - end
