@@ -26,12 +26,10 @@ from . import brand, options, plan, progress, pwa
 from .control import SKIPPED
 from .insights import Eta, Report, Tally, estimate
 from .live import Line, view
-from .store import ACTIVE, EFFORTS, MODELS, OPEN, Job, Project, Step
+from .store import ACTIVE, EFFORTS, LOOKS, MODELS, OPEN, Job, Project, Step
 from .watch import span
 
-SHIP = progress.SHIP  # shown together as one "ship" row in a job's full list of steps
 ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "failed": "✗", "pending": ""}
-MARKS = {"done": "✓", "skipped": "–", "now": "", "waiting": "?", "failed": "✕", "todo": ""}  # a piece of work's
 TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("workflows", "/workflows", "Workflows"), ("settings", "/settings", "Settings"))
 SIGNED_IN_TABS = ("workflows",)  # what's what agents are told: Riggy's alone
 # Which tab a page is under: any other (a project's, a job's, a new project) is under Projects.
@@ -116,7 +114,8 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
     `subnav` is a row of tabs under the header (a project's: project_tabs). `bottom` sticks to the
     bottom of the screen, outside the refreshed part, so what's being written there is never
     lost. `behind` marks Settings: a new version of golem is on GitHub. `stage` comes after the
-    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date."""
+    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date; or, where the
+    body has STAGE_HERE, there, between its refreshed regions (region)."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
     marks = {"now": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
@@ -138,10 +137,19 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <link rel=manifest href=/manifest.webmanifest>{pwa.touch_icon()}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
 <div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1>{new}</header>{subnav}</div>
-{banner}{flash_html}<main id=lanes>{body}</main>{stage}<div class=dock>{latest}{bottom}{tabs}</div>
+{banner}{flash_html}<main id=lanes>{body.replace(STAGE_HERE, stage) if STAGE_HERE in body else body}</main>{"" if STAGE_HERE in body else stage}<div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
 <script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}{static_scripts(stage)}</html>"""
+
+
+STAGE_HERE = "<!--stage-->"  # where in a page's body its graph goes
+
+
+def region(name: str, html: str) -> str:
+    """A part of a page that refreshes on its own: the page's script asks for the page's parts
+    (?parts=a,b) and swaps each that changed, unless something in it is being typed in."""
+    return f"<div data-part={name}>{html}</div>"
 
 
 STATIC = ("flow.js", "editor.js")  # served from golem/static/, by name only
@@ -191,14 +199,15 @@ def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, 
     )
 
 
-def project_tabs(project: Project, color: int, here: str, signed_in: bool, job: Job | None = None) -> str:
-    """A project's own row of tabs, on each of its pages: its conversation, its settings
-    (signed in), and the job being looked at, if one is. `here`: "talk", "settings" or "job"."""
-    tabs = [("talk", f"/p/{project.slug}", "Conversation")]
+def project_tabs(project: Project, color: int, here: str, signed_in: bool, history: bool = False) -> str:
+    """A project's own row of tabs, on each of its pages: its jobs, its settings (signed in), and,
+    if anything was said before jobs had their own activity, that (signed in). `here`: "jobs",
+    "settings" or "history"."""
+    tabs = [("jobs", f"/p/{project.slug}", "Jobs")]
     if signed_in:
         tabs.append(("settings", f"/p/{project.slug}/settings", "Settings"))
-    if job:
-        tabs.append(("job", f"/jobs/{job.id}", f"Job #{job.id}"))
+        if history:
+            tabs.append(("history", f"/p/{project.slug}/history", "History"))
     return f"<nav class='subnav c{color}' aria-label='{escape(project.name)}'>" + "".join(
         f"<a href='{escape(href)}'{' class=on aria-current=page' if key == here else ''}>{escape(label)}</a>" for key, href, label in tabs
     ) + "</nav>"
@@ -236,38 +245,13 @@ def signin_card(back: str) -> str:
 # --- a project's job ------------------------------------------------------------------
 
 
-def status_card(lane: LaneData, signed_in: bool, now: datetime) -> str:
-    """Where a project's job is, in a line; what it's doing right now; and its pieces of work
-    as a checklist (progress.py), each opening its sheet."""
-    p, job = lane.project, lane.job
-    head = (
-        f"<header class=card-head><p class=headline>{badge(lane)} <span>{headline(lane, now)}</span></p>"
-        f"<div class=out>{_out_links(lane)}</div></header>"
-    )
-    if job is None:
-        return f"<section class='card status c{lane.color}' id='p-{escape(p.slug)}'>{head}<p class=sub>{escape(p.summary)}</p></section>"
-    found = progress.pieces(lane.steps)
-    active = job.state in ACTIVE
-    what = "New project" if job.kind == "new" else {"adopt": "Adopting it", "options": "Options, then a change", "design": "Design pass", "question": "Question", "proposals": "Proposals"}.get(job.playbook, "Change")
-    done = sum(1 for x in found if x.state in ("done", "skipped"))
-    summary = f"{done} of {len(found)} done" if active else f"How it went: {_n(len(found), 'piece')} of work"
-    spent = _spent(lane)
-    return (
-        f"<section class='card status c{lane.color}' id='p-{escape(p.slug)}'>{head}"
-        f"<p class=request><span class=muted>{what}:</span> <strong>{escape(plan.title(job))}</strong></p>"
-        + (working(lane, signed_in, now) if active else "")
-        + f"<details class=plan data-key=plan-{job.id}{' open' if active else ''}><summary>{summary}</summary>{checklist(lane, found, now)}</details>"
-        + f"<p class=foot>{escape(p.mode)} · {escape(_engine_words(p))}{f' · {spent}' if spent else ''} · <a href='/jobs/{job.id}'>job #{job.id}</a></p>"
-        + "</section>"
-    )
-
-
 def badge(lane: LaneData) -> str:
     tone = _tone(lane)
     if tone == "queued" and any(s.started_at for s in lane.steps):  # under way, between steps (waiting for CI)
         tone = "running"
     if tone == "finished":
-        word = {"done": "Live", "killed": "Stopped", "failed": "Failed"}.get(lane.job.state, "Idle") if lane.job else "Idle"
+        live = "Done" if lane.job and lane.job.start in LOOKS else "Live"  # a question or a look for proposals ships nothing
+        word = {"done": live, "killed": "Stopped", "failed": "Failed"}.get(lane.job.state, "Idle") if lane.job else "Idle"
     else:
         word = {"running": "Working", "waiting": "Needs you", "trouble": "Retrying", "queued": "Queued", "paused": "Paused"}[tone]
     return f"<span class='badge {tone}'>{word}</span>"
@@ -301,26 +285,6 @@ def headline(lane: LaneData, now: datetime) -> str:
     eta = lane.etas.get(live.position) if live else None
     then = f" Live {when(eta.end, now)}." if eta else ""
     return f"{escape(piece.name)}: {piece_meta(lane, piece, now)}.{then}"
-
-
-def checklist(lane: LaneData, found: list[progress.Piece], now: datetime) -> str:
-    rows = []
-    for x in found:
-        s = x.step
-        tags = "<span class=opt>optional</span>" if s.optional and x.state == "todo" else ""
-        tags += "<span class=live>live</span>" if x.live else ""
-        why = f"<p class=why>{escape(_short(s.problem.splitlines()[0], 140))}</p>" if s.name in ("fix", "resolve") and s.problem else ""
-        rows.append(
-            f"<li class='piece {x.state}'><a href='{escape(step_href(lane.job, s))}' data-sheet><span class=mark>{MARKS[x.state]}</span>"
-            f"<span class=name>{escape(x.name)}</span></a>{tags}<span class=meta>{piece_meta(lane, x, now)}</span>{why}</li>"
-        )
-    return f"<ol class=pieces>{''.join(rows)}</ol>"
-
-
-def dots(lane: LaneData) -> str:
-    """The pieces of work as a row of dots, for a glance."""
-    found = progress.pieces(lane.steps)
-    return "<span class=dots aria-hidden=true>" + "".join(f"<i class={x.state} title='{escape(x.name)}'></i>" for x in found) + "</span>"
 
 
 def piece_meta(lane: LaneData, x: progress.Piece, now: datetime) -> str:
@@ -524,66 +488,6 @@ def sheet_controls(d: SheetData) -> str:
 # --- the job page's step lists --------------------------------------------------------
 
 
-def steps_lists(lane: LaneData, signed_in: bool, now: datetime) -> str:
-    current = plan.current(lane.steps)
-    ahead = [s for s in lane.steps if s.state == "pending" and s is not current]
-    ahead += [s for s in lane.steps if s.position in lane.restorable]
-    done = [
-        s for s in lane.steps
-        if s.state in ("done", "failed") or (s.state == "skipped" and s.position not in lane.restorable)
-        if current is None or s.position < current.position
-    ]  # fmt: skip
-    html = ""
-    if ahead:
-        rows = "".join(_row(g, lane, signed_in) for g in _groups(sorted(ahead, key=lambda s: s.position)))
-        html += f"<section class=next><h3>Up next</h3><ol class=steps>{rows}</ol></section>"
-    if done:
-        rows = "".join(_row(g, lane, signed_in, now) for g in _groups(done))
-        html += f"<details class=done data-key=done-{lane.job.id} open><summary>{len(done)} steps done</summary><ol class=steps>{rows}</ol></details>"
-    return html
-
-
-def _row(group: list[Step], lane: LaneData, signed_in: bool, now: datetime | None = None) -> str:
-    first = group[0]
-    if first.kind in SHIP:  # pushing, PR, CI, merge, deploy as one row
-        chips = "".join(
-            f"<a class='chip {s.state}' href='{escape(step_href(lane.job, s))}' data-sheet>{ICONS.get(s.state, '')} {escape(plan.label(s))}</a>"
-            for s in group
-        )
-        links = "".join(_links(s.links) for s in group if s.state in ("done", "failed"))
-        took = _took_row(group[0], group[-1]) if now else ""
-        icon = ICONS.get("done" if all(s.state in ("done", "skipped") for s in group) else "pending", "")
-        return (
-            f"<li class='row ship {group[-1].state}'><div class=what><span class=icon>{icon}</span><b>ship</b>"
-            f"<span class=chips>{chips}</span></div>{links}{took}</li>"
-        )
-    s = first
-    tag = "<span class=opt>optional</span>" if s.optional and s.state == "pending" else ""
-    button = ""
-    if signed_in and s.position in lane.skippable:
-        button = skip_button(lane.job, s, back=f"/jobs/{lane.job.id}")
-    elif signed_in and s.position in lane.restorable:
-        button = action_form("restore", "Undo skip", job=lane.job.id, step=s.id, position=s.position, back=f"/jobs/{lane.job.id}")
-    summary = f"<p>{escape(_short(s.summary, 300))}</p>" if s.state != "pending" and s.summary else ""
-    tally = lane.tallies.get(s.id)
-    usage = f"<span class=took> · {_money(tally.cost)} · {_count(tally.tokens)} tokens</span>" if tally and tally.runs else ""
-    return (
-        f"<li class='row {s.state}{' code' if s.kind != 'agent' else ''}'><div class=what><span class=icon>{ICONS.get(s.state, '')}</span>"
-        f"<a href='{escape(step_href(lane.job, s))}' data-sheet><b>{escape(plan.label(s))}</b></a>{tag}{button}</div>"
-        f"{summary}{_links(s.links)}{_took_row(s, s) if now else ''}{usage}</li>"
-    )
-
-
-def _groups(steps: list[Step]) -> list[list[Step]]:
-    groups: list[list[Step]] = []
-    for s in steps:
-        if s.kind in SHIP and groups and groups[-1][0].kind in SHIP and groups[-1][-1].position == s.position - 1:
-            groups[-1].append(s)
-        else:
-            groups.append([s])
-    return groups
-
-
 # --- insights -------------------------------------------------------------------------
 
 
@@ -721,6 +625,70 @@ def route_strip(job: Job, chips: list, small: bool = False, ahead: int | None = 
     if hidden:
         items.append(f"<li class='rc todo more'><a href='/p/{escape(job.slug)}/jobs/{job.id}'>+{len(hidden)} more</a></li>")
     return f"<ol class='route{' small' if small else ''}' aria-label='Its way through its workflow'>{''.join(items)}</ol>" if items else ""
+
+
+def route_list(lane: LaneData, chips: list, signed_in: bool, now: datetime) -> str:
+    """A job's route stood up (route.py): a row a block, with how long it took or when it's due,
+    what it said, its links, and skipping it or undoing that (signed in). A container's row has
+    its steps as chips. Its pane's Steps, and a phone's way through a job."""
+    job = lane.job
+    back = f"/p/{job.slug}/jobs/{job.id}"
+    rows = []
+    for c in chips:
+        again = f"<small>×{c.visits}</small>" if c.visits > 1 else ""
+        ran = [s for s in c.steps if s.id and s.state != "pending"]
+        said = next((s.summary for s in reversed(ran) if s.summary), "")
+        if c.state == "failed" and ran and ran[-1].error:
+            said = ran[-1].error.strip().splitlines()[0]
+        inner = ""
+        if c.container:
+            inner = "<span class=chips>" + "".join(
+                f"<a class='chip {s.state}' href='{escape(step_href(job, s))}' data-sheet>{ICONS.get(s.state, '')} {escape(plan.label(s))}</a>"
+                for s in c.steps
+            ) + "</span>"
+        button = ""
+        if signed_in and (s := next((s for s in c.steps if s.position in lane.skippable), None)):
+            button = skip_button(job, s, back=back)
+        elif signed_in and (s := next((s for s in c.steps if s.position in lane.restorable), None)):
+            button = action_form("restore", "Undo skip", job=job.id, step=s.id, position=s.position, back=back)
+        optional = "<span class=opt>optional</span>" if not c.container and c.steps[0].optional and c.state == "todo" else ""
+        links = "".join(_links(s.links) for s in ran if s.state in ("done", "failed"))
+        rows.append(
+            f"<li class='rl {c.state}{' box' if c.container else ''}'><div class=what>"
+            f"<a href='{escape(step_href(job, c.last))}' data-sheet><i aria-hidden=true>{ROUTE_MARKS.get(c.state, '')}</i><b>{escape(c.label)}</b>{again}</a>"
+            f"{optional}<span class=meta>{_chip_meta(lane, c, now)}</span>{button}</div>"
+            + (f"<p>{escape(_short(said, 300))}</p>" if said else "")
+            + inner + links + "</li>"
+        )
+    return f"<ol class=route-list>{''.join(rows)}</ol>" if rows else ""
+
+
+def _chip_meta(lane: LaneData, c, now: datetime) -> str:
+    """A block's line in the route list: how long it took, how it's going, or when it's due."""
+    ran = [s for s in c.steps if s.id]
+    match c.state:
+        case "done":
+            took = sum(_took(lane, s) for s in ran if s.kind not in plan.ASKS)
+            return span(timedelta(seconds=took)) if took >= 1 else ""
+        case "skipped":
+            return "skipped"
+        case "failed":
+            return "failed"
+        case "waiting":
+            return "your turn"
+        case "now":
+            live = next((s for s in ran if s.state == "running"), c.last)
+            if c.container or live.kind != "agent":
+                return escape(_doing(lane, live, now))
+            if not live.started_at:
+                return "starting"
+            usual = estimate(lane.known, live)
+            about = f", usually {span(timedelta(seconds=usual))}" if plan.label(live) in lane.known else ""
+            return f"{span(now - _dt(live.started_at))} so far{about}"
+        case "next":
+            return "under way" if c.container and ran else "next"
+    eta = lane.etas.get(c.steps[0].position)
+    return when(eta.start, now) if eta else ""
 
 
 def trail(steps: list[Step], job: Job) -> str:
@@ -1244,6 +1212,61 @@ main:has(> .project-grid) { max-width:min(100%, 78rem); }
 .news.live { background:var(--wait-bg); color:var(--wait-fg); } .news p { margin:.1rem 0; }
 .news details summary { cursor:pointer; color:var(--muted); font-size:.85rem; } .news ul { margin:.4rem 0 0; padding-left:1rem; }
 .news li .when { color:var(--muted); font-size:.8rem; margin-right:.3rem; }
+/* A project's page (projectpage.py): its jobs beside the one being looked at */
+main:has(> .panes) { max-width:min(100%, 96rem); }
+.panes { display:grid; gap:1rem; align-items:start; }
+.jobs-pane, .job-pane { min-width:0; }
+@media (min-width:56rem) {
+  .panes { grid-template-columns:minmax(19rem, 25rem) minmax(0, 1fr); }
+  .view-toggle { display:none !important; }
+}
+@media (max-width:55.99rem) {
+  .panes[data-focus=list] .job-pane, .panes[data-focus=job] .jobs-pane { display:none; }
+  .job-pane[data-view=steps] .flow, .job-pane[data-view=graph] [data-part=steps] { display:none; }
+}
+.project-head { margin:0 0 .8rem; } .project-head p { margin:0 0 .3rem; color:var(--muted); font-size:.92rem; }
+.project-head .out { display:flex; gap:.8rem; font-size:.88rem; }
+@media (max-width:55.99rem) { .job-pane .steps-card > h2 { display:none; } }
+.ask-form { display:flex; flex-direction:column; gap:.45rem; }
+.ask-label { font:700 1.02rem var(--display); }
+.ask-form textarea { font:inherit; font-size:16px; line-height:1.35; padding:.55rem .8rem; border-radius:var(--radius); border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); resize:vertical; min-height:3.2rem; }
+.ask-row { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center; }
+.ask-row label { display:flex; align-items:center; gap:.3rem; font-size:.8rem; color:var(--muted); }
+.ask-row select { max-width:9.5rem; min-height:34px; font-size:.82rem; }
+.ask-row button { margin-left:auto; }
+.proposals-here summary { cursor:pointer; }
+.job-rows { list-style:none; padding:0; margin:0 0 1rem; display:flex; flex-direction:column; gap:.4rem; }
+.job-row { background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge); padding:.55rem .75rem .45rem; border-left:3px solid transparent; }
+.job-row.on { border-left-color:var(--accent); background:color-mix(in srgb, var(--card) 88%, var(--accent)); }
+.job-row .row-head { display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; }
+.job-row .muted { margin:.15rem 0 0; font-size:.82rem; }
+.job-head h2 { font:700 1.2rem/1.25 var(--display); margin:0; }
+.job-head .sub { margin:.2rem 0 0; }
+.job-head .answer { margin:.6rem 0 0; padding:.55rem .75rem; background:var(--bg); border-radius:var(--radius); white-space:pre-wrap; }
+.job-head .add-note { margin:.6rem 0 0; } .job-head .add-note summary { cursor:pointer; color:var(--muted); font-size:.88rem; }
+.job-controls { margin-top:.7rem; }
+.view-toggle { display:flex; gap:0; margin:0 0 .7rem; background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge); padding:.2rem; }
+.view-toggle a { flex:1; text-align:center; padding:.4rem; border-radius:var(--radius); color:var(--muted); font-weight:600; font-size:.9rem; text-decoration:none; }
+.view-toggle a.on { background:var(--bg); color:var(--ink); }
+.job-pane .flow { width:100%; padding:0; margin:0 0 .85rem; }
+.job-pane .flow-tools { right:.5rem; }
+.job-pane .flow-canvas { height:min(62vh, 38rem); }
+.route-list { list-style:none; padding:0; margin:0; }
+.rl { padding:.45rem 0; border-top:1px solid var(--line); } .rl:first-child { border-top:0; }
+.rl .what { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; }
+.rl .what > a { display:inline-flex; align-items:center; gap:.35rem; color:var(--ink); text-decoration:none; }
+.rl .what > a i { font-style:normal; font-weight:700; width:1.1rem; text-align:center; font-size:.8rem; }
+.rl .what small { font-size:.72rem; font-weight:700; color:var(--run-fg); }
+.rl .meta { color:var(--muted); font-size:.82rem; }
+.rl .what form { margin-left:auto; } .rl button { min-height:30px; padding:.1rem .7rem .25rem; font-size:.8rem; }
+.rl > p { margin:.2rem 0 0 1.55rem; color:var(--muted); font-size:.88rem; }
+.rl > .chips, .rl > .links { margin:.3rem 0 0 1.55rem; }
+.rl.done .what > a i { color:var(--fin-fg); } .rl.failed .what > a i { color:var(--bad-fg); }
+.rl.now .what > a b, .rl.waiting .what > a b { color:var(--accent); }
+.rl.todo .what > a b { font-weight:500; color:var(--muted); } .rl.skipped .what > a b { text-decoration:line-through; color:var(--muted); }
+.job-details { margin:0 0 1rem; } .job-details > summary { cursor:pointer; color:var(--muted); font-size:.9rem; padding:.3rem 0; }
+.job-pane .talk { margin-top:.2rem; }
 /* The header's way to a new project; on a wide screen the sidebar has it */
 .top .new-project { grid-column:3; justify-self:end; display:inline-flex; align-items:center; gap:.2rem; padding:.3rem .7rem; border-radius:var(--radius);
   background:var(--rust, var(--accent)); color:#fff; font-weight:700; font-size:.88rem; white-space:nowrap; text-decoration:none; }
@@ -1520,9 +1543,29 @@ SCRIPT = """
     root.querySelectorAll('.log').forEach(l => { if (logs[l.closest('details').dataset.key] !== false) l.scrollTop = l.scrollHeight; });
   }
   let shown = '';  // '&show=N' once earlier messages are shown, so refreshing keeps them
+  // A page in parts (pages.region) refreshes each on its own, in one request: a part being typed
+  // in is left alone, and one that hasn't changed isn't touched. Any other page, all of main.
+  async function refreshParts(parts) {
+    const names = parts.filter(p => !typing(p)).map(p => p.dataset.part);
+    if (!names.length) return;
+    const q = new URLSearchParams(location.search); q.set('parts', names.join(','));
+    try {
+      const r = await fetch(location.pathname + '?' + q, {cache: 'no-store'});
+      if (!r.ok) return;
+      const got = await r.json();
+      for (const p of parts) {
+        const html = got[p.dataset.part];
+        if (html === undefined || html === p._was || typing(p)) continue;
+        keepOpen(p, () => { p.innerHTML = html; }); p._was = html;
+        clocks(p); dates(p);
+      }
+    } catch (e) {}
+  }
   let refresh = async function () {
     if (document.hidden) return;
-    if (!typing(main)) {
+    const parts = [...main.querySelectorAll('[data-part]')];
+    if (parts.length) await refreshParts(parts);
+    else if (!typing(main)) {
       try {
         const r = await fetch(location.pathname + '?part=lanes' + shown, {cache: 'no-store'});
         if (r.ok) { const html = await r.text(); keepOpen(main, () => { main.innerHTML = html; }); clocks(main); }
@@ -1542,7 +1585,7 @@ SCRIPT = """
     if (!again) {
       if (!sheet.open) sheet.showModal();
       sheetBody.querySelectorAll('.log').forEach(l => l.scrollTop = l.scrollHeight);
-      history.replaceState(null, '', location.pathname + '#' + href);
+      history.replaceState(null, '', location.pathname + location.search + '#' + href);
     }
   }
   document.addEventListener('click', e => {
@@ -1553,7 +1596,7 @@ SCRIPT = """
   });
   sheet.querySelector('.close').addEventListener('click', () => sheet.close());
   sheet.addEventListener('click', e => { if (e.target === sheet) sheet.close(); });
-  sheet.addEventListener('close', () => { delete sheet.dataset.href; history.replaceState(null, '', location.pathname); });
+  sheet.addEventListener('close', () => { delete sheet.dataset.href; history.replaceState(null, '', location.pathname + location.search); });
   function dates(root) {
     let last = '';
     root.querySelectorAll('.messages time[data-ts]').forEach(el => {
@@ -1598,15 +1641,28 @@ SCRIPT = """
   latest?.addEventListener('click', () => window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'}));
   window.addEventListener('scroll', placeLatest, {passive: true});
   const oldRefresh = refresh;
-  refresh = async () => { const stay = atBottom(); await oldRefresh(); dates(main); if (stay) toBottom(); placeLatest(); };
+  refresh = async () => { const stay = atBottom(); await oldRefresh(); dates(main); if (stay && latest) toBottom(); placeLatest(); };
   clocks(document.body); dates(main);
-  if (location.hash === '#end') { toBottom(); history.replaceState(null, '', location.pathname); }
+  if (location.hash === '#end') { if (latest) toBottom(); history.replaceState(null, '', location.pathname + location.search); }
+  // A job's pane on a phone: its steps or its graph, a tap apart (the graph fits once it's shown: flow.js).
+  document.querySelectorAll('.view-toggle a[data-view]').forEach(a => a.addEventListener('click', e => {
+    const pane = a.closest('[data-view]:not(a)');
+    if (!pane || e.metaKey || e.ctrlKey) return;
+    e.preventDefault();
+    pane.dataset.view = a.dataset.view;
+    a.parentElement.querySelectorAll('a').forEach(b => b.classList.toggle('on', b === a));
+    const q = new URLSearchParams(location.search); q.set('view', a.dataset.view); q.delete('msg');
+    history.replaceState(null, '', location.pathname + '?' + q + location.hash);
+  }));
   placeLatest();
   main.querySelectorAll('.log').forEach(l => l.scrollTop = l.scrollHeight);
   setInterval(() => refresh(), 10000);
   const flash = document.querySelector('.flash');
   if (flash) { setTimeout(() => flash.style.opacity = 0, 5000); setTimeout(() => flash.remove(), 5500); }
-  if (location.search.includes('msg=')) history.replaceState(null, '', location.pathname + location.hash);
+  if (location.search.includes('msg=')) {
+    const q = new URLSearchParams(location.search); q.delete('msg');
+    history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q : '') + location.hash);
+  }
   if (location.hash.startsWith('#/')) {
     const href = location.hash.slice(1);
     const node = main.querySelector(`a[href="${CSS.escape(href)}"]`);

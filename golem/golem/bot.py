@@ -309,6 +309,21 @@ class Bot:
 
     # --- projects' conversations ----------------------------------------------
 
+    async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None) -> Job:
+        """What Riggy asked for on a project's page: always a job of its own, queued behind any
+        change under way (turns.behind). The request call titles it and, unless he picked them,
+        says which workflow it's for and whether it asks for a mode; `mode` "" is none."""
+        fallback = self.library.fallback("change")
+        asked = await options.read_request(self.harness, self.settings, text, self.kinds(), [(m.name, m.ingest) for m in self.store.modes()],
+                                           [], fallback.key if fallback else "")  # fmt: skip
+        picked = self.store.workflow(key=workflow) if workflow else None
+        if picked is None or picked.archived or picked.start not in ("change", "look"):
+            picked = self.store.workflow(key=asked.workflow) or fallback
+        mode = self.mode_for(project, asked.mode) if mode is None else mode
+        job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
+        await self.chat.heard(project.slug, text, job=job.id)
+        return job
+
     async def project_message(self, project: Project, text: str) -> None:
         changes = self.store.change_jobs(project.slug)
         job = changes[0] if changes else None

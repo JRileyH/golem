@@ -1,15 +1,16 @@
 """The web app at golem.<base domain>, and the health check.
 
-Three tabs (home.py): Home, what needs Riggy and what's being worked on; Projects, the
-conversations; Settings. Anyone can look at what's under way: each project's job, its
-pieces of work and each step's details (with the pictures of any options Riggy is picking
-from), and where the time and usage go (insights.py).
+Four tabs: Now, every job and what needs Riggy (now.py); Projects, a card each, each opening
+its page of jobs beside the one being looked at (projectpage.py); Workflows (flows.py); and
+Settings (home.py). Anyone can look at what's under way: each project's jobs, each job's
+route, graph and steps, each step's details (with the pictures of any options Riggy is
+picking from), and where the time and usage go (insights.py).
 
-Signed in with GOLEM_WEB_PASSWORD, it's how Riggy talks to golem. Each project has a
-page with its conversation (conversation.py) and a box to write in; Home and golem's own
-conversation take new ideas. What's written goes to the bot (`/say`, bot.py). The web app's
-own controls are in control.py: skipping optional steps, reordering the queue, pausing,
-stopping, models and effort (per step, project or kind of step) and notes.
+Signed in with GOLEM_WEB_PASSWORD, it's how Riggy works with golem: asking for something on a
+project's page (always a job of its own: bot.ask), replying to what a job asks and adding
+notes, and the web app's own controls (control.py): skipping optional steps, reordering the
+queue, pausing, stopping, models and effort (per step, project or kind of step). golem's own
+conversation still takes new ideas (`/say`, bot.py), until the New project form.
 
 The sign-in cookie is an expiry signed with a key made from a random secret in the
 database and the password, so changing the password signs everyone out. It lasts 90
@@ -29,7 +30,6 @@ from typing import TYPE_CHECKING
 from collections import deque
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from html import escape
 from urllib.parse import parse_qs, quote
 
 from starlette.applications import Starlette
@@ -39,6 +39,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
+from . import projectpage
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -171,28 +172,6 @@ def create_app(
         places = {j.id: 1 if j.state == "running" else i - extra for i, j in enumerate(order, start=1)}
         return {"order": places, "colors": colors(), "known": known, "etas": etas}
 
-    def job_html(job: Job, signed: bool) -> str:
-        project = store.project(job.slug)
-        now = datetime.now(UTC)
-        ctx = context(now)
-        data = lane(job, project, ctx["order"].get(job.id), signed, ctx)
-        flow = f"<p class=flow-link><a class=button href='/jobs/{job.id}/flow'>See it as a workflow</a></p>" if job.graph or job.state in ACTIVE else ""
-        body = (
-            pages.status_card(data, signed, now)
-            + flow
-            + pages.request_card(job)
-            + f"<section class=card><h2>Every step</h2>{pages.steps_lists(data, signed, now)}</section>"
-        )
-        runs = "".join(
-            f"<tr><td>{escape(r['phase'])}</td><td>{escape(r['model'])}</td><td>{escape(str(r['outcome'] or 'running'))}</td>"
-            f"<td>{r['num_turns'] or ''}</td><td>{_tokens(r)}</td><td>{_cost(r)}</td><td>{r['started_at'][:16].replace('T', ' ')}</td></tr>"
-            for r in store.runs(job.id)
-        )
-        return (
-            body + "<h3 class=sub>Agent runs</h3><div class=runs><table><tr><th>Run</th><th>Model</th><th>Outcome</th>"
-            f"<th>Turns</th><th>Tokens in/out</th><th>Usage</th><th>Started</th></tr>{runs}</table></div>"
-        )
-
     def sheet_html(job: Job, step: Step, signed: bool) -> str:
         project = store.project(job.slug)
         now = datetime.now(UTC)
@@ -249,11 +228,6 @@ def create_app(
         more = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in store.change_jobs(project.slug) if not main.job or j.id != main.job.id]
         return [main, *more], jobs
 
-    def composing(project: Project) -> str:
-        """The box at the bottom of a project's page: waiting if a change waits on Riggy."""
-        waiting = next((j for j in store.change_jobs(project.slug) if j.state == "waiting"), None)
-        return conversation.state_of(waiting or store.active_job(project.slug))
-
     def nav() -> list[NavProject]:
         """Every project for the sidebar, by name so each stays where it's looked for."""
         palette = colors()
@@ -268,7 +242,12 @@ def create_app(
         return out
 
     def respond(request: Request, title: str, body: str, signed: bool, bottom: str = "", here: str = "",
-                up: tuple[str, str] | None = None, subnav: str = "", stage: str = "") -> Response:  # fmt: skip
+                up: tuple[str, str] | None = None, subnav: str = "", stage: str = "", parts: dict[str, str] | None = None) -> Response:  # fmt: skip
+        """A page; or, for its script's refresh, the parts it asks for (a page in regions: pages.region)
+        or the whole of its main part."""
+        if parts is not None and "parts" in request.query_params:
+            wanted = request.query_params["parts"].split(",")
+            return JSONResponse({k: parts[k] for k in wanted if k in parts}, headers={"Cache-Control": "no-store"})
         if request.query_params.get("part") == "lanes":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         flash = request.query_params.get("msg", "")[:300]
@@ -277,9 +256,9 @@ def create_app(
                           nav=nav(), behind=behind, stage=stage)  # fmt: skip
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
-    def tabs(project: Project, here: str, signed: bool, job: Job | None = None) -> str:
-        """A project's tabs; the job's is the one being looked at, or else the one under way."""
-        return pages.project_tabs(project, colors().get(project.slug, 1), here, signed, job or store.active_job(project.slug))
+    def tabs(project: Project, here: str, signed: bool) -> str:
+        """A project's tabs: its jobs, settings, and what was said before jobs had their own activity."""
+        return pages.project_tabs(project, colors().get(project.slug, 1), here, signed, store.has_history(project.slug))
 
     async def healthz(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "harness": settings.harness})
@@ -369,10 +348,10 @@ def create_app(
         body = sheet_html(job, step, signed)
         if request.query_params.get("part") == "sheet":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
-        body = f"<article class=card>{body}</article><p><a href='/jobs/{job.id}'>The whole job</a></p>"
+        body = f"<article class=card>{body}</article><p><a href='{projectpage.href(job)}'>The whole job</a></p>"
         project = store.project(job.slug)
-        return respond(request, plan.label(step), body, signed, here=job.slug, up=(f"/jobs/{job.id}", f"Job #{job.id}"),
-                       subnav=tabs(project, "", signed, job) if project else "")  # fmt: skip
+        return respond(request, plan.label(step), body, signed, here=job.slug, up=(projectpage.href(job), f"Job #{job.id}"),
+                       subnav=tabs(project, "", signed) if project else "")  # fmt: skip
 
     async def insights_page(request: Request) -> Response:
         signed = signed_in(request)
@@ -419,18 +398,93 @@ def create_app(
         headers = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
         return FileResponse(path, media_type=options.IMAGE_TYPES[path.suffix], headers=headers)
 
+    def picks() -> projectpage.Picks:
+        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))], [m.name for m in store.modes()])
+
+    def project_view(request: Request, project: Project, job: Job | None) -> Response:
+        """A project's page, open on `job` (else the one it opens on: projectpage.chosen). A job
+        asked for by its address is the side a phone shows; the project's address shows its list."""
+        signed = signed_in(request)
+        now = datetime.now(UTC)
+        ctx = context(now)
+        everything = request.query_params.get("all") == "1"
+        jobs = store.project_jobs(project.slug, limit=1000 if everything else projectpage.JOBS_SHOWN)
+        focus = "job" if job else "list"
+        job = job or projectpage.chosen(jobs)
+        lanes_ = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in jobs]
+        open_ = next((x for x in lanes_ if job and x.job.id == job.id), None) or (lane(job, project, ctx["order"].get(job.id), signed, ctx) if job else None)
+        total = store.project_job_count(project.slug)
+        flows_ = flow_names()
+        back = projectpage.href(job) if job and focus == "job" else f"/p/{project.slug}"
+        more = f"/p/{project.slug}?all=1" if total > len(jobs) else ""
+        parts = {
+            "jobs": projectpage.jobs_part(lanes_, job.id if job else None, flows_, now, total, more),
+            "proposals": projectpage.proposals_part(project, store.proposals(project.slug, ("open",)), back) if signed else "",
+        }
+        graphed, stage, details = False, "", ""
+        if job:
+            path = request.query_params.get("path", "")
+            graphed = flows.job_view(settings, store, job) is not None
+            if graphed:
+                stage = flows.stage(f"/jobs/{job.id}/flow.json" + (f"?path={quote(path)}" if path else ""))
+            parts["head"] = projectpage.head_part(open_, flows_, signed, now)
+            parts["steps"] = projectpage.steps_part(open_, signed, now, graphed, store.steps(job.id))
+            parts["activity"] = projectpage.activity_part(store.job_messages(job.id) if signed else [], signed)
+            details = projectpage.details(job, store.runs(job.id))
+            live.forget({r["id"] for r in store.runs(job.id)[-1:]} if job.state in ACTIVE else set())
+        view = request.query_params.get("view", "")
+        links = {"Site": settings.project_url(project.slug), "Repo": settings.repo_url(project.slug)}
+        body = projectpage.layout(project, parts, open_, signed, picks(), focus, view, graphed, details, links)
+        up = (f"/p/{project.slug}", project.name) if focus == "job" else ("/p", "Projects")
+        return respond(request, project.name, body, signed, here=project.slug, up=up, subnav=tabs(project, "jobs", signed),
+                       stage=stage, parts=parts)  # fmt: skip
+
     async def project_page(request: Request) -> Response:
         project = store.project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
+        return project_view(request, project, None)
+
+    async def project_job_page(request: Request) -> Response:
+        project = store.project(request.path_params["slug"])
+        job = store.job(request.path_params["job_id"])
+        if project is None or job is None or job.slug != project.slug:
+            return HTMLResponse("No such job.", 404)
+        return project_view(request, project, job)
+
+    async def project_ask(request: Request) -> Response:
+        """A request on a project's page: always a job of its own (bot.ask)."""
+        form = await _form(request)
+        project = store.project(request.path_params["slug"])
+        if project is None:
+            return HTMLResponse("No such project.", 404)
+        form["back"] = f"/p/{project.slug}"
+        if not signed_in(request) or not _same_site(request):
+            return _back(form, "Sign in first.")
+        if not bot:
+            return _back(form, "golem can't take that here.")
+        text = form.get("text", "").strip()[:8000]
+        mode = form.get("mode", "auto")
+        if not text:
+            return _back(form, "Write something first.")
+        if mode not in ("auto", "") and store.mode(mode) is None:
+            return _back(form, f"There's no mode called {mode}.")
+        job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode)
+        return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.")
+
+    async def project_history(request: Request) -> Response:
+        """What was said in a project's conversation, before jobs had their own activity: read-only."""
+        project = store.project(request.path_params["slug"])
+        if project is None:
+            return HTMLResponse("No such project.", 404)
         signed = signed_in(request)
-        bottom = conversation.composer(project.slug, composing(project)) if signed and bot else ""
-        data, _ = project_lanes(project, signed)
-        said, earlier = _latest(request, store.messages(project.slug, limit=_shown(request) + 1)) if signed else ([], "")
-        waiting = store.proposals(project.slug, ("open",)) if signed else []
-        body = conversation.project_page(data[0], said, signed, datetime.now(UTC), earlier, waiting, more=data[1:])
-        return respond(request, project.name, body, signed, bottom, here=project.slug, up=("/p", "Projects"),
-                       subnav=tabs(project, "talk", signed))  # fmt: skip
+        if not signed:
+            return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to see what was said.")
+        said, earlier = _latest(request, store.messages(project.slug, limit=_shown(request) + 1))
+        body = "<p class=hint>Everything said about this project, as it was said. Each job's own activity is on its page.</p>"
+        body += conversation.thread(said, "Nothing said here yet.", earlier)
+        return respond(request, f"{project.name}: history", body, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
+                       subnav=tabs(project, "history", signed))  # fmt: skip
 
     async def project_settings(request: Request) -> Response:
         project = store.project(request.path_params["slug"])
@@ -443,7 +497,7 @@ def create_app(
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
         page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:],
                                           modes=[m.name for m in store.modes()])  # fmt: skip
-        return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=("/p", "Projects"),
+        return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
     async def inbox_page(request: Request) -> Response:
@@ -509,21 +563,12 @@ def create_app(
                             headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})  # fmt: skip
 
     async def job_flow(request: Request) -> Response:
-        """A job walking its workflow, drawn: where it is, lit, and each block's sheet a tap away."""
+        """Where a job's graph was: it's in its pane now."""
         job = store.job(request.path_params["job_id"])
-        if job is None:
+        if job is None or store.project(job.slug) is None:
             return HTMLResponse("No such job.", 404)
-        signed = signed_in(request)
-        project = store.project(job.slug)
         path = request.query_params.get("path", "")
-        if flows.job_view(settings, store, job, path) is None:  # over: its copy is gone; the way it went
-            body = f"<section class=card><h2>The way it went</h2><p class=muted>This job is from before workflows, so there's no graph of it: here are its steps.</p>{pages.trail(store.steps(job.id), job)}</section>"
-            stage = ""
-        else:
-            body = f"<p class='lead flow-lead'><a href='/jobs/{job.id}'>Job #{job.id}</a>: {escape(plan.title(job))}</p>"
-            stage = flows.stage(f"/jobs/{job.id}/flow.json" + (f"?path={quote(path)}" if path else ""))
-        return respond(request, f"Job #{job.id}", body, signed, here=job.slug, up=(f"/jobs/{job.id}", f"Job #{job.id}"),
-                       subnav=tabs(project, "job", signed, job) if project else "", stage=stage)  # fmt: skip
+        return RedirectResponse(f"{projectpage.href(job)}?view=graph" + (f"&path={quote(path)}" if path else ""), 302)
 
     async def job_flow_json(request: Request) -> Response:
         job = store.job(request.path_params["job_id"])
@@ -625,13 +670,11 @@ def create_app(
         return JSONResponse({"ok": True})
 
     async def job_page(request: Request) -> Response:
+        """Where a job's page was: it's its project's page, open on it, now."""
         job = store.job(request.path_params["job_id"])
-        if job is None:
+        if job is None or store.project(job.slug) is None:
             return HTMLResponse("No such job.", 404)
-        signed = signed_in(request)
-        project = store.project(job.slug)
-        return respond(request, f"Job #{job.id}", job_html(job, signed), signed, here=job.slug, up=(f"/p/{project.slug}", project.name),
-                       subnav=tabs(project, "job", signed, job))  # fmt: skip
+        return RedirectResponse(projectpage.href(job), 302)
 
     async def login(request: Request) -> Response:
         form = await _form(request)
@@ -766,6 +809,10 @@ def create_app(
             Route("/p", projects_list),
             Route("/p/{slug}", project_page),
             Route("/p/{slug}/settings", project_settings),
+            Route("/p/{slug}/jobs/{job_id:int}", project_job_page),
+            Route("/p/{slug}/ask", project_ask, methods=["POST"]),
+            Route("/p/{slug}/history", project_history),
+            Route("/new", lambda request: RedirectResponse("/inbox", 302)),  # until the New project form
             Route("/settings", settings_page),
             Route("/inbox", inbox_page),
             Route("/say", say, methods=["POST"]),
@@ -873,13 +920,3 @@ def _state(store: Store, job: Job, steps) -> str:
 
 def _first_paragraph(text: str) -> str:
     return " ".join(text.strip().split("\n\n")[0].split())
-
-
-def _cost(run: dict) -> str:
-    return f"${run['cost_usd']:.2f}" if run["cost_usd"] else ""
-
-
-def _tokens(run: dict) -> str:
-    if run["input_tokens"] is None and run["output_tokens"] is None:
-        return ""
-    return f"{run['input_tokens'] or 0:,} / {run['output_tokens'] or 0:,}"

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from html import escape
+from urllib.parse import quote
 
 from . import engine, layout, plan
 from .config import Settings
@@ -148,13 +149,14 @@ def job_view(settings: Settings, store: Store, job: Job, path: str = "") -> dict
     nodes, edges = drawn(graph, outputs, {n.get("workflow", ""): subs.get(_join(path, n["id"]), "") for n in graph.get("nodes") or [] if n["type"] == "container"})
     trace = store.steps(job.id)
     ahead = {s.node_id: s for s in plan.planned(settings, store, job) if not s.id and s.node_id}
+    page, src = job_href(job), f"/jobs/{job.id}/flow.json"  # a level's page, and its data for opening it in place
     for n in nodes:
         flat = _join(path, n["id"])
         if n["type"] == "container":
             inside = [s for s in trace if s.node_id.startswith(flat + "/")]
             todo = any(k.startswith(flat + "/") for k in ahead)
             n["state"], n["visits"] = _combined(inside, todo), 0
-            n["open"] = f"/jobs/{job.id}/flow?path={flat}"
+            n["open"], n["src"] = f"{page}?view=graph&path={quote(flat)}", f"{src}?path={quote(flat)}"
             continue
         mine = [s for s in trace if s.node_id == flat]
         if n["type"] in ("start", "input"):
@@ -169,17 +171,23 @@ def job_view(settings: Settings, store: Store, job: Job, path: str = "") -> dict
             n["href"] = f"/jobs/{job.id}/planned/{ahead[flat].position}"
         elif n["type"] == "end" and job.state == "done":
             n["state"] = "done"
-    crumbs = [{"label": levels.get("", {}).get("name") or "Workflow", "href": f"/jobs/{job.id}/flow"}]
+    crumbs = [{"label": levels.get("", {}).get("name") or "Workflow", "href": f"{page}?view=graph", "src": src}]
     parts = [p for p in path.split("/") if p] if path in levels else []
     for i in range(len(parts)):
         sub = "/".join(parts[: i + 1])
-        crumbs.append({"label": levels.get(sub, {}).get("name") or parts[i], "href": f"/jobs/{job.id}/flow?path={sub}"})
+        crumbs.append({"label": levels.get(sub, {}).get("name") or parts[i], "href": f"{page}?view=graph&path={quote(sub)}",
+                       "src": f"{src}?path={quote(sub)}"})  # fmt: skip
     note = ""
     if job.graph and job.workflow:
         changed = _current_digest(settings, store, job)
         if changed and changed != job.graph_hash:
             note = "Started before this workflow was last changed: it carries on as it was."
     return {"nodes": nodes, "edges": edges, "crumbs": crumbs, "note": note, "poll": 10 if job.state in ACTIVE else 0}
+
+
+def job_href(job: Job) -> str:
+    """A job's own page: its project's, with it open."""
+    return f"/p/{job.slug}/jobs/{job.id}"
 
 
 def _join(path: str, nid: str) -> str:

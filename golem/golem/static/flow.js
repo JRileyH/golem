@@ -75,7 +75,7 @@
     }
 
     function drawNode(parent, n) {
-      const wrap = n.href ? el('a', { href: n.href, 'data-sheet': '' }, parent) : n.open && root.dataset.mode !== 'edit' ? el('a', { href: n.open }, parent) : parent;
+      const wrap = n.href ? el('a', { href: n.href, 'data-sheet': '' }, parent) : n.open && root.dataset.mode !== 'edit' ? el('a', { href: n.open, 'data-src': n.src || null }, parent) : parent;
       const g = el('g', { class: `flow-node t-${n.type} ${n.state || ''}${n.problems && n.problems.length ? ' bad' : ''}`, transform: `translate(${n.x},${n.y})`, 'data-id': n.id, tabindex: n.href || n.open ? null : 0 }, wrap);
       const round = ['start', 'end', 'input', 'output'].includes(n.type) ? H / 2 : ['counter', 'condition'].includes(n.type) ? 14 : 3;
       el('rect', { width: W, height: H, rx: round, class: 'flow-box' }, g);
@@ -179,6 +179,12 @@
     svg.addEventListener('pointercancel', up);
     root.addEventListener('click', (e) => {  // a drag isn't a tap
       if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; return; }
+      const inside = e.target.closest('a[data-src]');  // a container or a crumb: opened right here
+      if (inside && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault(); e.stopPropagation();
+        open(inside.dataset.src, inside.getAttribute('href'));
+        return;
+      }
       const g = e.target.closest('.flow-node');
       if (!g || e.target.closest('a') || root.dataset.mode === 'edit') return;
       showInfo(data.nodes.find((n) => n.id === g.dataset.id));
@@ -222,12 +228,13 @@
           if (r.ok) {
             const fresh = await r.json();
             if (!flow.editing) { data = fresh; draw(); }
-            if (!fitted) { focus(); fitted = true; }
+            settle();
             if (crumbs) {
               crumbs.textContent = '';
               (fresh.crumbs || []).forEach((c, i) => {
                 if (i) crumbs.append(' › ');
                 const a = document.createElement('a'); a.href = c.href; a.textContent = c.label;
+                if (c.src) a.dataset.src = c.src;
                 crumbs.append(a);
               });
             }
@@ -238,6 +245,22 @@
       } else timer = setTimeout(load, 10000);
     }
     flow.load = load;
+    // The first view, once it has a size: a graph that starts hidden (a phone's Graph tab) fits when shown.
+    function settle() {
+      if (fitted || !data || flow.editing) return;  // the editor keeps its own view
+      const box = svg.getBoundingClientRect();
+      if (box.width && box.height) { focus(); fitted = true; }
+    }
+    if (window.ResizeObserver) new ResizeObserver(settle).observe(svg);
+    // Another level (a container, or back up by a crumb), in place: the page stays, the address follows.
+    function open(src, href) {
+      root.dataset.src = src;
+      fitted = false;
+      info.hidden = true;
+      if (href) history.replaceState(null, '', href);
+      load();
+    }
+    flow.open = open;
     flow.focus = () => focus();
     flow.toWorld = (clientX, clientY) => {
       const box = svg.getBoundingClientRect();

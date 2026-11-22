@@ -102,7 +102,8 @@ def _row(lane: LaneData, flows: dict[str, str], now: datetime) -> str:
 
 def _proposals(project: Project, items: list[Proposal]) -> str:
     """A project's undecided proposals, folded to a line: open it to thumb each."""
-    titles = ", ".join(p.title for p in items[:3]) + ("…" if len(items) > 3 else "")
+    oldest = sorted(items, key=lambda p: p.id)
+    titles = ", ".join(p.title for p in oldest[:3]) + ("…" if len(items) > 3 else "")
     return (
         f"<details class='card proposals-now' data-key=proposals-{escape(project.slug)}><summary class=card-head><h2>"
         f"<a href='/p/{escape(project.slug)}'>{escape(project.name)}</a><span class=job-title>golem proposes {len(items)}: "

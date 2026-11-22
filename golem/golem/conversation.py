@@ -1,28 +1,23 @@
-"""The web app's conversations: each project's page and golem's own (the inbox), phone first.
+"""Conversations, and a project's settings, phone first.
 
-A project's page has its job's card (where it is, what's running, its pieces of work), then,
-signed in, the conversation with golem about it, what golem is waiting on Riggy for, and
-a box to write in that sticks to the bottom of the screen. What's written there goes to the
-bot (web.py): it answers a question or a check-in, picks an option, becomes a note for the
-running job, or starts a change, or options first. Below that are golem's own proposals for
-it, each to thumbs up or down (proposals.py). Its settings page has what the !commands
-do: mode, model, effort, pausing, renaming, moving and deleting; how often golem proposes
-things, and which kinds; the job's place in the queue and stopping it; and its jobs.
-
-Golem's own conversation is where new ideas are written, with its replies and its
-golem-wide news.
+A conversation is messages oldest first, Riggy's on the right (thread): golem's own (the
+inbox, where new ideas are written, with its golem-wide news), a project's history (what was
+said before jobs had their own activity), and each job's activity on its pane
+(projectpage.py). golem's proposals for a project are here too, each to thumbs up or down
+(proposals.py). A project's settings page has what the !commands do: mode, model, effort,
+pausing, renaming, moving and deleting; how often golem proposes things, and which kinds; the
+jobs' places in the queue and stopping them; and its jobs.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from html import escape
 
 from . import plan
-from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
+from .pages import LaneData, _hidden, _pause, job_controls, select_form
 from .proposals import LENSES, WAITING, kinds
-from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
+from .store import CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
@@ -32,19 +27,6 @@ COMPOSE = {
     "waiting": ("Your answer…", "Reply"),
     "busy": ("A note for the job's next step…", "Send"),
 }
-
-
-def project_page(lane: LaneData, said: list[Said], signed_in: bool, now: datetime, earlier: str = "",
-                 waiting: list[Proposal] = (), more: list[LaneData] = ()) -> str:  # fmt: skip
-    """The page's main part, refreshed in place every few seconds; the box to write in is separate
-    (composer). `more`: the other changes under way, on a project that allows several at once."""
-    lanes = [lane, *more]
-    top = "".join(status_card(x, signed_in, now) for x in lanes)
-    if not signed_in:
-        return top + "<p class=hint>Sign in (Settings) to see the conversation and write to golem.</p>"
-    back = f"/p/{lane.project.slug}#end"
-    asks = "".join(ask_card(x, signed_in, back=back, reply=bool(more)) for x in lanes)  # several: each answered on its own
-    return top + thread(said, "Nothing said here yet.", earlier) + asks + proposals_card(waiting, back)
 
 
 def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = (),
@@ -256,10 +238,3 @@ def _linked(text: str) -> str:
         last = match.end()
     out.append(escape(text[last:]))
     return "".join(out).replace("\n", "<br>")
-
-
-def state_of(job: Job | None) -> str:
-    """For the box at the bottom: idle, waiting (on Riggy) or busy."""
-    if job is None or job.state not in ACTIVE:
-        return "idle"
-    return "waiting" if job.state == "waiting" else "busy"

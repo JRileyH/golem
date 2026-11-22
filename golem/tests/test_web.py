@@ -8,7 +8,7 @@ import json
 import zlib
 from dataclasses import replace
 from html import escape
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import pytest
 from starlette.testclient import TestClient
@@ -77,14 +77,16 @@ def test_anyone_sees_what_is_under_way(golem, page):
     assert "Sign in" in html and "/act" not in html  # no controls signed out
     assert page.get("/?part=lanes").text.startswith("<section class='card signin-card'>")  # what the page refreshes with
 
-    html = page.get("/p/trees").text
+    html = page.get("/p/trees").text  # its jobs, and the one it opens on
     assert "https://trees.unlaunched.dev/" in html and ">Queued</span>" in html and "Next up: plan it, starting <time" in html
-    # Its 33 steps as the 11 pieces of work Riggy would name, in order; golem's shipping steps belong to them.
-    names = ["Plan it", "Set up hosting", "Build the MVP", "You try it", "Make the design doc", "You pick one",
-             "Write the design guide", "Restyle it", "Build the rest", "Review", "Write the docs"]  # fmt: skip
-    assert html.count("class='piece todo'") == 11 and [html.index(n) for n in names] == sorted(html.index(n) for n in names)
+    assert "data-focus=list" in html and "<h2>Trees &lt;b&gt;</h2>" not in html  # a phone shows the list; the name's escaped
+    # Its steps as the blocks of its workflow, in order: each container (Ship) one row.
+    names = ["set up", "spec", "scaffold", "Ship", "mvp", "your check-in", "design", "guide", "apply", "buildout", "review", "docs"]
+    rows = html[html.index("class=route-list") :]
+    assert rows.count("<li class='rl todo") == 16 and [rows.index(f"<b>{n}</b>") for n in names] == sorted(rows.index(f"<b>{n}</b>") for n in names)
     assert "href='/jobs/1/planned/2'" in html  # each opens its sheet, by position until the job starts
-    assert "Sign in (Settings) to see the conversation" in html and "/act" not in html
+    assert "Sign in (Settings) to see what golem and you said about this job." in html and "/act" not in html
+    assert "class='card ask-form'" not in html  # signed out: no asking
 
 
 def test_the_running_step_shows_its_live_tail_without_secrets(golem, page):
@@ -128,8 +130,8 @@ def test_a_job_goes_by_its_title_and_its_page_keeps_the_request(golem, page):
 
     home = page.get("/").text
     assert "Library View Redesign" in home and "I&#x27;d like you to" not in home
-    html = page.get(f"/jobs/{job.id}").text
-    assert "Change:</span> <strong>Library View Redesign</strong>" in html
+    html = page.get(f"/jobs/{job.id}").text  # its project's page, open on it
+    assert "<h2>Library View Redesign</h2>" in html and "data-focus=job" in html
     assert f"<h2>The request</h2><p class=asked>{escape(words)}</p>" in html  # in full, where it came from
 
     untitled = golem.store.add_job("trees", "change", "make the cards flip faster please\nand bigger", "feature")
@@ -403,9 +405,13 @@ def test_queue_order_settings_notes_pause_and_stop(golem, page):
 
 def test_job_page(golem, page):
     start(golem, page.job, "mvp")
-    html = page.get(f"/jobs/{page.job.id}").text
-    assert "Agent runs" in html and "8 steps done" in html and " open>" in html
-    assert page.get("/jobs/99").status_code == 404
+    r = page.get(f"/jobs/{page.job.id}", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == f"/p/trees/jobs/{page.job.id}"  # where a job's page is now
+    html = page.get(f"/p/trees/jobs/{page.job.id}").text
+    assert html.count("<li class='rl done") == 4 and "<li class='rl next'>" in html and "The request" in html  # set up, spec, scaffold, Ship; mvp
+    assert page.get("/jobs/99").status_code == 404 and page.get("/p/trees/jobs/99").status_code == 404
+    golem.store.add_project("birds", "Birds", "")
+    assert page.get(f"/p/birds/jobs/{page.job.id}").status_code == 404  # another project's job
     assert page.get("/steps/999").status_code == 404 and page.get("/jobs/1/planned/99").status_code == 404
 
 
@@ -585,14 +591,13 @@ def test_a_project_with_two_changes_shows_each_and_who_waits_for_whom(golem, pag
     home = page.get("/").text
     assert "Bigger Cards" in home and "Round Timer" in home  # a lane each
     assert f"Waiting for job {a.id} to finish building, then make the change." in home
-    talk = page.get("/p/trees").text
-    assert talk.count("class=card-head") == 2 and f"Waiting for job {a.id} to finish building" in talk
+    talk = page.get("/p/trees").text  # each in the list, and it opens on the one ahead
+    assert "Bigger Cards" in talk and "Round Timer" in talk and f"Waiting for job {a.id} to finish building" in talk
+    assert "<h2>Bigger Cards</h2>" in talk
     settings = page.get("/p/trees/settings").text
     assert f"name=job value='{a.id}'" in settings and f"name=job value='{b.id}'" in settings  # controls for each
     assert f"waiting for job {a.id} to finish building" in golem.bot.status_text(golem.store.project("trees"))
 
-    golem.store.update_project("trees", parallel_jobs=1)  # one at a time: one lane, as ever
-    assert page.get("/p/trees").text.count("class=card-head") == 1
 
 
 def test_how_many_workers_and_what_memory_each_has(golem, page, monkeypatch):
@@ -784,30 +789,46 @@ def test_the_inbox_adopts_a_repo(golem, app):
     assert golem.store.active_job("mimic").request == "!adopt mimic cards for my table"
 
 
-def test_a_project_page_is_its_conversation(golem, app):
+def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     from test_flow import TREES, by_label
+
+    from golem.bot import QUESTION_PRIORITY
 
     golem.harness.script = [TREES]
     sign_in(app)
     say(app, "inbox", "a flashcard game for identifying northeastern us trees")
     job = golem.store.active_job("tree-cards")
     html = app.get("/p/tree-cards").text
-    assert "Tree Cards" in html and "class=pieces" in html and "You said: “a flashcard game" in html
-    assert "href='/p/tree-cards/settings'" in html
-    assert "A note for the job&#x27;s next step" in html and "Options first" not in html  # a job's under way
+    assert "Tree Cards" in html and "class=route-list" in html and "href='/p/tree-cards/settings'" in html
+    assert "Add a note" in html and "class='card ask-form'" in html and "<option value='options'>Options</option>" in html
+    parts = app.get(f"/p/tree-cards/jobs/{job.id}?parts=jobs,head,nope").json()  # what the page refreshes, a part at a time
+    assert set(parts) == {"jobs", "head"} and "Tree Flashcard Game" in parts["head"] and "class=job-rows" in parts["jobs"]
     html = app.get("/p").text  # every project as a card, with its latest job's route
     assert "class=project-grid" in html and "href='/p/tree-cards'" in html and "Tree Flashcard Game" in html and "class='route small'" in html
 
-    golem.store.update_job(job.id, state="done")
-    assert "Options first" in app.get("/p/tree-cards").text
-    golem.harness.script = by_label({"options": []})
-    assert say(app, "tree-cards", "a new logo", command="options") == "/p/tree-cards#end"
-    options = golem.store.active_job("tree-cards")
-    assert (options.playbook, options.request) == ("options", "a new logo")
-    golem.store.update_job(options.id, state="waiting")
-    assert "Your answer" in app.get("/p/tree-cards").text
-    say(app, "tree-cards", "B")
-    assert golem.store.job(options.id).state == "queued"  # an answer picks the job back up
+    # With a job under way, asking still starts one of its own: it waits its turn.
+    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
+    r = app.post("/p/tree-cards/ask", data={"text": "make the cards bigger", "workflow": "", "mode": "auto"}, follow_redirects=False)
+    bigger = golem.store.project_jobs("tree-cards")[0]
+    assert r.headers["location"] == f"/p/tree-cards/jobs/{bigger.id}?msg=" + quote(f"Started job #{bigger.id}: Bigger Cards.")
+    assert bigger.id != job.id and (bigger.workflow, bigger.state, bigger.request) == ("change", "queued", "make the cards bigger")
+    assert [m.text for m in golem.store.job_messages(bigger.id)] == ["make the cards bigger"]  # its activity starts with what he asked
+    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "A New Logo"}]})
+    app.post("/p/tree-cards/ask", data={"text": "a new logo", "workflow": "options", "mode": ""})
+    logo = golem.store.project_jobs("tree-cards")[0]
+    assert (logo.workflow, logo.mode, logo.title) == ("options", "", "A New Logo")  # his picks over the call's
+    golem.harness.script = by_label({"request": [{"workflow": "question", "mode": "none", "title": "Why So Slow"}]})
+    app.post("/p/tree-cards/ask", data={"text": "why is it slow?", "workflow": "", "mode": "auto"})
+    why = golem.store.project_jobs("tree-cards")[0]
+    assert why.start == "look" and why.priority == QUESTION_PRIORITY  # a question goes ahead of other work
+    assert "Sign%20in%20first" in app.post("/p/tree-cards/ask", data={"text": "x"}, headers={"origin": "https://evil.example"},
+                                            follow_redirects=False).headers["location"]  # fmt: skip
+    assert "Write%20something%20first" in app.post("/p/tree-cards/ask", data={"text": " "}, follow_redirects=False).headers["location"]
+    assert "no%20mode" in app.post("/p/tree-cards/ask", data={"text": "x", "mode": "nope"}, follow_redirects=False).headers["location"]
+
+    golem.store.update_job(logo.id, state="waiting")  # a reply, from its pane or Now, picks it back up
+    act(app, action="note", job=logo.id, value="B")
+    assert golem.store.job(logo.id).state == "queued" and golem.store.job_messages(logo.id)[-1].text == "B"
 
     say(app, "tree-cards", "Leaf Cards", command="rename")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
@@ -816,7 +837,8 @@ def test_a_project_page_is_its_conversation(golem, app):
     assert "type%20tree-cards%20exactly" in say(app, "tree-cards", "trees", command="delete")
     assert "golem can" in unquote(say(app, "status", "hello"))
     assert "Write something first" in unquote(say(app, "tree-cards", "x", command="kill"))
-    golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
+    for j in golem.store.project_jobs("tree-cards"):
+        golem.store.update_job(j.id, state="done")
     assert say(app, "tree-cards", "tree-cards", command="delete") == "/inbox#end"
     assert golem.store.project("tree-cards") is None and app.get("/p/tree-cards").status_code == 404
 
@@ -830,9 +852,8 @@ def test_every_page_is_a_click_from_anywhere(golem, page):
         assert "<nav class=tabs" in html and "<nav class=side" in html, path  # the tab bar, and the sidebar on a wide screen
         assert "href='/p/birds/settings'" in html and "href='/settings'" in html, path  # another project's settings, golem's
         assert "class=count aria-label='1 needs you'>1</b>" in html, path  # trees is waiting on him
-    html = page.get("/p/trees/settings").text  # a project's own tabs: its conversation, settings and the job under way
-    assert "<a href='/p/trees'>Conversation</a><a href='/p/trees/settings' class=on aria-current=page>Settings</a>" in html
-    assert f"<a href='/jobs/{page.job.id}'>Job #{page.job.id}</a>" in html
+    html = page.get("/p/trees/settings").text  # a project's own tabs: its jobs and settings
+    assert "<a href='/p/trees'>Jobs</a><a href='/p/trees/settings' class=on aria-current=page>Settings</a></nav>" in html
     assert "<li class='c1 on'><a href='/p/trees'>" in html  # lit up in the sidebar
     assert "href='/workflows'" in html and "href=/new" in html  # Workflows, and a new project, for Riggy
     assert "class=gear href='/p/birds/settings'" in page.get("/p").text  # straight to its settings from the list
@@ -848,11 +869,11 @@ def test_a_long_conversation_shows_its_latest_messages_first(golem, app):
     for n in range(SHOWN + 5):
         golem.store.add_message("trees", "golem", f"note {n}.")
     sign_in(app)
-    html = app.get("/p/trees").text
+    assert "href='/p/trees/history'>History</a>" in app.get("/p/trees").text  # said before jobs had their own activity
+    html = app.get("/p/trees/history").text
     assert f"note {SHOWN + 4}." in html and "note 5." in html and "note 4." not in html
     assert f"href='?show={2 * SHOWN}' data-earlier>Show earlier messages" in html
-    assert "class=to-latest hidden" in html  # shown by the page's script once scrolled up
-    html = app.get(f"/p/trees?part=lanes&show={2 * SHOWN}").text  # what the link loads in place
+    html = app.get(f"/p/trees/history?part=lanes&show={2 * SHOWN}").text  # what the link loads in place
     assert "note 0." in html and "Show earlier" not in html
     for n in range(SHOWN + 1):
         golem.store.add_message("status", "golem", f"news {n}.")
@@ -871,7 +892,8 @@ def test_conversations_are_private_and_writing_needs_this_site(golem, app):
     assert "Sign%20in%20first" in r.headers["location"] and golem.store.messages("tree-cards")[-1].text != "delete everything"
     app.post("/logout", follow_redirects=False)
     html = app.get("/p/tree-cards").text
-    assert "Sign in (Settings) to see the conversation" in html and "You said:" not in html and "class=composer" not in html
+    assert "Sign in (Settings) to see what golem and you said" in html and "class='card ask-form'" not in html
+    assert "/p/tree-cards/history" not in html and "Sign%20in" in app.get("/p/tree-cards/history", follow_redirects=False).headers["location"]
     assert "You said:" not in app.get("/p").text and "Tree Cards" in app.get("/p").text
 
 
@@ -999,13 +1021,15 @@ def test_the_graph_script_is_served_by_name_and_cached_by_its_hash(page):
 def test_a_running_job_is_drawn_lit_where_it_is(golem, page):
     job = page.job
     start(golem, job, "mvp")
-    html = page.get(f"/jobs/{job.id}/flow").text
-    assert "data-src='/jobs/1/flow.json'" in html and "/static/flow.js?v=" in html
-    assert html.index("</main>") < html.index("class=flow ")  # outside the part the page refreshes
+    assert page.get(f"/jobs/{job.id}/flow?path=ship", follow_redirects=False).headers["location"] == "/p/trees/jobs/1?view=graph&path=ship"
+    html = page.get(f"/jobs/{job.id}/flow").text  # in its pane now
+    assert "data-src='/jobs/1/flow.json'" in html and "/static/flow.js?v=" in html and "data-view=graph" in html
+    assert html.index("<div data-part=head>") < html.index("class=flow ") < html.index("<div data-part=steps>")  # between the parts that refresh
     view = page.get(f"/jobs/{job.id}/flow.json").json()
     nodes = {n["id"]: n for n in view["nodes"]}
     assert (nodes["spec"]["state"], nodes["mvp"]["state"], nodes["buildout"]["state"]) == ("done", "next", "todo")
-    assert nodes["ship"]["type"] == "container" and nodes["ship"]["state"] == "done" and nodes["ship"]["open"] == "/jobs/1/flow?path=ship"
+    assert nodes["ship"]["type"] == "container" and nodes["ship"]["state"] == "done" and nodes["ship"]["open"] == "/p/trees/jobs/1?view=graph&path=ship"
+    assert nodes["ship"]["src"] == "/jobs/1/flow.json?path=ship"  # opened in place
     assert nodes["ship-2"]["state"] == "todo" and nodes["mvp"]["href"].startswith("/steps/")
     assert nodes["buildout"]["href"].startswith("/jobs/1/planned/")
     assert {"from": "mvp", "port": "done", "to": "ship-2"} in view["edges"] and view["poll"] == 10
@@ -1146,3 +1170,23 @@ def test_tabs_settings_and_archiving(golem, page):
     options = golem.store.workflow(key="options")
     assert "Archived" in act(page, action="workflow-archive", workflow=options.id, value="on")
     assert "options" not in [k.key for k in golem.bot.kinds()] if hasattr(golem, "bot") else True
+
+
+def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_latest_change(golem, page):
+    from golem.projectpage import chosen
+
+    trees = page.job
+    golem.store.update_job(trees.id, state="done")
+    looked = golem.store.add_job("trees", "change", "Look at its features", "proposals", start="propose")
+    golem.store.update_job(looked.id, state="done")
+    newest_first = lambda: golem.store.project_jobs("trees")  # noqa: E731
+    assert chosen(newest_first()).id == trees.id  # nothing under way: the latest that changed it, not the look
+    assert "<span class='badge finished'>Done</span>" in page.get(f"/p/trees/jobs/{looked.id}").text  # a look ships nothing
+    a = golem.store.add_job("trees", "change", "bigger cards", "feature")
+    b = golem.store.add_job("trees", "change", "a timer", "feature")
+    assert chosen(newest_first()).id == a.id  # the next to run
+    golem.store.update_job(b.id, state="running")
+    assert chosen(newest_first()).id == b.id
+    golem.store.update_job(a.id, state="waiting")
+    assert chosen(newest_first()).id == a.id  # what needs him first
+    assert "/p/trees/history" not in page.get("/p/trees").text  # nothing said before jobs had their own activity

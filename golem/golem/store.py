@@ -758,6 +758,18 @@ class Store:
             rows = self.db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [Job(**r) for r in rows]
 
+    def project_jobs(self, slug: str, limit: int = 1000) -> list[Job]:
+        """A project's jobs, the latest first (by when they began, as `jobs`)."""
+        rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? ORDER BY created_at DESC, id DESC LIMIT ?", (slug, limit))
+        return [Job(**r) for r in rows]
+
+    def project_job_count(self, slug: str) -> int:
+        return self.db.execute("SELECT COUNT(*) FROM jobs WHERE slug = ?", (slug,)).fetchone()[0]
+
+    def has_history(self, slug: str) -> bool:
+        """Whether anything was said in a project's conversation before jobs had their own activity."""
+        return self.db.execute("SELECT 1 FROM messages WHERE channel = ? AND job_id IS NULL LIMIT 1", (slug,)).fetchone() is not None
+
     def active_job_ids(self) -> set[int]:
         """Every unfinished job's id."""
         marks = ", ".join("?" * len(ACTIVE))
