@@ -1082,7 +1082,11 @@ def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
     html = page.get("/workflows").text
     assert "Starts a new project" in html and "Web app" in html and "!with" not in html
     assert "fallback</span>" in html and "Starts a sub-workflow" in html
-    assert "id=modes" in html and "He wants extra care taken" in html and "When golem can&#x27;t tell which" not in html.split("Starts a new project")[1].split("Starts a change")[0]
+    assert "When golem can&#x27;t tell which" not in html.split("Starts a new project")[1].split("Starts a change")[0]
+    assert "<a href='/workflows/modes'>Modes</a>" in html and "id=modes" not in html  # the modes have a tab of their own
+    modes = page.get("/workflows/modes").text
+    assert "id=modes" in modes and "He wants extra care taken" in modes and "class=on aria-current=page>Modes</a>" in modes
+    assert "<a href='/workflows' class='item on'" in modes  # under Workflows in the sidebar
     assert "When golem can't tell which" in html  # changes have several workflows to fall back between
     web = golem.store.workflow(key="web_app")
     html = page.get(f"/workflows/{web.id}?mode=rigorous").text

@@ -637,7 +637,14 @@ def create_app(
         signed = signed_in(request)
         if not signed:
             return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
-        return respond(request, "Workflows", flows.workflows_page(store, signed), signed, here="settings", up=("/settings", "Settings"))
+        return respond(request, "Workflows", flows.workflows_page(store, signed), signed, here="workflows", subnav=flows.tabs("workflows"))
+
+    async def modes_page(request: Request) -> Response:
+        """The modes requests can ask for, what each is for, and golem's default."""
+        signed = signed_in(request)
+        if not signed:
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+        return respond(request, "Modes", flows.modes_card(store), signed, here="workflows", subnav=flows.tabs("modes"))
 
     def one_workflow(request: Request) -> tuple[Workflow | None, str]:
         wf = store.workflow(request.path_params["workflow_id"])
@@ -652,7 +659,7 @@ def create_app(
         if wf is None:
             return HTMLResponse("No such workflow.", 404)
         src = f"/workflows/{wf.id}.json?edit=1" + (f"&mode={quote(mode)}" if mode else "")
-        return respond(request, wf.name, flows.workflow_page(store, wf, mode), signed, here="settings", up=("/workflows", "Workflows"),
+        return respond(request, wf.name, flows.workflow_page(store, wf, mode), signed, here="workflows", up=("/workflows", "Workflows"),
                        stage=flows.stage(src, "edit"))  # fmt: skip
 
     async def workflow_json(request: Request) -> Response:
@@ -894,7 +901,7 @@ def create_app(
             Route("/insights", insights_page),
             Route("/static/{name}", static),
             Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
-            Route("/workflows", workflows_list), Route("/workflows/{workflow_id:int}", workflow_page),
+            Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),
             Route("/workflows/{workflow_id:int}.json", workflow_json),
             Route("/workflows/{workflow_id:int}/save", workflow_save, methods=["POST"]),
             Route("/login", login, methods=["POST"]),

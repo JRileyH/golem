@@ -283,13 +283,21 @@ def workflows_page(store: Store, signed: bool) -> str:
         "<input name=value placeholder='Its name, like Game maker' required maxlength=60 aria-label='Name'>"
         f"<label>Starts a <select name=start aria-label='What it starts for'>{starts}</select></label><button>Make it</button></form></section>"
     )
-    return lead + new + "".join(groups) + modes_card(store)
+    return lead + new + "".join(groups)
+
+
+def tabs(here: str) -> str:
+    """The Workflows section's own tabs: its workflows, and the modes requests can ask for."""
+    items = (("workflows", "/workflows", "Workflows"), ("modes", "/workflows/modes", "Modes"))
+    return "<nav class=subnav aria-label=Workflows>" + "".join(
+        f"<a href='{href}'{' class=on aria-current=page' if key == here else ''}>{label}</a>" for key, href, label in items
+    ) + "</nav>"
 
 
 def modes_card(store: Store) -> str:
     """Modes: ways of working a request can ask for. Each says what to look for in a request, and
     a workflow with a tab for it runs that tab; one without runs its default."""
-    back = "/workflows#modes"
+    back = "/workflows/modes"
     hidden = lambda **f: "".join(f"<input type=hidden name={k} value='{escape(str(v))}'>" for k, v in {**f, "back": back}.items())  # noqa: E731
     rows = []
     for m in store.modes():

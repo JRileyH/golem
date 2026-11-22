@@ -44,7 +44,6 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
         account = signin_card("/settings")
     more = (
         "<section class=card><ul class=links-list>"
-        + ("<li><a href=/workflows>Workflows</a><span class=sub>How golem works through each kind of request, block by block, and the modes requests can ask for.</span></li>" if signed_in else "")
         + "<li><a href=/insights>Insights</a><span class=sub>Where the time and Claude usage go, by kind of step, project and model.</span></li>"
         "<li><a href=/projects>Public projects page ↗</a><span class=sub>A card for each live project, for anyone.</span></li>"
         "</ul></section>"
