@@ -73,6 +73,8 @@ def planned(settings: Settings, store: Store, job: Job) -> list[Step]:
     project = store.project(job.slug)
     specs = load(settings, job.playbook).for_mode(project.mode)
     steps = [Step(0, job.id, i, s.kind, s.name, s.max_turns or None, s.optional) for i, s in enumerate(specs, start=1)]
+    for s in steps:
+        s.turn = turn_of(steps, s)
     if job.phase or store.runs(job.id):
         names = LEGACY_PHASES.get(job.playbook, [])[job.phase :]
         resume = next((i for i, s in enumerate(steps) if s.kind == "agent" and s.name in names), 0)
@@ -194,6 +196,26 @@ def step_class(steps: list[Step], step: Step) -> str:
         later = sorted((s for s in steps if s.position > step.position), key=lambda s: s.position)
         return next((step_class(steps, s) for s in later if (s.name if s.kind == "agent" else s.kind) not in INSERTED), "finish")
     return CLASSES.get(key, "build" if step.kind == "agent" else "plan")
+
+
+def turn_of(steps: list[Step], step: Step) -> str:
+    """The turn a step takes on its project (turns.py): build, ship or none. Written on the step
+    when it's added; worked out from its class (step_class) for steps from before."""
+    if step.turn:
+        return step.turn
+    kind = step_class(steps, step)
+    return kind if kind in ("build", "ship") else "none"
+
+
+def run_before(steps: list[Step], step: Step) -> list[Step]:
+    """The steps of `step`'s turn that lead up to it, in order, ending with it: its job's turn at
+    building, say, from the catch-up with main through `step`."""
+    ordered = sorted(steps, key=lambda s: s.position)
+    i = next(i for i, s in enumerate(ordered) if s.position == step.position)
+    turn, start = turn_of(ordered, step), i
+    while start > 0 and turn_of(ordered, ordered[start - 1]) == turn:
+        start -= 1
+    return ordered[start : i + 1]
 
 
 def section(steps: list[Step], step: Step) -> list[Step]:

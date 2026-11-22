@@ -309,6 +309,16 @@ class Scheduler:
             steps = self.store.steps(job.id)
         return steps
 
+    def insert(self, job_id: int, steps: list[Step], after: int) -> None:
+        """Steps golem puts in where they're needed (a fix, a catch-up with main, another round),
+        after the step at position `after`, each with the turn it takes (plan.turn_of): one put in
+        is part of the turn of the step it comes before."""
+        self.store.add_steps(job_id, steps, after=after)
+        steps = self.store.steps(job_id)
+        for s in steps:
+            if not s.turn:
+                self.store.update_step(s.id, turn=plan.turn_of(steps, s))
+
     def prepare(self, job: Job) -> Step | None:
         """The job's current step, ready to run: the job's steps written the first time, a catch-up
         with main put in where its turn at building or shipping begins (turns.py), the job running
@@ -318,7 +328,7 @@ class Scheduler:
         if step is None:
             return None
         if self.needs_sync(job, steps, step):
-            self.store.add_steps(job.id, [Step(0, job.id, 0, "sync", "sync")], after=step.position - 1)
+            self.insert(job.id, [Step(0, job.id, 0, "sync", "sync")], after=step.position - 1)
             step = plan.current(self.store.steps(job.id))
         self.store.update_job(job.id, state="running")
         if step.started_at is None:
@@ -332,9 +342,9 @@ class Scheduler:
         if job.kind != "change" or job.start in LOOKS or not job.worktree or step.started_at or step.kind == "sync":
             return False
         project = self.store.project(job.slug)
-        if project is None or project.parallel_jobs <= 1 or plan.step_class(steps, step) not in turns.TURNS:
+        if project is None or project.parallel_jobs <= 1 or plan.turn_of(steps, step) not in turns.TURNS:
             return False
-        return plan.section(steps, step)[0].position == step.position  # a catch-up before it would be in its section
+        return plan.run_before(steps, step)[0].position == step.position  # a catch-up before it would be in its turn
 
     async def step(self, job: Job) -> None:
         """Do the job's current step and act on how it went."""
@@ -379,7 +389,7 @@ class Scheduler:
                 steps = self.store.steps(job.id)
                 fixes = sum(1 for s in steps if s.kind == "agent" and s.name == "fix")
                 fix = Step(0, job.id, 0, "agent", "fix", FIX_TURNS, problem=outcome.problem)
-                self.store.add_steps(job.id, [fix, *_retry(steps, step)], after=step.position)
+                self.insert(job.id, [fix, *_retry(steps, step)], after=step.position)
                 if fixes < MAX_FIXES:
                     self.store.update_job(job.id, state="queued", attempts=0)
                     await self.say(project, f"✗ {name}: {outcome.summary}. Fixing it.", notice=True)
@@ -395,7 +405,7 @@ class Scheduler:
                 steps = self.store.steps(job.id)
                 tries = sum(1 for s in steps if s.kind == "agent" and s.name == "resolve")
                 resolve = Step(0, job.id, 0, "agent", "resolve", RESOLVE_TURNS, problem=outcome.problem)
-                self.store.add_steps(job.id, [resolve, Step(0, job.id, 0, "sync", "sync")], after=step.position)
+                self.insert(job.id, [resolve, Step(0, job.id, 0, "sync", "sync")], after=step.position)
                 if tries < MAX_RESOLVES:
                     self.store.update_job(job.id, state="queued", attempts=0)
                     await self.say(project, f"Main moved on under {plan.title(job)}: {outcome.summary}. Merging it in.", notice=True)
@@ -938,7 +948,7 @@ class Scheduler:
                     Step(0, job.id, 0, "agent", made.name, made.max_turns),
                     Step(0, job.id, 0, "choose", "choose", optional=step.optional),
                 ]
-                self.store.add_steps(job.id, again, after=step.position)
+                self.insert(job.id, again, after=step.position)
                 return Outcome("done", options.again(reply, shown, said, design is not None))
             return Outcome("done", options.picked(reply, shown, said))
         for o in shown:  # after "✓ options: <what they are>"

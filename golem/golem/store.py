@@ -99,7 +99,8 @@ CREATE TABLE IF NOT EXISTS steps (
     model TEXT,                      -- Riggy's choice for this step, over the defaults
     effort TEXT,
     options TEXT NOT NULL DEFAULT '[]', -- JSON: an options step's options (options.py)
-    design TEXT NOT NULL DEFAULT '{}'   -- JSON: a design round's doc, pages, questions and pick (options.Design)
+    design TEXT NOT NULL DEFAULT '{}',  -- JSON: a design round's doc, pages, questions and pick (options.Design)
+    turn TEXT NOT NULL DEFAULT ''       -- the turn it takes on its project: build | ship | none; '' from before (turns.py)
 );
 -- What the projects page shows for a live project (cards.py).
 CREATE TABLE IF NOT EXISTS cards (
@@ -174,6 +175,7 @@ MIGRATIONS = {
         "effort": "TEXT",
         "options": "TEXT NOT NULL DEFAULT '[]'",
         "design": "TEXT NOT NULL DEFAULT '{}'",
+        "turn": "TEXT NOT NULL DEFAULT ''",
     },
     "notes": {"step_id": "INTEGER"},  # a note for one step rather than the next
 }
@@ -321,6 +323,7 @@ class Step:
     effort: str | None = None
     options: list[dict] = field(default_factory=list)  # an options step's, as options.Option fields
     design: dict = field(default_factory=dict)  # a design step's round, as options.Design fields
+    turn: str = ""  # the turn it takes on its project: build | ship | none; "" if not written down (plan.turn_of)
 
 
 class Store:
@@ -704,9 +707,9 @@ class Store:
                 )
             for i, s in enumerate(steps, start=after + 1):
                 self.db.execute(
-                    "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links)),
+                    "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links), s.turn),
                 )
 
     def steps(self, job_id: int) -> list[Step]:

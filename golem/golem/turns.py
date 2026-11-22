@@ -10,7 +10,7 @@ CI. Two things go one job at a time per project (plan.CLASSES):
 - shipping: from catching up with main, through the push, PR, CI and merge, to the deploy.
   Main moves only under the job shipping, so what CI checked is what's merged and deployed.
 
-A job holds a turn while its current step is of that kind and that run of steps (plan.section)
+A job holds a turn while its current step is of that kind and that run of steps (plan.run_before)
 has started. Parked (on CI, a retry, a usage limit) it keeps it. Waiting on Riggy it lets a
 build turn go, as its work stays in its tree, and takes it back when it can; it keeps a ship
 turn, or another job could merge between its catch-up with main and its own merge. Turns are
@@ -43,9 +43,9 @@ def wants(store: Store, job: Job) -> Turn | None:
         return None
     steps = store.steps(job.id)
     step = plan.current(steps)
-    if step is None or (kind := plan.step_class(steps, step)) not in TURNS:
+    if step is None or (kind := plan.turn_of(steps, step)) not in TURNS:
         return None
-    started = [s.started_at for s in plan.section(steps, step) if s.position <= step.position and s.started_at]
+    started = [s.started_at for s in plan.run_before(steps, step) if s.started_at]
     return Turn(kind, min(started, default=""))
 
 

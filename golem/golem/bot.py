@@ -308,7 +308,7 @@ class Bot:
         if other is None or other.state not in ACTIVE:
             return f"Job {last['other']} has finished, so job {new.id} carries on as its own change."
         steps = self.store.steps(new.id)
-        if any(s.started_at and plan.step_class(steps, s) == "build" for s in steps):
+        if any(s.started_at and plan.turn_of(steps, s) == "build" for s in steps):
             return f"Job {new.id} has started building: !kill {new.id} if you'd rather it went with job {other.id}."
         self.scheduler.kill(new.id)
         self.store.add_note(other.id, last["text"])

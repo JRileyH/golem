@@ -133,6 +133,21 @@ def test_steps_golem_puts_in_are_part_of_the_section_they_are_in():
     assert [s.name for s in plan.section(steps, steps[2])] == ["sync", "change"]
     assert [s.position for s in plan.section(steps, steps[9])] == list(range(6, 16))  # the fix is shipping
     assert plan.step_class([Step(1, 1, 1, "agent", "something-new")], Step(1, 1, 1, "agent", "something-new")) == "build"
+    # Turns: building and shipping, read backwards from a step; everything else is none.
+    assert [plan.turn_of(steps, s) for s in steps][:6] == ["none", "build", "build", "none", "none", "ship"]
+    assert [s.position for s in plan.run_before(steps, steps[9])] == list(range(6, 11))
+    assert [s.name for s in plan.run_before(steps, steps[2])] == ["sync", "change"]
+    # A step that says its turn keeps it, whatever its name.
+    steps[3].turn = "build"
+    assert [s.name for s in plan.run_before(steps, steps[3])] == ["sync", "change", "review"]
+
+
+def test_a_new_jobs_steps_say_the_turn_each_takes(golem):
+    golem.store.add_project("trees", "Trees", "s")
+    job = golem.store.add_job("trees", "change", "add a quiz", "feature")
+    steps = golem.scheduler.ensure_steps(job)
+    assert [(s.name, s.turn) for s in steps][:3] == [("setup", "none"), ("change", "build"), ("review", "none")]
+    assert {s.turn for s in steps if s.kind in ("push", "pr", "checks", "merge", "deploy")} == {"ship"}
 
 
 def test_changes_on_one_project_take_turns_at_building_and_shipping(tmp_path):
