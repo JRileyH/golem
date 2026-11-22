@@ -14,6 +14,8 @@ button each), or answer. The insights page shows where the time and Claude usage
 
 from __future__ import annotations
 
+import hashlib
+
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -104,13 +106,15 @@ class SheetData:
 
 
 def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", bottom: str = "", here: str = "",
-         up: tuple[str, str] | None = None, subnav: str = "", nav: list[NavProject] = (), behind: bool = False) -> str:  # fmt: skip
+         up: tuple[str, str] | None = None, subnav: str = "", nav: list[NavProject] = (), behind: bool = False,
+         stage: str = "") -> str:  # fmt: skip
     """The page around `body` (the part the script refreshes). `here` is where it is: "home",
     "projects", "settings", "insights", "inbox" or a project's slug; the tab bar and sidebar
     light it up. A page below the top level also has the way back (`up`: where, and its name);
     `subnav` is a row of tabs under the header (a project's: project_tabs). `bottom` sticks to the
     bottom of the screen, outside the refreshed part, so what's being written there is never
-    lost. `behind` marks Settings: a new version of golem is on GitHub."""
+    lost. `behind` marks Settings: a new version of golem is on GitHub. `stage` comes after the
+    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
     marks = {"home": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
@@ -130,10 +134,28 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <link rel=manifest href=/manifest.webmanifest>{pwa.touch_icon()}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
 <div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1></header>{subnav}</div>
-{banner}{flash_html}<main id=lanes>{body}</main><div class=dock>{latest}{bottom}{tabs}</div>
+{banner}{flash_html}<main id=lanes>{body}</main>{stage}<div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
-<script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}</html>"""
+<script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}{static_scripts(stage)}</html>"""
+
+
+STATIC = ("flow.js", "editor.js")  # served from golem/static/, by name only
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+def static_version(name: str) -> str:
+    """A short hash of a static file, so its URL changes when it does (cached for a year)."""
+    path = STATIC_DIR / name
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:10] if path.is_file() else "0"
+
+
+def static_scripts(stage: str) -> str:
+    """The graph's scripts, on pages that draw one; the editor's too where it edits."""
+    if not stage:
+        return ""
+    names = ["flow.js", *(["editor.js"] if "data-mode=edit" in stage else [])]
+    return "".join(f"<script src='/static/{n}?v={static_version(n)}' defer></script>" for n in names)
 
 
 def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, str]) -> str:
@@ -665,6 +687,20 @@ def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallb
 
 
 # --- pieces ---------------------------------------------------------------------------
+
+
+def trail(steps: list[Step], job: Job) -> str:
+    """The way a job went through its workflow, block by block: each step that ran or was passed
+    over, and the output it left by where it chose one."""
+    shown = [s for s in plan.shown(steps) if s.state in ("done", "failed", "skipped")]
+    if not shown:
+        return "<p class=muted>No steps were recorded.</p>"
+    items = []
+    for s in shown:
+        how = f" <span class=muted>→ {escape(s.port)}</span>" if s.port and s.port not in ("next", "done", "replied") else ""
+        again = f" <span class=muted>(×{s.visit})</span>" if s.visit > 1 else ""
+        items.append(f"<li class='chip {s.state}'><a href='{escape(step_href(job, s))}' data-sheet>{escape(plan.label(s))}</a>{again}{how}</li>")
+    return f"<ol class=trail>{''.join(items)}</ol>"
 
 
 def step_href(job: Job, step: Step) -> str:
@@ -1277,6 +1313,56 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .picks select { min-height:32px; font-size:.82rem; }
 .picks > span { color:var(--ink); font-size:.88rem; } .picks > span + span::before { content:"· "; color:var(--muted); }
 @media (max-width:640px) { .bars li { grid-template-columns:minmax(3.5rem, 6rem) 1fr auto; } }
+/* Workflows, drawn (flows.py, static/flow.js) */
+.flow { position:relative; margin:0 auto 1rem; width:min(100%, 72rem); padding:0 max(.9rem, env(safe-area-inset-left)); box-sizing:border-box; }
+.flow-canvas { display:block; width:100%; height:min(74vh, 52rem); background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge);
+  touch-action:none; user-select:none; -webkit-user-select:none; cursor:grab; }
+.flow-canvas:active { cursor:grabbing; }
+.flow-tools { position:absolute; z-index:2; top:.5rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); display:flex; gap:.3rem; }
+.flow-tools button { min-width:36px; min-height:36px; padding:0 .6rem; }
+.flow-crumbs { display:flex; flex-wrap:wrap; gap:.2rem; font:600 .9rem/1.4 var(--display); margin:.2rem 0 .5rem; color:var(--muted); }
+.flow-crumbs:empty { display:none; }
+.flow-note { margin:.2rem 0 .5rem; padding:.45rem .7rem; border-radius:var(--radius); background:var(--wait-bg); color:var(--wait-fg); font-size:.88rem; }
+.flow-lead { margin-bottom:.4rem; } .flow-link { margin:.6rem 0; }
+.flow-box { fill:var(--bg); stroke:var(--line); stroke-width:1.5; }
+.flow-inner { fill:none; stroke:var(--line); stroke-dasharray:3 3; }
+.flow-title { font:700 15px var(--display); fill:var(--ink); }
+.flow-sub { font:12px var(--body); fill:var(--muted); }
+.flow-port { fill:var(--card); stroke:var(--muted); stroke-width:1.5; }
+.flow-in { fill:var(--muted); }
+.flow-port-name { font:600 11px var(--body); fill:var(--muted); }
+.flow-wire { fill:none; stroke:var(--muted); stroke-width:1.6; opacity:.55; }
+.flow-wire.lit { stroke:var(--s-fin); opacity:.9; stroke-width:2.2; }
+.flow-arrowhead { fill:var(--muted); }
+.t-start .flow-box, .t-end .flow-box, .t-input .flow-box, .t-output .flow-box { fill:var(--stone, var(--card)); }
+.t-agent .flow-box { stroke:var(--accent); }
+.t-counter .flow-box, .t-condition .flow-box { stroke-dasharray:4 3; }
+.flow-node.done .flow-box { fill:var(--fin-bg); stroke:var(--s-fin); }
+.flow-node.skipped .flow-box { stroke-dasharray:2 3; opacity:.7; }
+.flow-node.failed .flow-box { fill:var(--bad-bg); stroke:var(--s-bad); }
+.flow-node.waiting .flow-box { fill:var(--wait-bg); stroke:var(--s-wait); stroke-width:3; }
+.flow-node.now .flow-box, .flow-node.next .flow-box { fill:var(--run-bg); stroke:var(--s-run); stroke-width:3; }
+.flow-node.now .flow-box { animation:flow-glow 1.6s ease-in-out infinite; }
+.flow-node.todo .flow-box { stroke:var(--s-q); }
+.flow-node.bad .flow-box { stroke:var(--s-bad); stroke-width:2.5; }
+.flow-warn { font:800 16px var(--display); fill:var(--s-bad); }
+.flow-visits { fill:var(--s-run); } .flow-visits-text { font:700 11px var(--body); fill:var(--s-run-on); }
+.flow-node:focus-visible .flow-box, a:focus-visible .flow-box { stroke:var(--accent); stroke-width:3; }
+@keyframes flow-glow { 50% { stroke-opacity:.35; } }
+@media (prefers-reduced-motion: reduce) { .flow-node.now .flow-box { animation:none; } }
+.flow-info { position:absolute; z-index:3; top:3.2rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); width:min(24rem, calc(100% - 2.8rem));
+  max-height:calc(100% - 4rem); overflow:auto; padding:.8rem 1rem; background:var(--card); border-radius:var(--radius); box-shadow:0 6px 24px rgba(0,0,0,.18); }
+.flow-info h3 { font:700 1.05rem/1.3 var(--display); margin:0 2rem .2rem 0; } .flow-info .close { position:absolute; top:.4rem; right:.4rem; }
+.flow-info dl { display:grid; grid-template-columns:auto 1fr; gap:.25rem .8rem; margin:.6rem 0 0; font-size:.86rem; }
+.flow-info dt { color:var(--muted); } .flow-info dd { margin:0; overflow-wrap:anywhere; }
+.flow-info .flow-text { grid-column:1 / 3; white-space:pre-wrap; font:12.5px/1.45 var(--mono); max-height:20rem; overflow:auto; background:var(--bg); padding:.5rem; border-radius:var(--radius); }
+.flow-problem { color:var(--bad-fg); background:var(--bad-bg); padding:.35rem .55rem; border-radius:var(--radius); font-size:.86rem; }
+.flow-tabs { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.4rem; }
+.flow-tabs a { padding:.3rem .7rem; border-radius:var(--radius); background:var(--bg); color:var(--ink); text-decoration:none; font-weight:600; }
+.flow-tabs a.on { background:var(--rust, var(--accent)); color:#fff; }
+.workflows { list-style:none; padding:0; margin:0; } .workflows li { padding:.6rem 0; border-top:1px solid var(--line); }
+.workflows li:first-child { border-top:0; } .workflows p { margin:.2rem 0 0; }
+.trail { list-style:none; padding:0; margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem; }
 """
 
 # Refresh the page's main part every 10 seconds without losing what's open, scrolled or being typed; show

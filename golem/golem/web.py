@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, config, conversation, gallery, home, insights, options, pages, plan, pwa, turns
+from . import brand, config, conversation, flows, gallery, home, insights, options, pages, plan, pwa, turns
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -45,7 +45,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, LOOKS, Job, Project, Said, Step, Store
+from .store import ACTIVE, LOOKS, Job, Project, Said, Step, Store, Workflow
 from .talk import INBOX, STATUS
 
 if TYPE_CHECKING:
@@ -218,8 +218,10 @@ def create_app(
         now = datetime.now(UTC)
         ctx = context(now)
         data = lane(job, project, ctx["order"].get(job.id), signed, ctx)
+        flow = f"<p class=flow-link><a class=button href='/jobs/{job.id}/flow'>See it as a workflow</a></p>" if job.graph or job.state in ACTIVE else ""
         body = (
             pages.status_card(data, signed, now)
+            + flow
             + pages.request_card(job)
             + f"<section class=card><h2>Every step</h2>{pages.steps_lists(data, signed, now)}</section>"
         )
@@ -308,13 +310,13 @@ def create_app(
         return out
 
     def respond(request: Request, title: str, body: str, signed: bool, bottom: str = "", here: str = "",
-                up: tuple[str, str] | None = None, subnav: str = "") -> Response:  # fmt: skip
+                up: tuple[str, str] | None = None, subnav: str = "", stage: str = "") -> Response:  # fmt: skip
         if request.query_params.get("part") == "lanes":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         flash = request.query_params.get("msg", "")[:300]
         behind = signed and scheduler.upgrades.behind() > 0
         html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, here=here, up=up, subnav=subnav,
-                          nav=nav(), behind=behind)  # fmt: skip
+                          nav=nav(), behind=behind, stage=stage)  # fmt: skip
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     def tabs(project: Project, here: str, signed: bool, job: Job | None = None) -> str:
@@ -494,6 +496,71 @@ def create_app(
             return Response("No such font.", 404)
         return FileResponse(pages.FONTS / name, media_type="font/woff2", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
+    async def static(request: Request) -> Response:
+        """The graph's scripts (flows.py): by name only, cached for a year (their URLs carry a hash)."""
+        name = request.path_params["name"]
+        if name not in pages.STATIC or not (pages.STATIC_DIR / name).is_file():
+            return Response("No such file.", 404)
+        return FileResponse(pages.STATIC_DIR / name, media_type="text/javascript",
+                            headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})  # fmt: skip
+
+    async def job_flow(request: Request) -> Response:
+        """A job walking its workflow, drawn: where it is, lit, and each block's sheet a tap away."""
+        job = store.job(request.path_params["job_id"])
+        if job is None:
+            return HTMLResponse("No such job.", 404)
+        signed = signed_in(request)
+        project = store.project(job.slug)
+        path = request.query_params.get("path", "")
+        if flows.job_view(settings, store, job, path) is None:  # over: its copy is gone; the way it went
+            body = f"<section class=card><h2>The way it went</h2><p class=muted>This job is over, so it no longer keeps its own copy of its workflow.</p>{pages.trail(store.steps(job.id), job)}</section>"
+            stage = ""
+        else:
+            body = f"<p class='lead flow-lead'><a href='/jobs/{job.id}'>Job #{job.id}</a>: {escape(plan.title(job))}</p>"
+            stage = flows.stage(f"/jobs/{job.id}/flow.json" + (f"?path={quote(path)}" if path else ""))
+        return respond(request, f"Job #{job.id}", body, signed, here=job.slug, up=(f"/jobs/{job.id}", f"Job #{job.id}"),
+                       subnav=tabs(project, "job", signed, job) if project else "", stage=stage)  # fmt: skip
+
+    async def job_flow_json(request: Request) -> Response:
+        job = store.job(request.path_params["job_id"])
+        found = flows.job_view(settings, store, job, request.query_params.get("path", "")) if job else None
+        if found is None:
+            return JSONResponse({"error": "No such job, or it's over."}, 404)
+        if not signed_in(request):  # what a block's told to do is for Riggy
+            for n in found["nodes"]:
+                n["info"] = [i for i in n["info"] if i[0] != "instructions"]
+        return JSONResponse(found, headers={"Cache-Control": "no-store"})
+
+    async def workflows_list(request: Request) -> Response:
+        signed = signed_in(request)
+        if not signed:
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+        return respond(request, "Workflows", flows.workflows_page(store, signed), signed, here="settings", up=("/settings", "Settings"))
+
+    def one_workflow(request: Request) -> tuple[Workflow | None, str]:
+        wf = store.workflow(request.path_params["workflow_id"])
+        mode = request.query_params.get("mode", "")
+        return wf, mode if wf and store.tab(wf.id, mode) else ""
+
+    async def workflow_page(request: Request) -> Response:
+        signed = signed_in(request)
+        if not signed:
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+        wf, mode = one_workflow(request)
+        if wf is None:
+            return HTMLResponse("No such workflow.", 404)
+        src = f"/workflows/{wf.id}.json" + (f"?mode={quote(mode)}" if mode else "")
+        return respond(request, wf.name, flows.workflow_page(store, wf, mode), signed, here="settings", up=("/workflows", "Workflows"),
+                       stage=flows.stage(src, "view"))  # fmt: skip
+
+    async def workflow_json(request: Request) -> Response:
+        if not signed_in(request):
+            return JSONResponse({"error": "Sign in first."}, 403)
+        wf, mode = one_workflow(request)
+        if wf is None:
+            return JSONResponse({"error": "No such workflow."}, 404)
+        return JSONResponse(flows.workflow_view(store, wf, mode), headers={"Cache-Control": "no-store"})
+
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
@@ -648,6 +715,10 @@ def create_app(
             Route("/jobs/{job_id:int}/options/{name}", option_image),
             Route("/steps/{step_id:int}", step_page),
             Route("/insights", insights_page),
+            Route("/static/{name}", static),
+            Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
+            Route("/workflows", workflows_list), Route("/workflows/{workflow_id:int}", workflow_page),
+            Route("/workflows/{workflow_id:int}.json", workflow_json),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),
             Route("/act", act, methods=["POST"]),

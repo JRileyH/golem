@@ -149,7 +149,7 @@ def flatten(root: Sub, start: str, mode: str, resolve: Resolver, outputs_ok: boo
 
     def open_up(sub: Sub, path: str, seen: tuple[str, ...]) -> None:
         g = sub.graph
-        levels[path] = {"key": sub.key, "name": sub.name, "tab": sub.tab}
+        levels[path] = {"key": sub.key, "name": sub.name, "tab": sub.tab, "graph": g}  # the graph as drawn, for the running view
         intros[path] = g.get("intro") or ""
         here, wired = by_id(g), wires(g)
         flat = (lambda i: f"{path}/{i}") if path else (lambda i: i)

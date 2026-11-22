@@ -72,7 +72,7 @@ def test_containers_open_in_place_with_their_ids_under_the_container():
     assert engine.happy_path(snap) == ["setup", "build", "ship/push", "ship/deploy", "ship-2/push", "ship-2/deploy", "end"]
     assert snap["edges"]["ship/deploy"] == {"pass": "ship-2/push", "fail": "ship/fix"}
     assert snap["edges"]["ship/fix"] == {"done": "ship/push"}
-    assert snap["levels"]["ship-2"] == {"key": "ship", "name": "Ship", "tab": ""}
+    assert {k: v for k, v in snap["levels"]["ship-2"].items() if k != "graph"} == {"key": "ship", "name": "Ship", "tab": ""}
     assert snap["nodes"]["ship/fix"]["path"] == "ship" and snap["nodes"]["ship/fix"]["ref"] == "fix"
 
 

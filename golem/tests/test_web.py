@@ -976,3 +976,69 @@ def test_devices_turn_notifications_on_and_get_what_wants_riggy(golem, app):
     assert app.post("/push/test", json={}).json() == {"sent": 1}
     app.post("/push/unsubscribe", json={"endpoint": "https://push.example/phone"})
     assert golem.store.subscriptions() == []
+
+
+# --- workflows, drawn ---------------------------------------------------------------
+
+
+def test_the_graph_script_is_served_by_name_and_cached_by_its_hash(page):
+    r = page.get("/static/flow.js")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
+    assert "immutable" in r.headers["cache-control"] and r.headers["x-content-type-options"] == "nosniff"
+    assert page.get("/static/../web.py").status_code == 404 and page.get("/static/nope.js").status_code == 404
+
+
+def test_a_running_job_is_drawn_lit_where_it_is(golem, page):
+    job = page.job
+    start(golem, job, "mvp")
+    html = page.get(f"/jobs/{job.id}/flow").text
+    assert "data-src='/jobs/1/flow.json'" in html and "/static/flow.js?v=" in html
+    assert html.index("</main>") < html.index("class=flow ")  # outside the part the page refreshes
+    view = page.get(f"/jobs/{job.id}/flow.json").json()
+    nodes = {n["id"]: n for n in view["nodes"]}
+    assert (nodes["spec"]["state"], nodes["mvp"]["state"], nodes["buildout"]["state"]) == ("done", "next", "todo")
+    assert nodes["ship"]["type"] == "container" and nodes["ship"]["state"] == "done" and nodes["ship"]["open"] == "/jobs/1/flow?path=ship"
+    assert nodes["ship-2"]["state"] == "todo" and nodes["mvp"]["href"].startswith("/steps/")
+    assert nodes["buildout"]["href"].startswith("/jobs/1/planned/")
+    assert {"from": "mvp", "port": "done", "to": "ship-2"} in view["edges"] and view["poll"] == 10
+    assert [c["label"] for c in view["crumbs"]] == ["Web app"]
+    assert not any(k == "instructions" for k, _ in nodes["spec"]["info"])  # signed out: not what agents are told
+    sign_in(page)
+    assert any(k == "instructions" for k, _ in {n["id"]: n for n in page.get(f"/jobs/{job.id}/flow.json").json()["nodes"]}["spec"]["info"])
+
+
+def test_a_container_opens_to_its_own_blocks(golem, page):
+    job = page.job
+    start(golem, job, "mvp")
+    view = page.get(f"/jobs/{job.id}/flow.json?path=ship").json()
+    nodes = {n["id"]: n for n in view["nodes"]}
+    assert nodes["push"]["state"] == "done" and nodes["fix"].get("state", "") == "" and nodes["out-shipped"]["type"] == "output"
+    assert [c["label"] for c in view["crumbs"]] == ["Web app", "Ship"]
+    assert nodes["checks"]["ports"] == ["pass", "fail"]
+
+
+def test_a_job_thats_over_shows_the_way_it_went(golem, page):
+    job = page.job
+    start(golem, job, "mvp")
+    golem.store.update_job(job.id, state="done")
+    assert page.get(f"/jobs/{job.id}/flow.json").status_code == 404
+    html = page.get(f"/jobs/{job.id}/flow").text
+    assert "The way it went" in html and "class=trail" in html and "class=flow " not in html
+
+
+def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
+    assert page.get("/workflows", follow_redirects=False).status_code == 303
+    assert page.get("/workflows/1.json").status_code == 403
+    sign_in(page)
+    html = page.get("/workflows").text
+    assert "Starts a new project" in html and "Web app" in html and "<code>!with web_app</code>" in html
+    assert "fallback</span>" in html and "Starts a sub-workflow" in html
+    web = golem.store.workflow(key="web_app")
+    html = page.get(f"/workflows/{web.id}?mode=rigorous").text
+    assert ">rigorous</a>" in html and "class=on aria-current=page>rigorous" in html and "data-mode=view" in html
+    view = page.get(f"/workflows/{web.id}.json?mode=rigorous").json()
+    names = [n["label"] for n in view["nodes"]]
+    assert "spec-review" in names and view["problems"] == [] and view["poll"] == 0
+    ship = next(n for n in view["nodes"] if n["type"] == "container")
+    assert ship["open"] == f"/workflows/{golem.store.workflow(key='ship').id}" and ship["ports"] == ["shipped"]
+    assert page.get("/workflows/999").status_code == 404
