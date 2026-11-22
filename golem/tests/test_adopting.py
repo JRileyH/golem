@@ -69,21 +69,22 @@ def test_an_adopted_repo_becomes_a_project_with_his_words_and_the_usual_grace(go
     async def go():
         await adopt(golem, "cards for my table, rigorous", {**BRIEF, "mode": "rigorous"})
         project = golem.store.project("mimic")
-        assert (project.name, project.summary, project.mode) == ("Mimic", "Printable cards for a D&D table.", "rigorous")
+        assert (project.name, project.summary, project.mode) == ("Mimic", "Printable cards for a D&D table.", "")  # its default: Riggy's to set
         job = golem.store.active_job("mimic")
+        assert (job.workflow, job.mode) == ("adopt", "rigorous")
         # A minute's grace (none in tests) to change the settings before anything starts, the check included.
         assert (job.kind, job.playbook, job.state, job.request) == ("adopt", "adopt", "parked", "!adopt mimic cards for my table, rigorous")
-        assert golem.chat.texts(golem.inbox)[-1] == f"Adopting Mimic (mimic), mode rigorous, each step's default model and effort. Its conversation: {PAGE}"
+        assert golem.chat.texts(golem.inbox)[-1] == f"Adopting Mimic (mimic), adopt, rigorous mode. Its conversation: {PAGE}"
         [intro] = golem.chat.texts("mimic")
         assert intro.startswith("Mimic\n\nPrintable cards for a D&D table.\n\nYou said: “cards for my table, rigorous”")
         assert "I'm taking on https://github.com/unlaunched/mimic, to live at https://mimic.unlaunched.dev/." in intro
-        assert intro.endswith("Mode rigorous, each step's default model and effort. Starting in a minute: to change that first, say !mode, !model or !effort here (!help for the options).")
+        assert intro.endswith("Adopt, rigorous mode, each step's default model and effort. Starting in a minute: to change that first, say !mode, !model or !effort here (!help for the options).")
         [triage] = golem.harness.calls
         assert (triage.model, triage.label) == ("haiku", "adopt") and "Tabletop data in, visual outputs out." in triage.prompt
 
-        await golem.say("mimic", "!mode standard")
-        assert golem.chat.texts("mimic")[-1].endswith("Adopting it goes the same way in every mode; its changes after that follow standard rules.")
-        assert golem.store.job(job.id).playbook == "adopt"  # not swapped for a new project's playbook
+        await golem.say("mimic", "!mode default")
+        assert golem.chat.texts("mimic")[-1] == "Mimic: no default mode, each step's default model and effort. Job 1 will run as adopt."
+        assert (golem.store.job(job.id).workflow, golem.store.job(job.id).mode) == ("adopt", "")
         await golem.say(golem.inbox, "!queue")
         assert golem.chat.texts(golem.inbox)[-1] == "#1 Mimic: adoption “Tabletop Card Printer”, starting shortly, check it over (1/9)"
         await golem.say(golem.inbox, "!adopt mimic")
@@ -133,7 +134,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
         assert checked == (
             "I checked it over, and I'm adopting it.\n\n✓ CI on main: build: success\n✓ Dockerfile\n✓ build workflow: build.yml\n"
             "✓ repo shape\n✓ docs/brief.md\n✓ deploy/compose.yml\n✓ tests in golem's container: uv run pytest: 559 passed\n\n"
-            "Next I deploy main as it is.\n\nMode standard, each step's default model and effort (!mode, !model or !effort here to change them)."
+            "Next I deploy main as it is.\n\nNo default mode, each step's default model and effort (!mode, !model or !effort here to change them)."
         )
         # Its issue says golem worked on it: adopting it again brings it back as history (history.py). With no PR, alert closes it.
         assert golem.workspace.issues == [("mimic", "Mimic")]

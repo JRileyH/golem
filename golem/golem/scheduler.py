@@ -302,7 +302,9 @@ class Scheduler:
             project = self.store.project(p.slug)
             if project is None or not self.store.room_for_change(p.slug):
                 continue
-            job = self.store.add_job(p.slug, "change", proposals.request(p), "feature", title=plan.clean_title(p.title))
+            wf = self.library.fallback("change")
+            job = self.store.add_job(p.slug, "change", proposals.request(p), wf.key if wf else "feature", title=plan.clean_title(p.title))
+            job = self.store.update_job(job.id, workflow=wf.key if wf else "", mode=plan.mode_for(self.store, project))
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)

@@ -35,9 +35,11 @@ questions.
 $tags
 
 - new_tag: only when tag is `new`; otherwise leave it out.
-- mode: `reckless`, `standard` or `rigorous` only if he asked for one (also
-  "quick and dirty" means reckless, "be thorough" or "take your time" means
-  rigorous). Otherwise `unspecified`.
+$workflows- mode: one of these, only if he asked for that way of working (each says what to
+  look for). Otherwise `none`.
+
+$modes
+
 - model: `fable`, `opus`, `sonnet` or `haiku` only if he named one ("use opus").
   Otherwise `unspecified`.
 - effort: `low`, `medium`, `high`, `xhigh` or `max` only if he said one

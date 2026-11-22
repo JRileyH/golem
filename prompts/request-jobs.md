@@ -10,4 +10,4 @@ $jobs
   - 0 if it can be built on its own: a different feature, another screen, a bug
     elsewhere. golem starts it beside the others.
   - If it's not clear, the closest job: adding to work under way is the cheap
-    mistake. A `question` is always 0.
+    mistake. One that only looks is always 0.

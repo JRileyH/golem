@@ -33,6 +33,8 @@ from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS,
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
+MODE_RE = re.compile(r"[a-z][a-z0-9-]{0,19}")  # a mode's name: what `!with change:rigorous` says
+INGEST_CHARS = 1000
 
 
 class ControlError(Exception):
@@ -346,6 +348,61 @@ class Control:
             return "golem upgrades itself when it's behind and has no work going."
         return "golem only upgrades when you say."
 
+    # --- modes and fallbacks (workflows.py) -----------------------------------------
+
+    def add_mode(self, name: str, ingest: str) -> str:
+        name = _mode_name(name)
+        if self.store.mode(name):
+            raise ControlError(f"There's already a mode called {name}.")
+        self.store.add_mode(name, ingest.strip()[:INGEST_CHARS])
+        return f"Added the {name} mode. Give a workflow a tab for it to say how that mode works."
+
+    def rename_mode(self, name: str, new: str) -> str:
+        mode = self.store.mode(name)
+        if mode is None:
+            raise ControlError(f"No mode called {name}.")
+        new = _mode_name(new)
+        if new != mode.name and self.store.mode(new):
+            raise ControlError(f"There's already a mode called {new}.")
+        self.store.update_mode(mode.name, new_name=new)
+        return f"Renamed {mode.name} to {new}: its tabs and the projects that default to it go with it."
+
+    def mode_ingest(self, name: str, ingest: str) -> str:
+        mode = self.store.mode(name)
+        if mode is None:
+            raise ControlError(f"No mode called {name}.")
+        self.store.update_mode(mode.name, ingest=ingest.strip()[:INGEST_CHARS])
+        return f"Saved what {mode.name} is for."
+
+    def delete_mode(self, name: str) -> str:
+        mode = self.store.mode(name)
+        if mode is None:
+            raise ControlError(f"No mode called {name}.")
+        tabs = sum(1 for wf in self.store.workflows() if self.store.tab(wf.id, mode.name))
+        self.store.delete_mode(mode.name)
+        if self.store.get("fallback_mode") == mode.name:
+            self.store.put("fallback_mode", "")
+        return f"Deleted {mode.name}" + (f", and the {tabs} tab(s) workflows had for it." if tabs else ".")
+
+    def fallback_mode(self, name: str) -> str:
+        """The mode requests run in when they don't ask for one and their project has no default."""
+        if name in ("", "default", "none"):
+            self.store.put("fallback_mode", "")
+            return "Requests that don't say run each workflow's default tab."
+        mode = self.store.mode(name)
+        if mode is None:
+            raise ControlError(f"No mode called {name}.")
+        self.store.put("fallback_mode", mode.name)
+        return f"Requests that don't say, on projects with no default mode, run in {mode.name} mode."
+
+    def fallback_workflow(self, start: str, key: str) -> str:
+        """The workflow a start type uses when the request call can't tell."""
+        wf = self.store.workflow(key=key)
+        if wf is None or wf.start != start or wf.archived:
+            raise ControlError("That workflow can't be the fallback there.")
+        self.store.put(f"fallback_{start}", wf.key)
+        return f"{wf.name} is the fallback now."
+
     async def note(self, job_id: int, text: str, step_id: int = 0, position: int = 0) -> str:
         job, project = self._job(job_id)
         text = text.strip()
@@ -368,6 +425,13 @@ class Control:
             self.scheduler.wake()
             return "Sent. Picking the job back up."
         return "Sent. The next agent step gets it."
+
+
+def _mode_name(name: str) -> str:
+    name = name.strip().lower()
+    if not MODE_RE.fullmatch(name) or name in ("default", "none", "standard"):
+        raise ControlError("A mode's name is one word: lowercase letters, digits and hyphens, at most 20 characters (not default, none or standard).")
+    return name
 
 
 def _tag_name(name: str) -> str:

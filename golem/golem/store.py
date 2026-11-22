@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     summary TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT 'standard',
+    mode TEXT NOT NULL DEFAULT '',  -- the mode its requests run in unless they ask for another: Riggy's setting
     model TEXT NOT NULL DEFAULT 'opus',
     effort TEXT NOT NULL DEFAULT 'high',
     paused INTEGER NOT NULL DEFAULT 0,
@@ -465,6 +465,10 @@ class Store:
                 " WHEN playbook = 'proposals' THEN 'propose' ELSE 'change' END"
             )
             self.put("job_starts", "1")
+        if self.get("project_modes") is None:
+            # Modes became Riggy's to make (workflows): "standard" was every workflow's default tab.
+            self.db.execute("UPDATE projects SET mode = '' WHERE mode = 'standard'")
+            self.put("project_modes", "1")
         if self.get("project_engines") is None:
             # Projects used to always name a model and effort, opus and high unless Riggy said
             # otherwise. Those now come from each step's defaults, which start out the same.
@@ -490,7 +494,7 @@ class Store:
     # --- projects -------------------------------------------------------------
 
     def add_project(
-        self, slug: str, name: str, summary: str, mode: str = "standard", model: str = "", effort: str = ""
+        self, slug: str, name: str, summary: str, mode: str = "", model: str = "", effort: str = ""
     ) -> Project:
         self.db.execute(
             "INSERT INTO projects (slug, name, summary, mode, model, effort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

@@ -81,8 +81,19 @@ def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
         return job.workflow, job.mode
     if job.playbook in NEW_BOOKS:
         return "web_app", "" if job.playbook == "standard" else job.playbook
-    mode = project.mode if project and project.mode != "standard" else ""
+    mode = project.mode if project and project.mode not in ("", "standard") else ""
     return BOOKS.get(job.playbook, "change"), mode
+
+
+def mode_for(store: Store, project: Project | None, asked: str = "") -> str:
+    """The mode a request runs in: what it asked for, else its project's default (Riggy's
+    setting), else golem's (Settings), else none: each workflow's default tab."""
+    if asked:
+        return asked
+    if project and project.mode and store.mode(project.mode):
+        return project.mode
+    found = store.get("fallback_mode") or ""
+    return found if found and store.mode(found) else ""
 
 
 def snapshot(job: Job) -> dict | None:
@@ -179,11 +190,12 @@ def shown(steps: list[Step]) -> list[Step]:
 def _legacy(settings: Settings, store: Store, job: Job) -> list[Step]:
     """A job from before steps were tracked: its playbook's steps, the ones before its phase done."""
     project = store.project(job.slug)
-    specs = load(settings, job.playbook).for_mode(project.mode)
+    book = job.playbook if job.playbook in BOOKS else {"web_app": job.mode or "standard", "change": "feature"}.get(job.playbook, job.playbook)
+    specs = load(settings, book).for_mode(job.mode or (project.mode if project.mode in ("reckless", "rigorous") else "standard"))
     steps = [Step(0, job.id, i, s.kind, s.name, s.max_turns or None, s.optional) for i, s in enumerate(specs, start=1)]
     for s in steps:
         s.turn = turn_of(steps, s)
-    names = LEGACY_PHASES.get(job.playbook, [])[job.phase :]
+    names = LEGACY_PHASES.get(book, [])[job.phase :]
     resume = next((i for i, s in enumerate(steps) if s.kind == "agent" and s.name in names), 0)
     for s in steps[:resume]:
         s.state, s.summary = "done", LEGACY_DONE
@@ -254,13 +266,26 @@ def engine(settings: Settings, store: Store, project: Project, step: Step, block
     return Engine(model, effort, model_from, effort_from)
 
 
-def settings_line(project: Project) -> str:
-    """A project's settings in a line: "Mode standard, each step's default model and effort"."""
+def engine_words(project: Project) -> str:
+    """A project's model and effort in words: "each step's default model and effort"."""
     if not project.model and not project.effort:
-        return f"Mode {project.mode}, each step's default model and effort"
+        return "each step's default model and effort"
     model = f"model {project.model}" if project.model else "each step's default model"
     effort = f"{project.effort} effort" if project.effort else "default effort"
-    return f"Mode {project.mode}, {model}, {effort}"
+    return f"{model}, {effort}"
+
+
+def settings_line(project: Project) -> str:
+    """A project's settings in a line: "No default mode, each step's default model and effort".
+    Its default mode is what its requests run in unless they ask for another: Riggy's setting."""
+    mode = f"Default mode {project.mode}" if project.mode else "No default mode"
+    return f"{mode}, {engine_words(project)}"
+
+
+def running(job: Job, wf: object | None) -> str:
+    """What a job runs, in words: "Web app, rigorous mode", or "Change"."""
+    name = getattr(wf, "name", "") or job.workflow or job.playbook
+    return f"{name}, {job.mode} mode" if job.mode else name
 
 
 def what(job: Job) -> str:

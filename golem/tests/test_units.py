@@ -456,7 +456,8 @@ def test_what_a_message_asks_for_without_a_model(golem, text, kind):
     from dataclasses import replace
 
     fake = replace(golem.settings, harness="fake")
-    assert asyncio.run(options.read_request(golem.harness, fake, text)) == options.Request(kind, "")
+    kinds = golem.bot.kinds()
+    assert asyncio.run(options.read_request(golem.harness, fake, text, kinds, fallback="change")) == options.Request(kind, "")
 
 
 def test_what_a_pick_tells_the_next_step():
@@ -741,9 +742,12 @@ def test_triage_through_the_claude_harness(tmp_path):
         intake.triage(
             ClaudeHarness(str(binary)), REPO / "prompts" / "intake.md", "hey i would like a game called leaf peeper",
             cwd=tmp_path / "triage", log_path=tmp_path / "triage.jsonl.gz", env={}, tags=["Game"],
+            modes=[intake.Choice("rigorous", "be thorough")], workflows=[intake.Choice("web_app", "web things"), intake.Choice("api", "APIs")],
         )
     )  # fmt: skip
     assert brief == intake.Brief("Leaf Peeper", "leaf-peeper", "Guess the tree.", tag="Game", mode="rigorous", effort="max", title="Tree Guessing Game")
+    # Asked which workflow too, with more than one for new projects to choose from; it didn't say, so the fallback.
+    assert brief.workflow is None and intake.schema(["Game"], ["rigorous"], ["web_app", "api"])["required"][-1] == "workflow"
 
 
 def test_older_databases_get_new_columns(tmp_path):

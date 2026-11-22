@@ -88,15 +88,7 @@ DESIGN_SCHEMA = {
 }
 # Agent steps that make options for a `choose` step to show, and the verdict each brings them in.
 MAKERS = {"options": SCHEMA, "design": DESIGN_SCHEMA}
-REQUEST_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "kind": {"enum": ["change", "options", "design", "question"]},
-        "title": {"type": "string", "description": "What it's about in 2 to 5 words, Title Case: 'Library View Redesign'"},
-    },
-    "required": ["kind", "title"],
-    "additionalProperties": False,
-}
+TITLE = {"type": "string", "description": "What it's about in 2 to 5 words, Title Case: 'Library View Redesign'"}
 # With changes under way on a project that has room for another: which one the message is about.
 TO = {"type": "integer", "description": "The number of the job under way the message belongs to, or 0 for a change of its own"}
 REPLY_SCHEMA = {
@@ -337,33 +329,61 @@ def asks_a_question(text: str) -> bool:
 class Request:
     """What a message in a project's conversation asks for, and the job's title if it becomes one."""
 
-    kind: str  # change | options | design | question
+    workflow: str  # the workflow it's for, by key
     title: str  # "" without a model: plan.title falls back to his words
     to: int = 0  # with jobs under way: the one it belongs to, or 0 for a change of its own
+    mode: str = ""  # the mode it asks for; "" if it doesn't say
 
 
-async def read_request(harness: Harness, settings: Settings, text: str, under_way: list[Job] = ()) -> Request:
-    """What a message in a project's conversation asks for: a `change`, `options` to pick from first,
-    a `design` pass (a look of its own, picked from a few directions), or only an answer to a
-    `question`. The same call names it, for the job it starts. With changes `under_way` (on a
-    project with room for another), also which of them it belongs to, if any: without a model,
-    or if the call doesn't say, the first, as when a project has one change at a time."""
+@dataclass(frozen=True)
+class Kind:
+    """A workflow a project's message can be for: its key and handle, whether it only looks (a
+    question: builds nothing), and what it's for in Riggy's words."""
+
+    key: str
+    handle: str
+    looks: bool
+    ingest: str
+
+
+async def read_request(harness: Harness, settings: Settings, text: str, kinds: list[Kind], modes: list[tuple[str, str]] = (),
+                       under_way: list[Job] = (), fallback: str = "") -> Request:  # fmt: skip
+    """Which workflow a message in a project's conversation is for (`kinds`, by what each is for:
+    a change, options to pick from first, a design pass, only an answer…) and whether it asks for
+    one of the `modes`. The same call names it, for the job it starts. With changes `under_way`
+    (on a project with room for another), also which of them it belongs to, if any: without a
+    model, or if the call doesn't say, the first, as when a project has one change at a time.
+    Without a model, golem's built-ins by rule; anything else is the `fallback`."""
     first = under_way[0].id if under_way else 0
-    if settings.harness != "fake":
-        schema, jobs = REQUEST_SCHEMA, ""
+    by_handle = {k.handle: k for k in kinds}
+    names = [m for m, _ in modes]
+    if settings.harness != "fake" and kinds:
+        props = {"workflow": {"enum": list(by_handle)}, "mode": {"enum": [*names, "none"]}, "title": TITLE}
+        required = ["workflow", "mode", "title"]
+        jobs = ""
         if under_way:
-            schema = {**REQUEST_SCHEMA, "properties": {**REQUEST_SCHEMA["properties"], "to": TO}, "required": ["kind", "title", "to"]}
+            props["to"], required = TO, [*required, "to"]
             listed = "\n".join(f"- #{j.id} {plan.title(j)}: “{_line(j.request)}”" for j in under_way)
             jobs = (settings.process_dir / "prompts" / "request-jobs.md").read_text().replace("$jobs", listed)
-        v = await _ask(harness, settings, "request", {"$under_way": jobs, "$request": text.strip()}, schema)
-        if v and v.get("kind") in ("change", "options", "design", "question"):
+        listed = "\n".join(
+            f"  - `{k.handle}`{' (only looks: builds nothing)' if k.looks else ''}: {' '.join(k.ingest.split()) or '(no description)'}"
+            for k in kinds
+        )
+        moded = "\n".join(f"  - `{m}`: {' '.join(about.split()) or '(no description)'}" for m, about in modes) or "  (none)"
+        schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
+        values = {"$under_way": jobs, "$workflows": listed, "$modes": moded, "$request": text.strip()}
+        v = await _ask(harness, settings, "request", values, schema)
+        if v and v.get("workflow") in by_handle:
+            kind = by_handle[v["workflow"]]
             to = v.get("to") if v.get("to") in (0, *(j.id for j in under_way)) else first
-            return Request(v["kind"], plan.clean_title(v.get("title")), 0 if v["kind"] == "question" else to)
-    if DESIGN_RE.search(text):
-        return Request("design", "", first)
-    if asks_for_options(text):
-        return Request("options", "", first)
-    return Request("question", "") if asks_a_question(text) else Request("change", "", first)
+            mode = v.get("mode") if v.get("mode") in names else ""
+            return Request(kind.key, plan.clean_title(v.get("title")), 0 if kind.looks else to, mode)
+    keys = {k.key for k in kinds}
+    for key, fits in (("design", lambda t: DESIGN_RE.search(t)), ("options", asks_for_options), ("question", asks_a_question)):
+        if key in keys and fits(text):
+            looks = next(k.looks for k in kinds if k.key == key)
+            return Request(key, "", 0 if looks else first)
+    return Request(fallback or next((k.key for k in kinds if not k.looks), ""), "", first)
 
 
 def _line(text: str, limit: int = 160) -> str:

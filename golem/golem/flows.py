@@ -9,6 +9,7 @@ inside it.
 
 from __future__ import annotations
 
+import json
 from html import escape
 
 from . import engine, layout, plan
@@ -233,12 +234,22 @@ def stage(src: str, mode: str = "run") -> str:
 
 
 def workflows_page(store: Store, signed: bool) -> str:
-    """Every workflow, by where it starts: what each is for, which is the fallback, what's wrong."""
+    """Every workflow, by where it starts: what each is for, which is the fallback, what's wrong.
+    Then the modes, and which a request runs in when it doesn't say."""
     fallback = {s: store.get(f"fallback_{s}") for s in START_NAMES}
     groups = []
     for start, name in START_NAMES.items():
         rows = []
-        for wf in [w for w in store.workflows() if w.start == start]:
+        mine = [w for w in store.workflows() if w.start == start]
+        if start != "sub" and len([w for w in mine if not w.archived]) > 1:
+            picks = "".join(f"<option value='{escape(w.key)}'{' selected' if fallback.get(start) == w.key else ''}>{escape(w.name)}</option>"
+                            for w in mine if not w.archived)  # fmt: skip
+            rows.append(
+                f"<li class=row-form><span class=muted>When golem can't tell which:</span><form method=post action=/act class=inline>"
+                f"<input type=hidden name=action value=fallback-workflow><input type=hidden name=start value={start}>"
+                f"<input type=hidden name=back value=/workflows><select name=value onchange='this.form.submit()' aria-label='Fallback'>{picks}</select></form></li>"
+            )
+        for wf in mine:
             tabs = store.tabs(wf.id)
             broken = any(t.problems for t in tabs.values())
             marks = "".join([
@@ -256,7 +267,40 @@ def workflows_page(store: Store, signed: bool) -> str:
         if rows:
             groups.append(f"<section class=card><h2>Starts a {escape(name)}</h2><ul class=workflows>{''.join(rows)}</ul></section>")
     lead = "<p class=lead>How golem works through each kind of request: blocks wired together, from Start to End.</p>"
-    return lead + "".join(groups)
+    return lead + "".join(groups) + modes_card(store)
+
+
+def modes_card(store: Store) -> str:
+    """Modes: ways of working a request can ask for. Each says what to look for in a request, and
+    a workflow with a tab for it runs that tab; one without runs its default."""
+    back = "/workflows#modes"
+    hidden = lambda **f: "".join(f"<input type=hidden name={k} value='{escape(str(v))}'>" for k, v in {**f, "back": back}.items())  # noqa: E731
+    rows = []
+    for m in store.modes():
+        rows.append(
+            f"<li><div class=row-form><b>{escape(m.name)}</b>"
+            f"<form method=post action=/act class=rename>{hidden(action='mode-rename', name=m.name)}"
+            f"<input name=value value='{escape(m.name)}' required maxlength=20 pattern='[a-z][a-z0-9-]*' aria-label='New name for {escape(m.name)}'><button>Rename</button></form>"
+            f"<form method=post action=/act onsubmit='return confirm({escape(json.dumps(f'Delete {m.name}, and every tab workflows have for it?'))})'>"
+            f"{hidden(action='mode-delete', name=m.name)}<button class=danger>Delete</button></form></div>"
+            f"<form method=post action=/act class=reply>{hidden(action='mode-ingest', name=m.name)}"
+            f"<textarea name=value rows=2 maxlength=1000 aria-label='What {escape(m.name)} is for'>{escape(m.ingest)}</textarea><button>Save</button></form></li>"
+        )
+    current = store.get("fallback_mode") or ""
+    picks = "".join(f"<option value='{escape(v)}'{' selected' if current == v else ''}>{escape(label)}</option>"
+                    for v, label in [("", "each workflow's default tab"), *((m.name, m.name) for m in store.modes())])  # fmt: skip
+    return (
+        "<section class='card settings' id=modes><h2>Modes</h2><p class=sub>Ways of working a request can ask for (“be thorough”). "
+        "Golem reads each request for one of these, by what each is for; a workflow with a tab for that mode runs it, any other its "
+        "default tab. A project's settings can give it a default mode. Say <code>!with change:rigorous …</code> to choose.</p>"
+        + (f"<ul class=workflows>{''.join(rows)}</ul>" if rows else "<p class=empty>No modes yet.</p>")
+        + f"<form method=post action=/act class=reply>{hidden(action='mode-add')}<input name=value placeholder='A new mode, like careful' required maxlength=20 "
+        "pattern='[a-z][a-z0-9-]*' aria-label='New mode'><textarea name=ingest rows=2 maxlength=1000 placeholder='What to look for in a request: “he wants extra care taken”' "
+        "aria-label='What it is for'></textarea><button>Add mode</button></form>"
+        f"<div class=row-form><span>When a request doesn't say, and its project has no default:</span><form method=post action=/act class=inline>"
+        f"{hidden(action='fallback-mode')}<select name=value onchange='this.form.submit()' aria-label='Fallback mode'>{picks}</select></form></div>"
+        "</section>"
+    )
 
 
 def workflow_page(store: Store, wf: Workflow, mode: str) -> str:

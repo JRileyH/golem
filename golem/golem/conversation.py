@@ -22,7 +22,7 @@ from html import escape
 from . import plan
 from .pages import LaneData, _hidden, _pause, ask_card, job_controls, select_form, status_card
 from .proposals import LENSES, WAITING, kinds
-from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, MODES, Job, Project, Proposal, Said
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
 from .talk import INBOX, STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
@@ -48,9 +48,9 @@ def project_page(lane: LaneData, said: list[Said], signed_in: bool, now: datetim
 
 
 def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = (),
-                  more: list[LaneData] = ()) -> str:  # fmt: skip
+                  more: list[LaneData] = (), modes: list[str] = ()) -> str:  # fmt: skip
     controls = "".join(job_controls(x) for x in (lane, *more))
-    return settings_html(project, tags) + proposals_settings(project, decided) + controls + jobs_html(jobs) + _danger(project)
+    return settings_html(project, tags, modes) + proposals_settings(project, decided) + controls + jobs_html(jobs) + _danger(project)
 
 
 def proposals_card(waiting: list[Proposal], back: str) -> str:
@@ -166,13 +166,15 @@ def composer(channel: str, state: str) -> str:
     )
 
 
-def settings_html(project: Project, tags: list[str]) -> str:
-    """What the !commands do, as controls, and its tag. Each change is said in the conversation."""
+def settings_html(project: Project, tags: list[str], modes: list[str] = ()) -> str:
+    """What the !commands do, as controls, and its tag. Each change is said in the conversation.
+    Its default mode is the mode its requests run in unless they ask for another: only Riggy sets it."""
     slug, back = project.slug, f"/p/{project.slug}/settings"
+    choices = [("default", "golem's default"), *((m, m) for m in modes)]
     mode = (
         f"<form method=post action=/say class=inline>{_hidden(channel=slug, command='mode', back=back)}"
-        f"<select name=text aria-label=mode onchange='this.form.submit()'>"
-        + "".join(f"<option{' selected' if project.mode == m else ''}>{m}</option>" for m in MODES)
+        f"<select name=text aria-label='default mode' onchange='this.form.submit()'>"
+        + "".join(f"<option value='{escape(v)}'{' selected' if (project.mode or 'default') == v else ''}>{escape(label)}</option>" for v, label in choices)
         + "</select></form>"
     )
     engine = "".join(
@@ -182,8 +184,8 @@ def settings_html(project: Project, tags: list[str]) -> str:
     )
     return (
         "<section class='card settings'><h2>How golem works on it</h2>"
-        "<p class=sub>From the next job (mode) or the next step (model, effort).</p>"
-        f"<div class=row-form><span>Mode</span>{mode}</div><div class=row-form>{engine}</div>"
+        "<p class=sub>From the next request (its default mode, which a request can ask to change) or the next step (model, effort).</p>"
+        f"<div class=row-form><span>Default mode</span>{mode}</div><div class=row-form>{engine}</div>"
         f"<div class=row-form>{_pause(project, back)}</div></section>"
         + changes_card(project, back)
         + "<section class='card settings'><h2>Tag</h2><p class=sub>What sort of project it is, on the projects page. "

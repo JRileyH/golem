@@ -438,7 +438,8 @@ def create_app(
             return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to change a project.")
         data, jobs = project_lanes(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
-        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:])
+        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:],
+                                          modes=[m.name for m in store.modes()])  # fmt: skip
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=("/p", "Projects"),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
@@ -661,6 +662,18 @@ def create_app(
                     message = control.tag_color(form.get("name", ""), value)
                 case "tag-delete":
                     message = control.delete_tag(form.get("name", ""))
+                case "mode-add":
+                    message = control.add_mode(value, form.get("ingest", ""))
+                case "mode-rename":
+                    message = control.rename_mode(form.get("name", ""), value)
+                case "mode-ingest":
+                    message = control.mode_ingest(form.get("name", ""), value)
+                case "mode-delete":
+                    message = control.delete_mode(form.get("name", ""))
+                case "fallback-mode":
+                    message = control.fallback_mode(value)
+                case "fallback-workflow":
+                    message = control.fallback_workflow(form.get("start", ""), value)
                 case "note":
                     message = await control.note(job, value, step, position)
                 case "upgrade":

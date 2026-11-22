@@ -810,8 +810,8 @@ def test_a_project_page_is_its_conversation(golem, app):
 
     say(app, "tree-cards", "Leaf Cards", command="rename")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
-    say(app, "tree-cards", "standard", command="mode")
-    assert "mode standard" in golem.store.messages("tree-cards")[-1].text
+    say(app, "tree-cards", "rigorous", command="mode")
+    assert "default mode rigorous" in golem.store.messages("tree-cards")[-1].text
     assert "type%20tree-cards%20exactly" in say(app, "tree-cards", "trees", command="delete")
     assert "golem can" in unquote(say(app, "status", "hello"))
     assert "Write something first" in unquote(say(app, "tree-cards", "x", command="kill"))
@@ -1033,6 +1033,8 @@ def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
     html = page.get("/workflows").text
     assert "Starts a new project" in html and "Web app" in html and "<code>!with web_app</code>" in html
     assert "fallback</span>" in html and "Starts a sub-workflow" in html
+    assert "id=modes" in html and "He wants extra care taken" in html and "When golem can&#x27;t tell which" not in html.split("Starts a new project")[1].split("Starts a change")[0]
+    assert "When golem can't tell which" in html  # changes have several workflows to fall back between
     web = golem.store.workflow(key="web_app")
     html = page.get(f"/workflows/{web.id}?mode=rigorous").text
     assert ">rigorous</a>" in html and "class=on aria-current=page>rigorous" in html and "data-mode=view" in html

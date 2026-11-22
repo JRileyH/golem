@@ -200,7 +200,7 @@ def test_a_job_with_a_fix_pending_from_before_workflows_fixes_and_ships_again(go
 def test_a_pick_waiting_from_before_workflows_builds_what_he_picks(golem):
     async def go():
         room = await idle_project(golem)
-        golem.harness.script = by_label({"request": [{"kind": "options"}], "options": [three_styles], "pick": [{"decision": "pick", "picked": ["B"]}]})
+        golem.harness.script = by_label({"request": [{"workflow": "options"}], "options": [three_styles], "pick": [{"decision": "pick", "picked": ["B"]}]})
         await golem.say(room, "show me 3 art styles")
         await golem.until("your pick")
         await golem.step()
@@ -224,3 +224,97 @@ def test_a_job_from_before_steps_were_tracked_picks_up_at_its_phase(golem):
     assert plan.label(plan.current(steps)) == "mvp" and plan.snapshot(golem.store.job(job.id))["legacy"]
     ahead = [plan.label(s) for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id)) if s.state == "pending"]
     assert ahead[:3] == ["mvp", "push", "PR"] and ahead[-1] == "done"
+
+
+# --- modes and choosing workflows ------------------------------------------------------
+
+from test_flow import TREES  # noqa: E402
+
+from golem.control import Control, ControlError  # noqa: E402
+
+
+def test_a_new_idea_that_asks_for_care_runs_the_rigorous_tab(golem):
+    async def go():
+        golem.harness.script = [{**TREES, "mode": "rigorous"}]
+        await golem.say(golem.inbox, "a flashcard game for trees, take your time and be thorough")
+        triage = golem.harness.calls[0]
+        assert triage.schema["properties"]["mode"]["enum"] == ["rigorous", "reckless", "none"]
+        assert "workflow" not in triage.schema["properties"]  # one workflow for new projects: nothing to choose
+        assert "- `rigorous`: He wants extra care taken" in triage.prompt
+        job = golem.store.active_job("tree-cards")
+        assert (job.workflow, job.mode) == ("web_app", "rigorous") and golem.store.project("tree-cards").mode == ""
+        steps = golem.scheduler.ensure_started(job)
+        assert "spec-review" in [s.name for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id))]
+        assert plan.snapshot(golem.store.job(job.id))["levels"][""]["tab"] == "rigorous" and steps
+
+    run(go())
+
+
+def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem):
+    async def go():
+        room = await idle_project(golem)
+        await golem.say(room, "!mode rigorous")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
+        await golem.say(room, "make the cards bigger")
+        job = golem.store.active_job("tree-cards")
+        assert (job.workflow, job.mode) == ("change", "rigorous")
+        names = [s.name for s in plan.planned(golem.settings, golem.store, job)]
+        assert "second-pass" in names  # Change's rigorous tab
+        # A request that asks for another mode runs in that one, this once.
+        golem.store.update_job(job.id, state="done")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "reckless", "title": "Quick Fix"}]})
+        await golem.say(room, "quick and dirty: fix the typo")
+        job = golem.store.active_job("tree-cards")
+        assert job.mode == "reckless" and golem.store.project("tree-cards").mode == "rigorous"
+        assert "review" not in [s.name for s in plan.planned(golem.settings, golem.store, job)]
+
+    run(go())
+
+
+def test_with_names_the_workflow_and_mode(golem):
+    async def go():
+        room = await idle_project(golem)
+        await golem.say(room, "!with change:reckless fix the typo on the about page\nand the one in the footer")
+        job = golem.store.active_job("tree-cards")
+        assert (job.workflow, job.mode) == ("change", "reckless")
+        assert job.request == "fix the typo on the about page\nand the one in the footer"  # his lines kept
+        assert not any(c.label == "request" for c in golem.harness.calls)  # no call to work out which
+        golem.store.update_job(job.id, state="done")
+
+        await golem.say(room, "!with nope do it")
+        assert golem.chat.texts(room)[-1].startswith("There's no workflow called nope for a project's conversation. These are: change, design, options, question.")
+        await golem.say(room, "!with change:careful do it")
+        assert golem.chat.texts(room)[-1] == "There's no mode called careful. The modes are: rigorous, reckless."
+        await golem.say(room, "!with question how big are the cards?")
+        asked = golem.store.active_job("tree-cards")
+        assert (asked.workflow, asked.start, asked.request) == ("question", "look", "how big are the cards?")
+        await golem.say(golem.inbox, "!with change make a thing")
+        assert "for golem's conversation. These are: web_app" in golem.chat.texts(golem.inbox)[-1]
+
+        golem.harness.script = [{**TREES, "slug": "leaves", "name": "Leaves", "mode": "none"}]
+        await golem.say(golem.inbox, "!with web_app:reckless a leaf game")
+        job = golem.store.active_job("leaves")
+        assert (job.workflow, job.mode, job.request) == ("web_app", "reckless", "a leaf game")
+
+    run(go())
+
+
+def test_modes_are_made_renamed_and_deleted_in_settings(golem):
+    control = Control(golem.store, golem.scheduler)
+    assert "Added the careful mode" in control.add_mode("careful", "He says to take care.")
+    import pytest
+
+    with pytest.raises(ControlError, match="one word"):
+        control.add_mode("Very Careful", "")
+    with pytest.raises(ControlError, match="already"):
+        control.add_mode("careful", "")
+    control.mode_ingest("careful", "  He says to take great care. ")
+    assert golem.store.mode("careful").ingest == "He says to take great care."
+    assert "Renamed careful to cautious" in control.rename_mode("careful", "cautious")
+    assert control.fallback_mode("cautious").endswith("run in cautious mode.")
+    assert plan.mode_for(golem.store, None) == "cautious"
+    control.delete_mode("cautious")
+    assert golem.store.mode("cautious") is None and plan.mode_for(golem.store, None) == ""
+    assert "Options is the fallback" in control.fallback_workflow("change", "options")
+    with pytest.raises(ControlError):
+        control.fallback_workflow("change", "web_app")  # not a workflow for changes

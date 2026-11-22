@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .harness import Harness
 from .plan import clean_title
-from .store import EFFORTS, MODELS, MODES
+from .store import EFFORTS, MODELS
 from .workspace import About
 
 log = logging.getLogger(__name__)
@@ -35,8 +35,18 @@ TAG_CHARS = 20
 README_CHARS = 6000  # of an adopted repo's README, for its brief
 
 
-def schema(tags: list[str]) -> dict:
-    return {
+@dataclass(frozen=True)
+class Choice:
+    """A workflow or a mode a request can be for, and what it's for in Riggy's words (its ingest prompt)."""
+
+    name: str
+    ingest: str = ""
+
+
+def schema(tags: list[str], modes: Iterable[str] = (), workflows: Iterable[str] = ()) -> dict:
+    """What triage returns. With more than one workflow for new projects, which one it's for."""
+    workflows = list(workflows)
+    found = {
         "type": "object",
         "properties": {
             "name": {"type": "string", "description": "Short product name, 1 to 4 words"},
@@ -45,13 +55,29 @@ def schema(tags: list[str]) -> dict:
             "title": {"type": "string", "description": "What it is in 2 to 5 plain words, Title Case: 'Tree Flashcard Game'"},
             "tag": {"enum": [*tags, "none", "new"]},
             "new_tag": {"type": "string", "description": "Only when tag is new: its name, one or two words"},
-            "mode": {"enum": [*MODES, "unspecified"]},
+            "mode": {"enum": [*modes, "none"]},
             "model": {"enum": [*MODELS, "unspecified"]},
             "effort": {"enum": [*EFFORTS, "unspecified"]},
         },
         "required": ["name", "slug", "summary", "title", "tag", "mode", "model", "effort"],
         "additionalProperties": False,
     }
+    if len(workflows) > 1:
+        found["properties"]["workflow"] = {"enum": workflows}
+        found["required"].append("workflow")
+    return found
+
+
+def choices(found: Iterable[Choice]) -> str:
+    """Workflows or modes as the prompt lists them: each by name, with what it's for."""
+    return "\n".join(f"  - `{c.name}`: {' '.join(c.ingest.split()) or '(no description)'}" for c in found) or "  (none)"
+
+
+def workflow_line(workflows: list[Choice]) -> str:
+    """The prompt's line about which workflow, when there's more than one to choose from."""
+    if len(workflows) < 2:
+        return ""
+    return f"- workflow: which of these his idea is for, by what each is for:\n\n{choices(workflows)}\n\n"
 
 
 @dataclass(frozen=True)
@@ -63,6 +89,7 @@ class Brief:
     new_tag: bool = False
     # Only what the dictation asked for; None means use the default.
     mode: str | None = None
+    workflow: str | None = None  # which workflow for new projects it's for, when there's a choice
     model: str | None = None
     effort: str | None = None
     # What it is in a few plain words ("Tree Flashcard Game"), its first job's title; "" without a model.
@@ -88,23 +115,25 @@ def fallback_brief(text: str) -> Brief:
 
 
 async def triage(
-    harness: Harness, prompt_path: Path, text: str, cwd: Path, log_path: Path, env: dict, tags: Iterable[str] = ()
-) -> Brief:
-    tags = list(tags)
-    prompt = _fill(prompt_path.read_text(), tags=_listed(tags), dictation=text.strip())
-    v = await _ask(harness, prompt, schema(tags), cwd, log_path, env, "intake")
+    harness: Harness, prompt_path: Path, text: str, cwd: Path, log_path: Path, env: dict, tags: Iterable[str] = (),
+    modes: Iterable[Choice] = (), workflows: Iterable[Choice] = (),
+) -> Brief:  # fmt: skip
+    tags, modes, workflows = list(tags), list(modes), list(workflows)
+    prompt = _fill(prompt_path.read_text(), tags=_listed(tags), dictation=text.strip(), modes=choices(modes),
+                   workflows=workflow_line(workflows))  # fmt: skip
+    v = await _ask(harness, prompt, schema(tags, [m.name for m in modes], [w.name for w in workflows]), cwd, log_path, env, "intake")
     if v is None:
         return fallback_brief(text)
     name = str(v.get("name") or "").strip()[:60] or fallback_brief(text).name
     slug = str(v.get("slug") or "").strip().lower()
     if not valid_slug(slug):
         slug = slugify(slug or name)
-    return _brief(v, name, slug, text, tags)
+    return _brief(v, name, slug, text, tags, modes, workflows)
 
 
-def adopt_schema(tags: list[str]) -> dict:
+def adopt_schema(tags: list[str], modes: Iterable[str] = ()) -> dict:
     """An adopted repo's brief: the intake's, but its slug is the repo's name."""
-    s = schema(tags)
+    s = schema(tags, modes)
     return {**s, "properties": {k: v for k, v in s["properties"].items() if k != "slug"}, "required": [r for r in s["required"] if r != "slug"]}
 
 
@@ -118,19 +147,20 @@ def adopt_fallback(slug: str, words: str, about: About) -> Brief:
 
 async def adopt_triage(
     harness: Harness, prompt_path: Path, slug: str, words: str, about: About, cwd: Path, log_path: Path, env: dict,
-    tags: Iterable[str] = (),
+    tags: Iterable[str] = (), modes: Iterable[Choice] = (),
 ) -> Brief:  # fmt: skip
     """The brief for a repo golem adopts: what Riggy said about it wins over its README and description."""
-    tags = list(tags)
+    tags, modes = list(tags), list(modes)
     prompt = _fill(
         prompt_path.read_text(), tags=_listed(tags), slug=slug, words=words.strip() or "(nothing)",
         description=about.description.strip() or "(none)", readme=about.readme[:README_CHARS].strip() or "(none)",
+        modes=choices(modes),
     )  # fmt: skip
-    v = await _ask(harness, prompt, adopt_schema(tags), cwd, log_path, env, "adopt")
+    v = await _ask(harness, prompt, adopt_schema(tags, [m.name for m in modes]), cwd, log_path, env, "adopt")
     fallback = adopt_fallback(slug, words, about)
     if v is None:
         return fallback
-    return _brief(v, str(v.get("name") or "").strip()[:60] or fallback.name, slug, fallback.summary, tags)
+    return _brief(v, str(v.get("name") or "").strip()[:60] or fallback.name, slug, fallback.summary, tags, modes)
 
 
 async def _ask(harness: Harness, prompt: str, wanted: dict, cwd: Path, log_path: Path, env: dict, label: str) -> dict | None:
@@ -149,7 +179,7 @@ async def _ask(harness: Harness, prompt: str, wanted: dict, cwd: Path, log_path:
     return result.verdict
 
 
-def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str]) -> Brief:
+def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: list[Choice] = (), workflows: list[Choice] = ()) -> Brief:
     tag, new = _tag(v.get("tag"), v.get("new_tag"), tags)
     return Brief(
         name,
@@ -157,7 +187,8 @@ def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str]) -> Brie
         str(v.get("summary") or summary).strip()[:1000],
         tag=tag,
         new_tag=new,
-        mode=_pick(v.get("mode"), MODES),
+        mode=_pick(v.get("mode"), tuple(m.name for m in modes)),
+        workflow=_pick(v.get("workflow"), tuple(w.name for w in workflows)),
         model=_pick(v.get("model"), MODELS),
         effort=_pick(v.get("effort"), EFFORTS),
         title=clean_title(v.get("title")),
