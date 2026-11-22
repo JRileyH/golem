@@ -750,6 +750,8 @@ def test_older_databases_get_new_columns(tmp_path):
         " issue INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
     )
     db.execute("INSERT INTO jobs (slug, kind, request, playbook, created_at, updated_at) VALUES ('hey', 'change', 'add a quiz', 'feature', 'now', 'now')")
+    for kind, playbook in (("new", "standard"), ("change", "question"), ("change", "proposals"), ("adopt", "adopt")):
+        db.execute("INSERT INTO jobs (slug, kind, request, playbook, created_at, updated_at) VALUES ('hey', ?, 'r', ?, 'now', 'now')", (kind, playbook))
     db.execute(
         "CREATE TABLE steps (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, position INTEGER NOT NULL, kind TEXT NOT NULL,"
         " name TEXT NOT NULL, max_turns INTEGER, state TEXT NOT NULL DEFAULT 'pending', summary TEXT, problem TEXT, error TEXT,"
@@ -776,6 +778,8 @@ def test_older_databases_get_new_columns(tmp_path):
     assert "via" not in {r["name"] for r in store.db.execute("PRAGMA table_info(messages)")}
     # Jobs from before titles have none: they go by their request's first line.
     assert (store.job(1).title, plan.title(store.job(1))) == ("", "add a quiz")
+    # Jobs from before start types get theirs from their kind and playbook.
+    assert [store.job(i).start for i in range(1, 6)] == ["change", "new", "look", "propose", "adopt"]
     # Steps from before options and design rounds have none.
     [step] = store.steps(1)
     assert (step.options, step.design, step.optional) == ([], {}, False)

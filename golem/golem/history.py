@@ -49,7 +49,7 @@ def records(settings: Settings, slug: str, items: list[dict]) -> list[tuple[Job,
         start, end = issue or prs[0], issue or prs[-1]
         job = Job(
             id=0, slug=slug, kind=kind, request=request, playbook={"new": "standard", "adopt": "adopt"}.get(kind, "feature"),
-            phase=0, state=_state(issue, prs), priority=0, resume_session=None, attempts=0, retry_at=None,
+            phase=0, start=kind, state=_state(issue, prs), priority=0, resume_session=None, attempts=0, retry_at=None,
             issue=issue["number"] if issue else None,
             created_at=_time(start["created_at"]), updated_at=_time(end["closed_at"] or end["created_at"]),
             title=issue["title"] if issue and kind == "change" else "",  # a change's issue is named for it; the first's, the project

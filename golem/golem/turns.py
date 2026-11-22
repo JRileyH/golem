@@ -39,7 +39,7 @@ class Turn:
 
 def wants(store: Store, job: Job) -> Turn | None:
     """The turn the job's current step needs, if any: only changes take turns."""
-    if job.kind != "change" or job.playbook in LOOKS:
+    if job.kind != "change" or job.start in LOOKS:
         return None
     steps = store.steps(job.id)
     step = plan.current(steps)

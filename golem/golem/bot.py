@@ -220,7 +220,7 @@ class Bot:
     async def project_message(self, project: Project, text: str) -> None:
         changes = self.store.change_jobs(project.slug)
         job = changes[0] if changes else None
-        asked = next((j for j in self.store.jobs(("waiting",)) if j.slug == project.slug and j.playbook == "question"), None)
+        asked = next((j for j in self.store.jobs(("waiting",)) if j.slug == project.slug and j.start == "look"), None)
         for waiting in (j for j in (*changes, asked) if j and j.state == "waiting"):  # his reply to what golem asked
             self.store.add_note(waiting.id, text)
             self.store.update_job(waiting.id, state="queued")

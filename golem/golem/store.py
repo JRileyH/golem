@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',  -- what it's about in a few words ("Quiz Mode"); '' for none (plan.title)
-    worktree INTEGER NOT NULL DEFAULT 0  -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
+    worktree INTEGER NOT NULL DEFAULT 0, -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
+    start TEXT NOT NULL DEFAULT 'change' -- where it came from and what it may do (STARTS)
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -164,7 +165,7 @@ MIGRATIONS = {
         "parallel_jobs": "INTEGER NOT NULL DEFAULT 1",
     },
     # Jobs from before trees have 0 and finish in the project's checkout, where their work is.
-    "jobs": {"title": "TEXT NOT NULL DEFAULT ''", "worktree": "INTEGER NOT NULL DEFAULT 0"},
+    "jobs": {"title": "TEXT NOT NULL DEFAULT ''", "worktree": "INTEGER NOT NULL DEFAULT 0", "start": "TEXT NOT NULL DEFAULT 'change'"},
     "proposals": {"issue": "INTEGER"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
@@ -186,9 +187,14 @@ ACTIVE = ("queued", "running", "waiting", "parked")
 # Steps in these states are still to do: the first of them is the job's current step.
 OPEN = ("pending", "running", "waiting")
 MODES = ("reckless", "standard", "rigorous")
-# Playbooks whose jobs only look: nothing is committed, pushed or deployed, so they can run
-# between the steps of a project's change.
-LOOKS = ("question", "proposals")
+# Where a job comes from, which says what it may do: a new project from the inbox, a change to
+# one from its conversation, a question about one (look), golem's own look for improvements
+# (propose), taking on a repo golem didn't make (adopt). `sub` is for workflows used only inside
+# others, never a job's own.
+STARTS = ("new", "change", "look", "propose", "adopt")
+# Jobs that only look: nothing is committed, pushed or deployed, so they can run between the
+# steps of a project's change.
+LOOKS = ("look", "propose")
 EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
 MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
@@ -292,6 +298,7 @@ class Job:
     updated_at: str
     title: str = ""  # what it's about in a few words ("Quiz Mode"); plan.title has one for every job
     worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
+    start: str = "change"  # where it came from (STARTS)
 
 
 @dataclass
@@ -341,6 +348,13 @@ class Store:
         for table, columns in DROPPED.items():
             for column in self._columns(table) & set(columns):
                 self.db.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        if self.get("job_starts") is None:
+            # Jobs said what they were only by their kind and playbook.
+            self.db.execute(
+                "UPDATE jobs SET start = CASE WHEN kind IN ('new', 'adopt') THEN kind WHEN playbook = 'question' THEN 'look'"
+                " WHEN playbook = 'proposals' THEN 'propose' ELSE 'change' END"
+            )
+            self.put("job_starts", "1")
         if self.get("project_engines") is None:
             # Projects used to always name a model and effort, opus and high unless Riggy said
             # otherwise. Those now come from each step's defaults, which start out the same.
@@ -549,12 +563,16 @@ class Store:
 
     # --- jobs -----------------------------------------------------------------
 
-    def add_job(self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "") -> Job:
+    def add_job(
+        self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "", start: str = ""
+    ) -> Job:
         """A new job, which works in a tree of its own (Job.worktree)."""
+        start = start or start_of(kind, playbook)
+        assert start in STARTS, start
         cur = self.db.execute(
-            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
-            (slug, kind, request, playbook, priority, now(), now(), title),
+            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (slug, kind, request, playbook, priority, now(), now(), title, start),
         )
         return self.job(cur.lastrowid)
 
@@ -572,7 +590,7 @@ class Store:
         """The project's unfinished jobs that change it (not questions or proposals), oldest first."""
         marks, looks = ", ".join("?" * len(ACTIVE)), ", ".join("?" * len(LOOKS))
         rows = self.db.execute(
-            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}) AND playbook NOT IN ({looks}) ORDER BY id",
+            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}) AND start NOT IN ({looks}) ORDER BY id",
             (slug, *ACTIVE, *LOOKS),
         )
         return [Job(**r) for r in rows]
@@ -591,7 +609,7 @@ class Store:
         come in between its changes (`questions=False` leaves them out); a project allows one
         change at a time unless it says more (room_for_change)."""
         marks = ", ".join("?" * len(ACTIVE))
-        skip = "" if questions else f" AND playbook NOT IN ({', '.join('?' * len(LOOKS))})"
+        skip = "" if questions else f" AND start NOT IN ({', '.join('?' * len(LOOKS))})"
         row = self.db.execute(
             f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}){skip} ORDER BY id LIMIT 1",
             (slug, *ACTIVE, *(() if questions else LOOKS)),
@@ -800,7 +818,7 @@ class Store:
 
     def proposal_jobs(self, slug: str) -> list[Job]:
         """The project's proposals jobs, oldest first."""
-        rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? AND playbook = 'proposals' ORDER BY id", (slug,))
+        rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? AND start = 'propose' ORDER BY id", (slug,))
         return [Job(**r) for r in rows]
 
     # --- runs -----------------------------------------------------------------
@@ -851,6 +869,13 @@ class Store:
         else:
             rows = self.db.execute("SELECT * FROM runs WHERE job_id = ? ORDER BY id", (job_id,))
         return [dict(r) for r in rows]
+
+
+def start_of(kind: str, playbook: str) -> str:
+    """Where a job came from, by its kind and playbook (STARTS)."""
+    if kind in ("new", "adopt"):
+        return kind
+    return {"question": "look", "proposals": "propose"}.get(playbook, "change")
 
 
 def _step(row: sqlite3.Row | dict) -> Step:

@@ -329,7 +329,7 @@ class Scheduler:
         """Whether a change's branch should catch up with main before this step: the first of a
         turn at building or shipping, on a project where changes take turns. Others may have
         shipped since it branched; building and shipping start from what's live."""
-        if job.kind != "change" or job.playbook in LOOKS or not job.worktree or step.started_at or step.kind == "sync":
+        if job.kind != "change" or job.start in LOOKS or not job.worktree or step.started_at or step.kind == "sync":
             return False
         project = self.store.project(job.slug)
         if project is None or project.parallel_jobs <= 1 or plan.step_class(steps, step) not in turns.TURNS:
@@ -364,7 +364,7 @@ class Scheduler:
                 steps = self.store.steps(job.id)
                 finished = plan.current(steps) is None
                 self.store.update_job(job.id, state="done" if finished else "queued", attempts=0, resume_session=None)
-                quiet = job.playbook in LOOKS  # its last step says it
+                quiet = job.start in LOOKS  # its last step says it
                 if outcome.state == "done" and not quiet and (step.kind == "agent" or step.kind in ANNOUNCED):
                     link = next(iter(outcome.links.values()), "")
                     nxt = "" if finished else f"\nNext: {plan.upcoming(steps, step)}."
@@ -439,7 +439,7 @@ class Scheduler:
             self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(ERROR_RETRY), resume_session=None)
             log.warning("job %s attempt %s failed: %s", job.id, attempts, error)
             return
-        if job.playbook == "proposals":  # nobody asked for it: no reason to interrupt Riggy, just stop
+        if job.start == "propose":  # nobody asked for it: no reason to interrupt Riggy, just stop
             self.store.update_job(job.id, state="failed", attempts=0, resume_session=None)
             await self.say(project, f"I couldn't finish looking for proposals: {error[:300]}", notice=True)
             return
@@ -461,7 +461,7 @@ class Scheduler:
         way), and anything it changes there is put back."""
         if step.name in BUILDS_DESIGN and (nothing := self.nothing_designed(job, step)):
             return Outcome("skipped", nothing)
-        looking, tree = job.playbook in LOOKS, self.tree(job)
+        looking, tree = job.start in LOOKS, self.tree(job)
         if looking:
             branch = await self.workspace.current_branch(project.slug, job=tree)
             was_clean = await self.workspace.clean(project.slug, job=tree)
@@ -472,13 +472,13 @@ class Scheduler:
         feedback = [text for _, text in notes]
         if job.resume_session:
             prompt, resume = self.prompts.resume(feedback), job.resume_session
-        elif job.playbook == "proposals":
+        elif job.start == "propose":
             jobs, said = self.history(project, job)
             book = plan.load(self.settings, job.playbook)
             earlier = [p for p in self.store.proposals(project.slug, limit=proposals.PAST_SHOWN) if p.job_id != job.id]
             lens = proposals.lens(self.store, job)
             prompt, resume = self.prompts.proposals(project, job, book, step, branch, lens, jobs, said, earlier), None
-        elif job.playbook == "question":
+        elif job.start == "look":
             busy = self.store.active_job(project.slug, questions=False) is not None
             jobs, said = self.history(project, job)
             book = plan.load(self.settings, job.playbook)
@@ -522,7 +522,7 @@ class Scheduler:
         self.store.consume_notes([i for i, _ in notes])
         message, link = str(v.get("message", "")).strip(), str(v.get("link") or "").strip()
         links = {"link": link} if link.startswith(("https://", "http://")) else {}
-        if job.playbook == "proposals":  # nobody is waiting to answer: a question back is nothing to propose
+        if job.start == "propose":  # nobody is waiting to answer: a question back is nothing to propose
             made = self.store.add_proposals(project.slug, job.id, proposals.lens(self.store, job).name, proposals.collect(v.get("proposals")))
             return Outcome("done", message or f"Proposed {len(made)}.", links)
         if v["verdict"] == "blocked":
@@ -786,7 +786,7 @@ class Scheduler:
             await self.workspace.sync_main(project.slug)
         if job.worktree:
             await self.workspace.ensure_tree(project.slug, job.id, at=self.branch(busy) if busy else None)
-        if job.playbook == "proposals":
+        if job.start == "propose":
             await self.say(project, f"Nothing else on, so I'm looking at its {proposals.lens(self.store, job).name} for things to propose.", notice=True)
         else:
             await self.say(project, f"Looking into it: {plan.title(job)}", notice=True)

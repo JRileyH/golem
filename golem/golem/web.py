@@ -179,7 +179,7 @@ def create_app(
         jobs = sorted(store.jobs(ACTIVE, limit=1000), key=lambda j: (order.get(j.id, 999), j.id))
         for job in jobs:
             project = store.project(job.slug)
-            key = (job.slug, job.id) if project.parallel_jobs > 1 and job.playbook not in LOOKS else job.slug
+            key = (job.slug, job.id) if project.parallel_jobs > 1 and job.start not in LOOKS else job.slug
             if key in seen:
                 continue
             seen.add(key)
