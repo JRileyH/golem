@@ -26,16 +26,17 @@ class Talk:
         self.store = store
         self.notify = notify
 
-    async def heard(self, channel: str, text: str) -> Said:
-        """Something Riggy said."""
-        return self.store.add_message(channel, "riggy", text)
+    async def heard(self, channel: str, text: str, job: int | None = None, step: int | None = None) -> Said:
+        """Something Riggy said: to a job (a reply, a note) if `job`."""
+        return self.store.add_message(channel, "riggy", text, job_id=job, step_id=step)
 
-    async def send(self, channel: str, text: str, notice: bool = False) -> Said:
-        """Not a notice, it wants Riggy's attention (it's pushed); a notice is news he can read later."""
-        return await self._record(self.store.add_message(channel, "golem", text, notify=not notice))
+    async def send(self, channel: str, text: str, notice: bool = False, job: int | None = None, step: int | None = None) -> Said:
+        """Not a notice, it wants Riggy's attention (it's pushed); a notice is news he can read later.
+        About a job (`job`, and the step it's about, `step`), it's that job's activity."""
+        return await self._record(self.store.add_message(channel, "golem", text, notify=not notice, job_id=job, step_id=step))
 
-    async def send_image(self, channel: str, path: Path, caption: str = "") -> Said:
-        return await self._record(self.store.add_message(channel, "golem", caption, image=_url(path)))
+    async def send_image(self, channel: str, path: Path, caption: str = "", job: int | None = None, step: int | None = None) -> Said:
+        return await self._record(self.store.add_message(channel, "golem", caption, image=_url(path), job_id=job, step_id=step))
 
     async def _record(self, said: Said) -> Said:
         if said.notify and self.notify:

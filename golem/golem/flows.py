@@ -128,8 +128,9 @@ STATE = {"running": "now", "waiting": "waiting", "done": "done", "failed": "fail
 
 
 def job_view(settings: Settings, store: Store, job: Job, path: str = "") -> dict | None:
-    """A level of the job's copy of its workflow to draw, lit by where the job is: each block's
-    state, how many times it's run, and its sheet. None once the job's over (its copy is gone)."""
+    """A level of the job's copy of its workflow to draw, lit by where the job is (or how it
+    went): each block's state, how many times it's run, and its sheet. None for a job from
+    before workflows, which has no copy."""
     snap = plan.snapshot(job) or (plan.preview(settings, store, job) if job.state in ACTIVE else None)
     if snap is None:
         return None

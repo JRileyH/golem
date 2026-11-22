@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     start TEXT NOT NULL DEFAULT 'change', -- where it came from and what it may do (STARTS)
     workflow TEXT NOT NULL DEFAULT '',   -- the workflow it runs, by key ('' from before workflows)
     mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in: which of the workflow's tabs ('' for the default)
-    graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten); '' before it starts and once it's over
+    graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
     vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 );
@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS steps (
     turn TEXT NOT NULL DEFAULT '',      -- the turn it takes on its project: build | ship | none; '' from before (turns.py)
     node_id TEXT NOT NULL DEFAULT '',   -- the block of the job's workflow it's a visit to (engine.py); '' from before
     port TEXT NOT NULL DEFAULT '',      -- the output it left by, once it's done
-    visit INTEGER NOT NULL DEFAULT 0    -- which visit to its block it is: 1, 2… (loops come back)
+    visit INTEGER NOT NULL DEFAULT 0,   -- which visit to its block it is: 1, 2… (loops come back)
+    head TEXT NOT NULL DEFAULT ''       -- the job's branch's commit once it was done, for what came since (about.py)
 );
 -- What the projects page shows for a live project (cards.py).
 CREATE TABLE IF NOT EXISTS cards (
@@ -165,7 +166,9 @@ CREATE TABLE IF NOT EXISTS messages (
     text TEXT NOT NULL,
     image TEXT,                      -- a picture's URL on the status page
     notify INTEGER NOT NULL DEFAULT 0,  -- golem wanted his attention: a question, a check-in, done
-    at TEXT NOT NULL
+    at TEXT NOT NULL,
+    job_id INTEGER,                  -- the job it's about: its activity (none for golem-wide news, or from before)
+    step_id INTEGER                  -- and the step, if one: where a notification opens
 );
 CREATE INDEX IF NOT EXISTS messages_by_channel ON messages (channel, id);
 -- Riggy's devices that get push notifications (push.py): each browser's Web Push subscription.
@@ -234,7 +237,9 @@ MIGRATIONS = {
         "node_id": "TEXT NOT NULL DEFAULT ''",
         "port": "TEXT NOT NULL DEFAULT ''",
         "visit": "INTEGER NOT NULL DEFAULT 0",
+        "head": "TEXT NOT NULL DEFAULT ''",
     },
+    "messages": {"job_id": "INTEGER", "step_id": "INTEGER"},
     "notes": {"step_id": "INTEGER", "node_id": "TEXT NOT NULL DEFAULT ''"},  # a note for one step (or block) rather than the next
 }
 # Columns golem no longer uses, dropped from older databases on open.
@@ -379,6 +384,8 @@ class Said:
     image: str | None
     notify: bool
     at: str
+    job_id: int | None = None  # the job it's about, for its activity
+    step_id: int | None = None
 
 
 @dataclass
@@ -402,7 +409,7 @@ class Job:
     start: str = "change"  # where it came from (STARTS)
     workflow: str = ""  # the workflow it runs, by key; "" from before workflows
     mode: str = ""  # which of the workflow's tabs: a mode, or "" for its default
-    graph: str = ""  # JSON: its own flattened copy (engine.flatten); "" until it starts and once it's over
+    graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 
@@ -431,6 +438,7 @@ class Step:
     node_id: str = ""  # the block of the job's workflow it's a visit to; "" from before workflows
     port: str = ""  # the output it left by, once done (engine.advance)
     visit: int = 0  # which visit to its block: loops come back
+    head: str = ""  # the job's branch's commit once it was done ("" if it touches no tree, or from before)
 
 
 class Store:
@@ -445,6 +453,7 @@ class Store:
             for column, decl in columns.items():
                 if column not in have:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+        self.db.execute("CREATE INDEX IF NOT EXISTS messages_by_job ON messages (job_id, id)")
         if self.get("tags") is None:
             # Cards used to carry a few tags each, written by the card's model. Only "Game" said
             # much, so it's the one tag to start with: on every project whose card was a game.
@@ -639,13 +648,19 @@ class Store:
     # --- the conversation -----------------------------------------------------
 
     def add_message(
-        self, channel: str, who: str, text: str, image: str | None = None, notify: bool = False
-    ) -> Said:
+        self, channel: str, who: str, text: str, image: str | None = None, notify: bool = False,
+        job_id: int | None = None, step_id: int | None = None,
+    ) -> Said:  # fmt: skip
         cur = self.db.execute(
-            "INSERT INTO messages (channel, who, text, image, notify, at) VALUES (?, ?, ?, ?, ?, ?)",
-            (channel, who, text, image, int(notify), now()),
+            "INSERT INTO messages (channel, who, text, image, notify, at, job_id, step_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (channel, who, text, image, int(notify), now(), job_id, step_id),
         )
         return self.messages(channel, after=cur.lastrowid - 1, limit=1)[0]
+
+    def job_messages(self, job_id: int, limit: int = 200) -> list[Said]:
+        """A job's activity: what golem and Riggy said about it, oldest first (its latest `limit`)."""
+        rows = self.db.execute("SELECT * FROM messages WHERE job_id = ? ORDER BY id DESC LIMIT ?", (job_id, limit)).fetchall()[::-1]
+        return [Said(**{**dict(r), "notify": bool(r["notify"])}) for r in rows]
 
     def messages(self, channel: str, limit: int = 200, after: int = 0) -> list[Said]:
         """A channel's latest messages (or the first after id `after`), oldest first."""
@@ -695,9 +710,7 @@ class Store:
         return Job(**row) if row else None
 
     def update_job(self, job_id: int, **fields) -> Job:
-        """Change a job. One that's over lets go of its copy of its workflow: nothing will walk it again."""
-        if fields.get("state") in FINISHED:
-            fields.setdefault("graph", "")
+        """Change a job. Its copy of its workflow stays with it once it's over: its record of how it went."""
         if isinstance(fields.get("vars"), dict):
             fields["vars"] = json.dumps(fields["vars"])
         fields["updated_at"] = now()
@@ -877,8 +890,6 @@ class Store:
                      s.turn, s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
                 )  # fmt: skip
             fields = {"vars": json.dumps(vars), **job, "updated_at": now()}
-            if fields.get("state") in FINISHED:
-                fields.setdefault("graph", "")
             columns = ", ".join(f"{name} = ?" for name in fields)
             self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
         return self.steps(job_id)

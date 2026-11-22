@@ -128,7 +128,7 @@ class Control:
             if design and design.recommendation
             else "your pick (the next step picks the strongest option)",
         }.get(step.kind, step.name)
-        await self.scheduler.say(project, f"Skipped {what}, from the status page.", notice=True)
+        await self.scheduler.say(project, f"Skipped {what}, from the status page.", notice=True, job=job, step=step.id or None)
         return f"Skipped {plan.label(step)}."
 
     async def restore(self, job_id: int, step_id: int, position: int = 0) -> str:
@@ -143,7 +143,7 @@ class Control:
             step = self.store.update_step(step.id, state="pending", summary=None, port="", ended_at=None)
             if job.state == "done":
                 self.store.update_job(job.id, state="queued")
-        await self.scheduler.say(project, f"Put {plan.label(step)} back in, from the status page.", notice=True)
+        await self.scheduler.say(project, f"Put {plan.label(step)} back in, from the status page.", notice=True, job=job, step=step.id or None)
         return f"Put {plan.label(step)} back."
 
     async def move(self, job_id: int, where: str) -> str:
@@ -185,7 +185,7 @@ class Control:
     async def kill(self, job_id: int) -> str:
         job, project = self._job(job_id)
         self.scheduler.kill(job.id)
-        await self.scheduler.say(project, f"Stopped job {job.id}, from the status page.", notice=True)
+        await self.scheduler.say(project, f"Stopped job {job.id}, from the status page.", notice=True, job=job)
         return f"Stopped job {job.id}."
 
     async def setting(self, slug: str, name: str, value: str) -> str:
@@ -259,7 +259,7 @@ class Control:
             self._block_settings(job, step, **{name: value or None})
             step = replace(step, **{name: value or None})
         engine = plan.engine(self.scheduler.settings, self.store, project, step, plan.node(self.store.job(job.id), step))
-        await self.scheduler.say(project, f"{step.name} will run on {engine}, from the status page.", notice=True)
+        await self.scheduler.say(project, f"{step.name} will run on {engine}, from the status page.", notice=True, job=job, step=step.id or None)
         return f"{step.name} will run on {engine}."
 
     def default_setting(self, kind: str, name: str, value: str) -> str:
@@ -478,10 +478,10 @@ class Control:
                 self.store.add_note(job.id, text[:4000], step.id)
             else:  # still to come: for its block, whenever the job gets there
                 self.store.add_note(job.id, text[:4000], node_id=step.node_id)
-            await self.scheduler.chat.heard(project.slug, f"For {step.name}: {text[:4000]}")
+            await self.scheduler.chat.heard(project.slug, f"For {step.name}: {text[:4000]}", job=job.id, step=step.id or None)
             return f"{step.name} gets that when it starts."
         self.store.add_note(job.id, text[:4000])
-        await self.scheduler.chat.heard(project.slug, text[:4000])
+        await self.scheduler.chat.heard(project.slug, text[:4000], job=job.id)
         if job.state == "waiting":
             self.store.update_job(job.id, state="queued", attempts=0)
             self.scheduler.wake()

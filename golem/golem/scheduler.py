@@ -35,6 +35,7 @@ import logging
 import os
 import shutil
 import signal
+from contextvars import ContextVar
 from string import Template
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -55,6 +56,8 @@ from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
+# The job and step a worker slot is on: what golem says while it's on them is their activity.
+DOING: ContextVar[tuple[int | None, int | None]] = ContextVar("doing", default=(None, None))
 
 WRAPUP_TURNS = 15
 FIX_TURNS = 150
@@ -90,6 +93,7 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
 USES_TREE = ("agent", "script", "push", "push-main", "merge", "deploy", "alert", "sync")
+TREE_STEPS = ("setup", "vet", "agent", "script", "sync", "push", "push-main", "merge")  # steps after which the branch's commit is kept
 
 
 @dataclass
@@ -234,7 +238,7 @@ class Scheduler:
             if self.side_by_side(job):
                 if turns.blocked_by(self.store, job, set(self.running)) is None:
                     return job
-            elif job.slug not in busy:
+            elif job.slug not in busy and turns.behind(self.store, job) is None:  # one change at a time: in order
                 return job
         return None
 
@@ -309,7 +313,7 @@ class Scheduler:
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)
-            await self.say(project, f"Building the proposal you accepted: {p.title} (job {job.id}).", notice=True)
+            await self.say(project, f"Building the proposal you accepted: {p.title} (job {job.id}).", notice=True, job=job)
             self.wake()
 
     async def record_decision(self, p: Proposal) -> None:
@@ -354,7 +358,7 @@ class Scheduler:
             if fallback is None or (wf and fallback.id == wf.id):
                 raise
             log.warning("job %s: %s; using %s", job.id, e, fallback.key)
-            self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use its workflow ({e}), so it's running {fallback.name}.")
+            self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use its workflow ({e}), so it's running {fallback.name}.", job_id=job.id)
             wf, snap = fallback, self.library.pin(fallback, job.start, mode)
         return self.store.update_job(job.id, workflow=wf.key, mode=mode, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
@@ -403,6 +407,7 @@ class Scheduler:
             self.store.update_job(job.id, state="done")
             return
         job = self.store.job(job.id)
+        DOING.set((job.id, step.id))  # what's said from here on is this job's, at this step
         if await self.guarded(job, project, step):
             return
         try:
@@ -413,6 +418,11 @@ class Scheduler:
             outcome = Outcome("error", problem=str(e))
         if self.store.job(job.id).state == "killed":
             return
+        if outcome.state in ("done", "skipped", "failed") and job.worktree and step.kind in TREE_STEPS:
+            try:  # where the job's branch is now: what came after it is told from here (about.py)
+                self.store.update_step(step.id, head=await self.workspace.head(project.slug, job=self.tree(job)))
+            except WorkspaceError:
+                pass
         await self.settle(self.store.job(job.id), project, self.store.step(step.id), outcome)
 
     async def settle(self, job: Job, project: Project, step: Step, outcome: Outcome) -> None:
@@ -1102,7 +1112,7 @@ class Scheduler:
         the round's pick and its questions, in the message that asks for his."""
         folder = options.folder(self.settings, job.id)
         for i, page in enumerate(design.pages):
-            await self.chat.send_image(project.slug, folder / page, "The pages they share" if i == 0 else f"Shared ({i + 1})")
+            await self.send_image(project, folder / page, "The pages they share" if i == 0 else f"Shared ({i + 1})")
         golem = self.settings.url("golem")
         letters = ", ".join(o.letter for o in shown[:-1]) + f" or {shown[-1].letter}"
         lines = [f"The whole doc: {golem}/jobs/{job.id}/options/{design.doc}"] if design.doc else []
@@ -1125,7 +1135,7 @@ class Scheduler:
             return
         folder = options.folder(self.settings, job.id)
         for i, image in enumerate(option.images):
-            await self.chat.send_image(project.slug, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
+            await self.send_image(project, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
 
     async def do_script(self, job: Job, project: Project, step: Step) -> Outcome:
         """A script block: its command run in the job's checkout, as a worker would run it (its
@@ -1275,8 +1285,18 @@ class Scheduler:
         for path in scratch:
             await asyncio.to_thread(shutil.rmtree, path, True)
 
-    async def say(self, project: Project, text: str, notice: bool = False) -> None:
-        await self.chat.send(project.slug, text, notice=notice)
+    async def say(self, project: Project, text: str, notice: bool = False, job: Job | int | None = None, step: int | None = None) -> None:
+        """Something for Riggy about a project: about a job (and a step) if given, else the job
+        and step this worker slot is on (DOING), so it's that job's activity."""
+        doing_job, doing_step = DOING.get()
+        job_id = (job.id if isinstance(job, Job) else job) if job is not None else doing_job
+        step_id = step if step is not None else (doing_step if job_id == doing_job else None)
+        await self.chat.send(project.slug, text, notice=notice, job=job_id, step=step_id)
+
+    async def send_image(self, project: Project, path: Path, caption: str = "") -> None:
+        """A picture for Riggy, about the job and step this worker slot is on."""
+        job_id, step_id = DOING.get()
+        await self.chat.send_image(project.slug, path, caption, job=job_id, step=step_id)
 
     async def status(self, text: str, notice: bool = False) -> None:
         await self.chat.send(STATUS, text, notice=notice)

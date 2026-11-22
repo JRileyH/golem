@@ -69,8 +69,22 @@ def blocked_by(store: Store, job: Job, running: set[int] = frozenset()) -> tuple
     return None
 
 
+def behind(store: Store, job: Job) -> Job | None:
+    """For a change on a project that takes one at a time: the older change still under way that
+    it waits for, if any. (With more at once, changes take turns instead: blocked_by.) Questions
+    and proposals only look, so they wait for nothing."""
+    if job.start in LOOKS:
+        return None
+    project = store.project(job.slug)
+    if project is not None and project.parallel_jobs > 1:
+        return None
+    return next((j for j in store.change_jobs(job.slug) if j.id < job.id), None)
+
+
 def waiting_for(store: Store, job: Job) -> str:
     """For a queued change waiting its turn, who it's waiting for, in words; "" if it isn't."""
+    if job.state == "queued" and (older := behind(store, job)) is not None:
+        return f"waiting for job {older.id} to finish" + (" (it's waiting on you)" if older.state == "waiting" else "")
     held = blocked_by(store, job) if job.state == "queued" else None
     if held is None:
         return ""

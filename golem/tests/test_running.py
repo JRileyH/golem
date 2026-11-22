@@ -71,7 +71,7 @@ def test_an_agent_with_several_outputs_chooses_the_way_on(golem):
         build = next(c for c in golem.harness.calls if c.label == "build")
         assert "After your step: judge." in build.prompt and "What comes next depends on the verdict you choose" in judge.prompt
         assert "# Quality bar" not in build.prompt  # Riggy's own workflow: no web-app rules it didn't ask for
-        assert golem.store.job(job.id).graph == ""  # finished: its copy is gone
+        assert golem.store.job(job.id).graph  # finished: its copy stays, its record of how it went
 
     run(go())
 
@@ -321,3 +321,41 @@ def test_modes_are_made_renamed_and_deleted_in_settings(golem):
     assert "Options is the fallback" in control.fallback_workflow("change", "options")
     with pytest.raises(ControlError):
         control.fallback_workflow("change", "web_app")  # not a workflow for changes
+
+
+# --- each job's own activity, and one change at a time ------------------------------------
+
+
+def test_what_golem_says_about_a_job_is_that_jobs_activity(golem):
+    async def go():
+        room = await new_project(golem, [verdict("done", "MVP plan."), verdict("done"), verdict("done", "Try the quiz.")])
+        await golem.until("your check-in")
+        await golem.step()
+        job = golem.store.jobs()[0]
+        said = golem.store.job_messages(job.id)
+        assert any(m.text.startswith("✓ spec: MVP plan.") for m in said)
+        checkin = plan.current(golem.store.steps(job.id))
+        asked = said[-1]
+        assert asked.text.startswith("Try the quiz.") and asked.step_id == checkin.id and asked.notify
+        assert all(m.job_id == job.id for m in said)
+        # Each step that touched the job's tree says where its branch was after it.
+        assert all(s.head for s in golem.store.steps(job.id) if s.state == "done" and s.kind in ("setup", "agent", "push"))
+
+    run(go())
+
+
+def test_a_second_change_waits_for_the_first_on_a_project_that_takes_one_at_a_time(golem):
+    async def go():
+        await idle_project(golem)
+        first = change_job(golem, "change", "make the cards bigger")
+        second = change_job(golem, "change", "add a timer")
+        await golem.step()  # the first's setup
+        golem.store.update_job(first.id, state="waiting")  # asking Riggy something
+        assert golem.scheduler.pick(at="9999") is None  # the second waits its turn, in order
+        from golem import turns
+
+        assert turns.waiting_for(golem.store, golem.store.job(second.id)) == f"waiting for job {first.id} to finish (it's waiting on you)"
+        golem.store.update_job(first.id, state="done")
+        assert golem.scheduler.pick(at="9999").id == second.id
+
+    run(go())

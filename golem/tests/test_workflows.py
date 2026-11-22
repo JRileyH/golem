@@ -225,11 +225,11 @@ def test_modes_rename_and_delete_with_their_tabs_and_projects(library):
     assert set(store.tabs(web.id)) == {"", "reckless"} and store.project("trees").mode == ""
 
 
-def test_a_finished_job_lets_go_of_its_copy(library):
+def test_a_finished_job_keeps_its_copy_as_its_record(library):
     store = library.store
     store.add_project("trees", "Trees", "s")
     job = store.add_job("trees", "change", "r", "feature")
     store.update_job(job.id, graph='{"v": 1}', vars={"counters": {"fixes": 1}})
     assert store.job(job.id).graph and json.loads(store.job(job.id).vars)["counters"] == {"fixes": 1}
     store.update_job(job.id, state="done")
-    assert store.job(job.id).graph == ""
+    assert store.job(job.id).graph == '{"v": 1}'

@@ -971,7 +971,13 @@ def test_devices_turn_notifications_on_and_get_what_wants_riggy(golem, app):
     asyncio.run(golem.talk.send("inbox", "Question: photos or drawings?"))
     [(endpoint, payload, claims)] = sent
     assert endpoint == "https://push.example/phone" and claims["sub"] == "https://golem.unlaunched.dev"
-    assert payload == {"title": "golem", "body": "Question: photos or drawings?", "url": "/inbox#end", "tag": "inbox"}
+    assert payload == {"title": "golem", "body": "Question: photos or drawings?", "url": "/", "tag": "inbox"}
+    # About a job: tapping it opens the job, at the step it's about.
+    golem.store.add_project("trees", "Trees", "s")
+    job = golem.store.add_job("trees", "change", "r", "feature")
+    asyncio.run(golem.talk.send("trees", "Which photos?", job=job.id, step=7))
+    assert sent[-1][1] == {"title": "Trees", "body": "Which photos?", "url": f"/p/trees/jobs/{job.id}#/steps/7", "tag": f"job-{job.id}"}
+    assert golem.store.job_messages(job.id)[-1].text == "Which photos?"
     assert [s["endpoint"] for s in golem.store.subscriptions()] == ["https://push.example/phone"]  # the gone one's forgotten
     assert app.post("/push/test", json={}).json() == {"sent": 1}
     app.post("/push/unsubscribe", json={"endpoint": "https://push.example/phone"})
@@ -1017,10 +1023,13 @@ def test_a_container_opens_to_its_own_blocks(golem, page):
     assert nodes["checks"]["ports"] == ["pass", "fail"]
 
 
-def test_a_job_thats_over_shows_the_way_it_went(golem, page):
+def test_a_job_thats_over_is_still_drawn_and_one_from_before_workflows_shows_the_way_it_went(golem, page):
     job = page.job
     start(golem, job, "mvp")
     golem.store.update_job(job.id, state="done")
+    view = page.get(f"/jobs/{job.id}/flow.json").json()
+    assert view["poll"] == 0 and {n["id"]: n.get("state") for n in view["nodes"]}["spec"] == "done"
+    golem.store.update_job(job.id, graph="")  # a job from before workflows has no copy
     assert page.get(f"/jobs/{job.id}/flow.json").status_code == 404
     html = page.get(f"/jobs/{job.id}/flow").text
     assert "The way it went" in html and "class=trail" in html and "class=flow " not in html

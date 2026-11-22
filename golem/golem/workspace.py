@@ -98,6 +98,7 @@ class Workspace(Protocol):
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
     async def main_sha(self, slug: str) -> str: ...
+    async def head(self, slug: str, *, job: int | None = None) -> str: ...
     async def ci(self, slug: str, sha: str) -> CI: ...
 
 
@@ -475,6 +476,11 @@ class GitHubWorkspace:
         await self.git(slug, "fetch", "--quiet", "origin")
         return await self.git(slug, "rev-parse", "origin/main")
 
+    async def head(self, slug: str, *, job: int | None = None) -> str:
+        """The commit the job's tree (or the project's checkout) is at; "" if there's none yet."""
+        code, out = await run("git", "rev-parse", "HEAD", cwd=self.where(slug, job))
+        return out if code == 0 else ""
+
     async def ci(self, slug: str, sha: str) -> CI:
         """The workflow runs on a commit, judged the way the deployer judges them."""
         repo = f"{self.org}/{slug}"
@@ -628,6 +634,9 @@ class LocalWorkspace:
         if job is not None:
             return self.branches.get(job, "main")  # a tree with no branch is at main
         return self.branch or "main"
+
+    async def head(self, slug: str, *, job: int | None = None) -> str:
+        return f"{self.commits:040x}"  # a commit for each commit made: what changed since is told by it
 
     async def clean(self, slug: str, *, job: int | None = None) -> bool:
         return True

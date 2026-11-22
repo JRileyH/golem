@@ -514,7 +514,7 @@ def create_app(
         project = store.project(job.slug)
         path = request.query_params.get("path", "")
         if flows.job_view(settings, store, job, path) is None:  # over: its copy is gone; the way it went
-            body = f"<section class=card><h2>The way it went</h2><p class=muted>This job is over, so it no longer keeps its own copy of its workflow.</p>{pages.trail(store.steps(job.id), job)}</section>"
+            body = f"<section class=card><h2>The way it went</h2><p class=muted>This job is from before workflows, so there's no graph of it: here are its steps.</p>{pages.trail(store.steps(job.id), job)}</section>"
             stage = ""
         else:
             body = f"<p class='lead flow-lead'><a href='/jobs/{job.id}'>Job #{job.id}</a>: {escape(plan.title(job))}</p>"

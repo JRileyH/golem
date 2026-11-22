@@ -56,10 +56,18 @@ class Push:
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
     async def notify(self, said: Said) -> None:
-        """A message that wants Riggy, to every device he's turned notifications on for."""
+        """A message that wants Riggy, to every device he's turned notifications on for. Tapping it
+        opens what it's about: the job, at the step (its sheet), if it's about one."""
         project = self.store.project(said.channel) if said.channel not in (INBOX, STATUS) else None
-        url = f"/p/{project.slug}#end" if project else "/inbox#end"
-        payload = {"title": project.name if project else "golem", "body": said.text[:400] or "A picture", "url": url, "tag": said.channel}
+        url, tag = (f"/p/{project.slug}", project.slug) if project else ("/", said.channel)
+        if project and said.job_id:
+            job = self.store.job(said.job_id)
+            if job and job.start == "propose":
+                url = f"/p/{project.slug}#proposals"
+            else:
+                url = f"/p/{project.slug}/jobs/{said.job_id}" + (f"#/steps/{said.step_id}" if said.step_id else "")
+            tag = f"job-{said.job_id}"  # a newer notification about the job replaces the last
+        payload = {"title": project.name if project else "golem", "body": said.text[:400] or "A picture", "url": url, "tag": tag}
         await self.to_all(payload)
 
     async def to_all(self, payload: dict) -> int:
