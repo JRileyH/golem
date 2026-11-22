@@ -1,4 +1,4 @@
-"""Smaller pieces: playbooks, intake, the harness's reading of Claude Code output, the deploy CLI."""
+"""Smaller pieces: built-in workflows, intake, the harness's reading of Claude Code output, the deploy CLI."""
 
 from __future__ import annotations
 
@@ -15,8 +15,7 @@ import httpx
 import pytest
 from conftest import REPO
 
-from golem import config, deploy_cli, intake, options, plan
-from golem import playbook as playbooks
+from golem import config, deploy_cli, intake, options, plan, workflows
 from golem.config import Settings
 from golem.deployer_client import DeployerClient, DeployerError
 from golem.harness import ClaudeHarness, interpret
@@ -74,53 +73,36 @@ def test_project_images_are_built_for_this_box(monkeypatch, machine, platform):
     assert Settings.from_env({**env, "GOLEM_PLATFORM": "linux/riscv64"}).platform == "linux/riscv64"
 
 
-# --- playbooks ----------------------------------------------------------------
+# --- built-in workflows (workflows/) -----------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "name, mode, agents",
+    "blocks, md, error",
     [
-        ("reckless", "reckless", ["build"]),
-        ("standard", "standard", ["spec", "scaffold", "mvp", "design", "guide", "apply", "buildout", "review", "docs"]),
-        ("rigorous", "rigorous", ["spec", "spec-review", "scaffold", "mvp", "design", "guide", "apply", "buildout", "review", "second-pass", "docs"]),
-        ("feature", "reckless", ["change", "docs"]),
-        ("feature", "standard", ["change", "review", "docs"]),
-        ("feature", "rigorous", ["change", "review", "second-pass", "docs"]),
-        ("options", "reckless", ["options", "change", "docs"]),
-        ("options", "standard", ["options", "change", "review", "docs"]),
-        ("design", "reckless", ["design", "guide", "apply", "docs"]),
-        ("design", "standard", ["design", "guide", "apply", "review", "docs"]),
-        ("design", "rigorous", ["design", "guide", "apply", "review", "second-pass", "docs"]),
+        ("[setup, {agent: a, turns: 5}, end]", "## b\nstuff", "agent block a has no '## a' section"),
+        ("[setup, {agent: a, turns: 5}, ship-it, end]", "## a\nx", "unknown block 'ship-it'"),
+        ("[setup, {agent: a, turns: 5, outputs: [ok, bad]}, end]", "## a\nx", "a's bad output isn't wired"),
+        ("[setup, {agent: a, turns: 5, maybe: end}, end]", "## a\nx", "a has no maybe output"),
+        ("[setup, {agent: a, turns: 5}, {do: checks, fail: nowhere}, end]", "## a\nx", "wired to 'nowhere'"),
+        ("[setup, {agent: a, turns: 5}]", "## a\nx", "a's done output isn't wired"),
+        ("[setup, {agent: a, do: push}, end]", "## a\nx", "one of agent, do"),
     ],
 )
-def test_playbooks_load(name, mode, agents):
-    book = playbooks.load(REPO / "playbooks" / f"{name}.md")
-    steps = book.for_mode(mode)
-    assert [s.name for s in steps if s.kind == "agent"] == agents
-    assert all(s.instructions and s.max_turns > 0 for s in steps if s.kind == "agent")
-    assert [s.kind for s in steps][0] == "setup" and [s.kind for s in steps][-2:] == ["deploy", "alert"]
-    assert book.intro
+def test_bad_builtins_are_refused(blocks, md, error):
+    import yaml
+
+    with pytest.raises(ValueError, match=error):
+        workflows.build(yaml.safe_load(blocks), md, False, {})
 
 
-@pytest.mark.parametrize("name, agent, last", [("question", "examine", "answer"), ("proposals", "propose", "proposals")])
-def test_playbooks_that_only_look_load_in_every_mode(name, agent, last):
-    book = playbooks.load(REPO / "playbooks" / f"{name}.md")
-    for mode in ("reckless", "standard", "rigorous"):
-        assert [(s.kind, s.name) for s in book.for_mode(mode)] == [("refresh", "refresh"), ("agent", agent), (last, last)]
+def test_every_builtin_section_is_some_tabs_agent(tmp_path):
+    import shutil
 
-
-def test_the_adopt_playbook_checks_first_and_ships_in_every_mode():
-    book = playbooks.load(REPO / "playbooks" / "adopt.md")
-    for mode in ("reckless", "standard", "rigorous"):
-        assert [s.name for s in book.for_mode(mode)] == ["vet", "setup", "adopt", "push", "pr", "checks", "merge", "deploy", "alert"]
-    assert "What golem's checks found" in book.intro and "skills/new-repo.md" in book.instructions("adopt")
-
-
-def test_every_playbook_step_says_what_it_does_to_the_project():
-    for path in sorted((REPO / "playbooks").glob("*.md")):
-        if path.name != "README.md":
-            for s in playbooks.load(path).steps:
-                assert (s.name if s.kind == "agent" else s.kind) in plan.CLASSES, f"{path.stem}: {s.name} has no class"
+    folder = tmp_path / "workflows"
+    shutil.copytree(REPO / "workflows", folder)
+    (folder / "question.md").write_text((folder / "question.md").read_text() + "\n## unused\n\nNobody runs this.\n")
+    with pytest.raises(ValueError, match="question.md: sections without an agent block: unused"):
+        workflows._load_all(folder)
 
 
 def test_steps_golem_puts_in_are_part_of_the_section_they_are_in():
@@ -227,29 +209,6 @@ def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
         "- [polish] Sounds — not decided yet",
     ]
     assert past([]) == "(none yet: these are the first)"
-
-
-@pytest.mark.parametrize(
-    "steps, sections, error",
-    [
-        ("[setup, {agent: a, turns: 5}, deploy, alert]", "## b\nstuff", "agent step a has no '## a' section"),
-        ("[setup, {agent: a, turns: 5}, deploy, alert]", "## a\nx\n\n## b\nstuff", "sections without an agent step: b"),
-        ("[setup, {agent: a, turns: 5}, deploy]", "## a\nx", "must start with setup and end with deploy, alert"),
-        ("[{agent: a, turns: 5}, deploy, alert]", "## a\nx", "must start with setup and end with deploy, alert"),
-        ("[setup, {agent: a, turns: 5}, deploy, {do: alert, modes: [rigorous]}]", "## a\nx", "must start with setup"),
-        ("[setup, {agent: a, turns: 5}, ship-it, deploy, alert]", "## a\nx", "unknown step 'ship-it'"),
-        ("[setup, {agent: a, turns: 5, modes: [yolo]}, deploy, alert]", "## a\nx", "not yolo"),
-        ("[setup, {agent: a, turns: 5}, {do: merge, optional: true}, deploy, alert]", "## a\nx", "merge can't be optional"),
-        ("[setup, vet, {agent: a, turns: 5}, deploy, alert]", "## a\nx", "vet can only be the first step"),
-        ("[vet, refresh, {agent: a, turns: 5}, answer]", "## a\nx", "or start with vet, setup and end with deploy, alert"),
-        ("[vet, {agent: a, turns: 5}, deploy, alert]", "## a\nx", "must start with setup"),
-    ],
-)
-def test_bad_playbooks_are_refused(tmp_path, steps, sections, error):
-    path = tmp_path / "bad.md"
-    path.write_text(f"---\nsteps: {steps}\n---\nintro\n\n{sections}\n")
-    with pytest.raises(ValueError, match=error):
-        playbooks.load(path)
 
 
 # --- intake -------------------------------------------------------------------

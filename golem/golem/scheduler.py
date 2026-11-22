@@ -653,7 +653,7 @@ class Scheduler:
         if block.get("path") and intros.get(block["path"]):  # a sub-workflow's own text, after the job's
             intro = f"{intro}\n\n{intros[block['path']]}".strip()
         if not block:
-            if step.name in ("fix", "resolve"):
+            if step.name == "resolve":  # merging main in, put in where a catch-up conflicted
                 return intro, self.prompts.render(step.name, problem=step.problem or "")
             return intro, ""
         text = block.get("instructions") or ""

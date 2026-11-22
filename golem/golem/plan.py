@@ -10,7 +10,6 @@ import json
 from dataclasses import dataclass, replace
 
 from . import engine as graphs
-from . import playbook as playbooks
 from .config import Settings
 from .store import ACTIVE, OPEN, Job, Project, Step, Store
 
@@ -61,10 +60,6 @@ LEGACY_PHASES = {
     "feature": ["change", "review", "docs"],
 }
 LEGACY_DONE = "Done before golem tracked steps."
-
-
-def load(settings: Settings, name: str) -> playbooks.Playbook:
-    return playbooks.load(settings.process_dir / "playbooks" / f"{name}.md")
 
 
 # Which built-in workflow and tab a job from before workflows runs, by its playbook: a new
@@ -188,13 +183,20 @@ def shown(steps: list[Step]) -> list[Step]:
 
 
 def _legacy(settings: Settings, store: Store, job: Job) -> list[Step]:
-    """A job from before steps were tracked: its playbook's steps, the ones before its phase done."""
+    """A job from before steps were tracked: the steps its playbook had (its built-in workflow's
+    usual way through, the same steps: tests/test_workflows.py), the ones before its phase done."""
+    from .workflows import load_all, resolver, top
+
     project = store.project(job.slug)
     book = job.playbook if job.playbook in BOOKS else {"web_app": job.mode or "standard", "change": "feature"}.get(job.playbook, job.playbook)
-    specs = load(settings, book).for_mode(job.mode or (project.mode if project.mode in ("reckless", "rigorous") else "standard"))
-    steps = [Step(0, job.id, i, s.kind, s.name, s.max_turns or None, s.optional) for i, s in enumerate(specs, start=1)]
-    for s in steps:
-        s.turn = turn_of(steps, s)
+    key, mode = workflow_for(replace(job, workflow="", playbook=book), project)
+    found = load_all(settings.process_dir / "workflows")
+    snap = graphs.flatten(top(found, key, mode), found[key].start, mode, resolver(found))
+    steps = []
+    for i, nid in enumerate(graphs.happy_path(snap), start=1):
+        node = snap["nodes"][nid]
+        kind, name = graphs.kind_of(node)
+        steps.append(Step(0, job.id, i, kind, name, node.get("turns") or None, bool(node.get("optional")), turn=graphs.turn_of(node)))
     names = LEGACY_PHASES.get(book, [])[job.phase :]
     resume = next((i for i, s in enumerate(steps) if s.kind == "agent" and s.name in names), 0)
     for s in steps[:resume]:
