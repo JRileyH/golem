@@ -38,10 +38,12 @@ def golem_shaped(path: Path) -> Path:
         "docs/decisions.md": "- Adopted.\n",
         "docs/lessons.md": "",
         "tests/test_app.py": "def test_ok(): pass\n",
+        "bin/test": "#!/bin/sh\nset -e\nuv run pytest\n",
     }
     for name, text in files.items():
         (path / name).parent.mkdir(parents=True, exist_ok=True)
         (path / name).write_text(text)
+    (path / "bin" / "test").chmod(0o755)
     return path
 
 
@@ -99,7 +101,7 @@ def test_an_empty_repo_is_all_fixable(tmp_path):
     assert found["build workflow"].said == "There's no GitHub Actions workflow to test it, then build and push its image."
     assert found["repo shape"].said == (
         "Missing AGENTS.md, a CLAUDE.md pointing to AGENTS.md, a README that starts with the live URL "
-        f"({URL}), docs/specs/, docs/decisions.md and docs/lessons.md."
+        f"({URL}), an executable bin/test that runs its tests, docs/specs/, docs/decisions.md and docs/lessons.md."
     )
     assert found["docs/brief.md"].said == "I'll write it from what you said and the README."
 
@@ -110,7 +112,10 @@ def test_repo_shape_wants_the_live_url_first_and_a_spec(tmp_path):
     (tmp_path / "docs" / "specs" / "current.md").unlink()
     (tmp_path / "CLAUDE.md").unlink()
     (tmp_path / "CLAUDE.md").symlink_to("AGENTS.md")  # a link to it counts
-    assert checks(tmp_path)["repo shape"].said == f"Missing a README that starts with the live URL ({URL}) and docs/specs/."
+    (tmp_path / "bin" / "test").chmod(0o644)  # there, but it won't run
+    assert checks(tmp_path)["repo shape"].said == (
+        f"Missing a README that starts with the live URL ({URL}), an executable bin/test that runs its tests and docs/specs/."
+    )
 
 
 def test_hellos_workflow_passes_with_nothing_to_test(tmp_path):

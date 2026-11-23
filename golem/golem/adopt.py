@@ -17,6 +17,7 @@ needs that golem can't give (`survey`, prompts/survey.md).
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -91,6 +92,8 @@ def files(path: Path, org: str, slug: str, platform: str, url: str) -> list[Chec
         missing.append("a CLAUDE.md pointing to AGENTS.md")
     if not _leads_with(path / "README.md", url):
         missing.append(f"a README that starts with the live URL ({url})")
+    if not (path / "bin" / "test").is_file() or not os.access(path / "bin" / "test", os.X_OK):
+        missing.append("an executable bin/test that runs its tests")
     specs = path / "docs" / "specs"
     if not (specs.is_dir() and any(p.is_file() for p in specs.iterdir())):
         missing.append("docs/specs/")

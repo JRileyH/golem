@@ -7,6 +7,7 @@ Every project repo has the same shape, so any worker can pick it up later.
 | `AGENTS.md` | Stack, how to run, test and deploy, gotchas. Kept accurate. |
 | `CLAUDE.md` | One line: `See AGENTS.md.` |
 | `README.md` | Live URL first, then what the project does, in a few lines. |
+| `bin/test` | Runs the tests, from a fresh checkout. CI runs it, and so do golem's Test steps. |
 | `Dockerfile` | Builds the image CI pushes. |
 | `deploy/compose.yml` | What the deployer runs (rules in skills/deploy.md). |
 | `.github/workflows/build.yml` | Tests, then builds and pushes the image. |
@@ -33,6 +34,24 @@ Other projects' workers serve on the same machine as you (skills/browser.md), so
 dev and test tooling never assumes a port is free: configs take it from `PORT`
 when that's set (`Number(process.env.PORT ?? 5173)`), and a Playwright
 `webServer` has `reuseExistingServer: !process.env.CI`.
+
+## bin/test
+
+One executable script that runs all the project's tests, so CI, golem's Test
+steps and any worker run them the same way. It installs what the tests need,
+runs them, and exits 0 only if they all pass:
+
+```sh
+#!/bin/sh
+set -e
+cd "$(dirname "$0")/.."
+npm ci
+npm test
+```
+
+Make it executable (`chmod +x bin/test`) and keep it working as the tests
+change. For a Python project it's `uv run pytest`. A site with nothing to test
+still has one: it builds the site (`npm run build`), so a broken build fails.
 
 ## Dockerfile
 
@@ -83,8 +102,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - run: bin/test
 
   image:
     needs: test
@@ -109,8 +127,7 @@ jobs:
           cache-to: type=gha,mode=max
 ```
 
-Drop the `test` job (and `needs`) only for a site with nothing to test. For a
-Python project, swap the setup for `astral-sh/setup-uv@v6` and `uv run pytest`.
+For a Python project, swap the setup for `astral-sh/setup-uv@v6`.
 If a project needs a second image, add another build step tagged
 `ghcr.io/${{ github.repository }}/<name>:${{ github.sha }}`.
 
@@ -123,7 +140,7 @@ If a project needs a second image, add another build step tagged
 
 - **Stack:** ...
 - **Run locally:** ...
-- **Test:** ...
+- **Test:** `bin/test` (...)
 - **Deploy:** golem merges to main and deploys the merge commit once the
   `build` workflow passes on it (see golem's deploy skill).
 - **Gotchas:** ...

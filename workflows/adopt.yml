@@ -10,6 +10,6 @@ tabs:
       - vet
       - setup
       - {condition: gaps, all: [[counter, gaps, ">", 0]], "true": adopt, "false": ship}
-      - {agent: adopt, turns: 300}
+      - {stage: fix, name: adopt, fixes: gaps, turns: 300}
       - {use: ship, tab: default}
       - end
