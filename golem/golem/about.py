@@ -50,7 +50,7 @@ def about(nodes: dict[str, dict], trace: list[Step], step: Step, request: str = 
     if stage in ("review", "docs"):
         return _since(nodes, done, stage, request)
     if stage == "build" or (stage == "design" and node.get("makes") == "guide"):
-        return _built_from(nodes, done)
+        return _built_from(nodes, done, stage)
     if stage == "fix" and not step.problem:
         failed = next((s for s in reversed(done) if s.state == "failed"), None)
         if failed:
@@ -89,14 +89,14 @@ def _since(nodes: dict, done: list[Step], stage: str, request: str) -> About:
     return About(text + (_hold(nodes, done, request) if stage == "review" else ""), variant)
 
 
-def _built_from(nodes: dict, done: list[Step]) -> About:
+def _built_from(nodes: dict, done: list[Step], stage: str) -> About:
     for s in reversed(done):
         if s.kind == "choose" and s.state == "skipped":
-            return About("Riggy left the pick to you: build the strongest of the options, from its files, and say which.", "pick")
+            return About("Riggy left the pick to you.", "pick")  # what to do then is the stage's own text
         if s.state != "done":
             continue
         if s.kind == "choose":
-            return About(f"What Riggy picked: {_line(s.summary or 'his pick')} Build that, from its files.", "pick")
+            return About(f"What Riggy picked: {_line(s.summary or 'his pick')}" + (" Build that, from its files." if stage == "build" else ""), "pick")
         if s.kind == "checkin":
             return About("Riggy tried it, and his reply is under \"Riggy's feedback\": what he asked for comes first.")
         if s.kind == "agent" and _stage(nodes, s) == "plan":

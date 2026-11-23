@@ -153,7 +153,8 @@ def test_a_build_is_about_his_pick_his_reply_the_plan_or_his_request():
     assert told.startswith("Build what Riggy picked from the options an earlier step made.") and "Make the change." not in told
     pick[-1].state = "skipped"  # left to it: still a pick, the strongest
     found = about.about(NODES, pick, Step(9, 1, 9, "agent", "build", node_id="build"))
-    assert found.variant == "pick" and found.text.startswith("Riggy left the pick to you: build the strongest")
+    assert found.variant == "pick" and found.text == "Riggy left the pick to you."
+    assert "If he didn't pick one" in stages.compose(NODES["build"], stages.golems_text()["build"], found.text, found.variant)
     planned = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."))
     assert about.about(NODES, planned, Step(9, 1, 9, "agent", "build", node_id="build")).text.startswith(
         "The plan (docs/brief.md, docs/specs/mvp.md): build from it. It said: MVP: four photos."

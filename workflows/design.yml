@@ -15,10 +15,10 @@ tabs:
     blocks:
       - setup
       - {use: design_round, nothing: review}
-      - {agent: guide, turns: 200}
-      - {agent: apply, turns: 400}
-      - {agent: review, turns: 150, optional: true, turn: none}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: design, name: guide, makes: guide, turns: 200}
+      - {stage: design, name: apply, makes: restyle, turns: 400}
+      - {stage: review, turns: 150, optional: true, turn: none}
+      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end
   rigorous:
@@ -26,11 +26,11 @@ tabs:
     blocks:
       - setup
       - {use: design_round, nothing: review}
-      - {agent: guide, turns: 200}
-      - {agent: apply, turns: 400}
-      - {agent: review, turns: 150, optional: true, turn: none}
-      - {agent: second-pass, turns: 150, optional: true, turn: none}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: design, name: guide, makes: guide, turns: 200}
+      - {stage: design, name: apply, makes: restyle, turns: 400}
+      - {stage: review, care: thorough, turns: 150, optional: true, turn: none}
+      - {stage: review, name: second-pass, care: thorough, turns: 150, optional: true, turn: none}
+      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end
   reckless:
@@ -38,8 +38,8 @@ tabs:
     blocks:
       - setup
       - {use: design_round, nothing: docs}
-      - {agent: guide, turns: 200}
-      - {agent: apply, turns: 400}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: design, name: guide, makes: guide, turns: 200}
+      - {stage: design, name: apply, makes: restyle, turns: 400}
+      - {stage: docs, message: changed, care: quick, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end

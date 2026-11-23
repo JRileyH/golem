@@ -360,7 +360,7 @@ def test_a_design_round_shows_its_doc_pick_and_questions_and_can_go_with_the_pic
         )
         await golem.step()
         call = golem.harness.calls[-1]
-        assert call.label == "guide" and "go with the round's" in call.prompt
+        assert call.label == "guide" and "go with the round's" in " ".join(call.prompt.split())
 
     asyncio.run(go())
 
