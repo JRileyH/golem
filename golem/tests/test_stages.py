@@ -142,7 +142,8 @@ def test_a_review_right_after_a_review_checks_its_fixes_and_one_of_only_planning
     assert told.startswith("A second review, of the last review's fixes (below)") and "fresh pair of eyes" not in told
     planned = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."))
     found = about.about(NODES, planned, Step(9, 1, 9, "agent", "check", node_id="check"))
-    assert found.variant == "plan" and found.text.startswith("The plan since the job began")
+    assert found.variant == "plan" and found.text.startswith("The plan (`docs/brief.md`, `docs/specs/mvp.md`) since the job began")
+    assert found.text.endswith("Hold it to: Riggy's request (above).")  # not the plan it's reviewing
 
 
 def test_a_build_is_about_his_pick_his_reply_the_plan_or_his_request():
@@ -157,7 +158,7 @@ def test_a_build_is_about_his_pick_his_reply_the_plan_or_his_request():
     assert "If he didn't pick one" in stages.compose(NODES["build"], stages.golems_text()["build"], found.text, found.variant)
     planned = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."))
     assert about.about(NODES, planned, Step(9, 1, 9, "agent", "build", node_id="build")).text.startswith(
-        "The plan (docs/brief.md, docs/specs/mvp.md): build from it. It said: MVP: four photos."
+        "The plan (`docs/brief.md`, `docs/specs/mvp.md`). It said: MVP: four photos."
     )
     assert about.about(NODES, steps(("setup", "setup", "a" * 40, "")), Step(9, 1, 9, "agent", "build", node_id="build")).text == "Riggy's request (above)."
     # Told what it's about: that block's work.
@@ -166,6 +167,37 @@ def test_a_build_is_about_his_pick_his_reply_the_plan_or_his_request():
     assert about.about(told, trace, Step(9, 1, 9, "agent", "docs", node_id="docs")).text == (
         f"The work of build: `git log --oneline {'a' * 12}..{'b' * 12}` and `git diff {'a' * 12}..{'b' * 12}`. It said: Built it."
     )
+
+
+WEB = {
+    **NODES,
+    "mvp": {"id": "mvp", "type": "agent", "stage": "build", "builds": "first-version", "name": "mvp"},
+    "checkin": {"id": "checkin", "type": "checkin", "reply_to": "out"},
+    "guide": {"id": "guide", "type": "agent", "stage": "design", "makes": "guide", "name": "guide"},
+    "out": {"id": "out", "type": "agent", "stage": "build", "builds": "rest", "name": "out"},
+}
+
+
+def test_a_build_is_about_the_reply_sent_to_it_and_past_another_build_the_plan():
+    trace = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."), ("build", "agent", "c" * 40, "A skeleton."),
+                  ("mvp", "agent", "d" * 40, "Try the quiz."), ("checkin", "checkin", "", "You said: bigger photos."),
+                  ("choose", "choose", "", "You picked A (Field guide)."), ("guide", "agent", "e" * 40, "The guide."))  # fmt: skip
+    # Past the skeleton, the plan is still what the MVP builds from.
+    found = about.about(WEB, trace[:3], Step(9, 1, 9, "agent", "mvp", node_id="mvp"))
+    assert found.text == "The plan (`docs/brief.md`, `docs/specs/mvp.md`). It said: MVP: four photos." and found.variant == ""
+    # His reply to the check-in, past a design pass and his pick of a look, is the buildout's.
+    assert about.about(WEB, trace, Step(9, 1, 9, "agent", "out", node_id="out")).text.startswith("Riggy tried it, and his reply is under")
+    assert about.about(WEB, trace[:6], Step(9, 1, 9, "agent", "guide", node_id="guide")).variant == "pick"
+    # A pick before another Build was that one's.
+    picked = steps(("setup", "setup", "a" * 40, ""), ("choose", "choose", "", "You picked B."), ("build", "agent", "c" * 40, "Built B."))
+    assert about.about(WEB, picked, Step(9, 1, 9, "agent", "mvp", node_id="mvp")) == about.About("Riggy's request (above).")
+    order = [{"id": "start", "type": "start"}, WEB["spec"], WEB["build"], WEB["mvp"], WEB["checkin"], WEB["choose"], WEB["guide"], WEB["out"]]
+    assert about.hints(order) == {"build": "the plan", "mvp": "the plan", "guide": "Riggy's pick", "out": "his reply, first"}
+
+
+def test_what_its_message_says_ends_golems_text():
+    told = stages.compose({"type": "agent", "stage": "review", "care": "thorough", "extra": "Twice."}, stages.golems_text()["review"], "The work.")
+    assert told.index("Be demanding") < told.index("Message: the most important thing you fixed.") < told.index("Also, for this step:")
 
 
 def test_the_editor_says_what_each_stage_block_is_about():
@@ -248,7 +280,7 @@ def test_a_job_of_stages_tells_each_step_its_stages_text_and_what_its_about(gole
         assert [s.port for s in golem.store.steps(job.id) if s.name == "review"] == ["fail"]
         calls = {c.label: c for c in golem.harness.calls}
         plan_ = calls["plan"].prompt
-        assert "Plan the work before anything is built." in plan_ and "write a\nshort mini-spec in `docs/specs/`" in plan_
+        assert "Decide anything the request leaves open yourself" in plan_ and "write a short mini-spec in `docs/specs/`" in " ".join(plan_.split())
         build = calls["build"].prompt
         assert "Build what this step is about (below)" in build and "## What this step is about\n\nThe plan (the mini-spec in docs/specs/)" in build
         review = calls["review"].prompt

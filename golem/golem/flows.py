@@ -154,8 +154,12 @@ def job_view(settings: Settings, store: Store, job: Job, path: str = "") -> dict
     trace = store.steps(job.id)
     ahead = {s.node_id: s for s in plan.planned(settings, store, job) if not s.id and s.node_id}
     page, src = job_href(job), f"/jobs/{job.id}/flow.json"  # a level's page, and its data for opening it in place
+    frozen = snap.get("nodes") or {}  # a stage block's text, as the job took it (Library.freeze)
     for n in nodes:
         flat = _join(path, n["id"])
+        told = (frozen.get(flat) or {}).get("instructions")
+        if told and not any(k == "instructions" for k, _ in n["info"]):
+            n["info"].append(["instructions", told])
         if n["type"] == "container":
             inside = [s for s in trace if s.node_id.startswith(flat + "/")]
             todo = any(k.startswith(flat + "/") for k in ahead)

@@ -22,8 +22,9 @@ skills/new-repo.md says). Check the result in a real browser as you go
 fix what looks wrong or feels clumsy.
 
 Test thoroughly: unit tests for the logic, and browser tests (Playwright) for
-the main and changed flows, running in CI. Smoke test the production build
-locally: build it, serve it, and run the main flow in the browser.
+the main and changed flows, running in CI. Hold the screenshots to the quality
+bar, and the spec's if there is one. Smoke test the production build locally:
+build it, serve it, and run the main flow in the browser.
 
 ## What this step is about
 

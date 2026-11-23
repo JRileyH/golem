@@ -18,6 +18,7 @@ plan:
   turns: 80
   turn: none
   care: true
+  base: after  # what it writes, then how
   settings:
     writes:
       label: Writes

@@ -27,15 +27,3 @@ feel good to use.
   streaks, levels), something that makes you want another round.
 - **Verify by looking.** Use the browser (skills/browser.md) and look at the
   screenshots yourself. Don't report something works until you've seen it.
-
-## build
-
-1. Write a short spec paragraph in `README.md` (what it is, what it does), under
-   the live URL. Put Riggy's request word for word in `docs/brief.md`.
-2. Set the repo up with skills/new-repo.md. Tests are optional: the image build
-   is the only required check.
-3. Build the whole thing. Check it in a real browser (skills/browser.md) at phone
-   size and fix what's broken or ugly.
-
-Message: one or two sentences on what Riggy can do on the site. It's what he
-reads when golem tells him the project is done.

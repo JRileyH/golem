@@ -6,5 +6,8 @@ Turn the request into a spec. The repo is new: it has only a README.
    after it, what's out of scope, and the bar for "good" (see the quality bar).
 3. Choose the stack and record it in `docs/decisions.md` (skills/new-repo.md).
 
+Decide anything the request leaves open yourself, record it in
+`docs/decisions.md`, and carry on.
+
 Message: the MVP in one sentence. Use `blocked` only if the request could mean
 two very different products.

@@ -1,9 +1,7 @@
 ## base
 
-Plan the work before anything is built. Read `AGENTS.md`, `README.md` and
-`docs/` first if they're there: they say how this project is built and tested.
-Decide anything the request leaves open, record it in `docs/decisions.md`, and
-carry on.
+Decide anything the request leaves open yourself, record it in
+`docs/decisions.md`, and carry on.
 
 ## writes.spec
 
@@ -20,9 +18,10 @@ two very different products.
 
 ## writes.mini-spec
 
-Work out what Riggy wants. If it's a bug, reproduce it first. Then write a
-short mini-spec in `docs/specs/`: what changes, what doesn't, and how you'll
-know it works.
+Read `AGENTS.md`, `README.md` and `docs/` first: they say how this project is
+built and tested. Work out what Riggy wants. If it's a bug, reproduce it first.
+Then write a short mini-spec in `docs/specs/`: what changes, what doesn't, and
+how you'll know it works.
 
 Message: the change in one sentence. Use `blocked` only if the request is
 ambiguous in a way that changes what gets built.

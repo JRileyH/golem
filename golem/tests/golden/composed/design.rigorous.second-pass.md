@@ -4,11 +4,11 @@ more in the browser on a phone.
 
 Fix what you find, one commit per fix, each message saying what was wrong.
 
-Message: the most important thing you fixed.
-
 Be demanding: compare it to the quality bar, and the spec's if there is one.
 Smoke test the production build locally: build it, serve it, and run the main
 flow in the browser.
+
+Message: the most important thing you fixed.
 
 ## What this step is about
 

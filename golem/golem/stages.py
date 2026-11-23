@@ -8,7 +8,8 @@ turn, its contract or outputs, and what it leaves for later blocks to hold to. I
 `care.<level>`, and variants: a part used instead of another when About says what the step is
 about calls for it (a Review's `plan`, of only planning work, and `fixes`, of the last review's
 fixes, instead of its base; a Build's `pick`, of Riggy's pick, instead of `builds.auto`). A
-stage whose settings say what it does (Build) has `base: after`, so its base says how after.
+stage whose settings say what it does (Plan, Build) has `base: after`, so its base says how
+after. Whichever part says what its message should say, that comes last.
 
 A stage block is an agent block with `stage`, its settings as keys of their own (`does:
 reports`), `care`, `extra` (instructions of its own, added after golem's) and `about` (the
@@ -39,6 +40,7 @@ CARE = ("quick", "usual", "thorough")
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
 EXTRA_HEAD = "Also, for this step:"
 ABOUT_HEAD = "## What this step is about"
+PARA_RE = re.compile(r"\n\s*\n")
 
 
 @dataclass(frozen=True)
@@ -190,13 +192,15 @@ def setting_keys() -> tuple[str, ...]:
 
 
 def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: str = "") -> str:
-    """What a stage block tells its agent: golem's parts for its settings, in order, then its own
-    extra instructions, then what the step is about."""
+    """What a stage block tells its agent: golem's parts for its settings, in order (what its
+    message should say last), then its own extra instructions, then what the step is about."""
     stage = catalog().get(node.get("stage") or "")
     if stage is None:
         return node.get("instructions") or ""
     names = [stage.variants[n][0] if n in stage.variants and not (parts.get(n) or "").strip() else n for n in stage.parts(node, variant)]
-    pieces = [parts.get(name, "") for name in names]
+    paras = [p.strip() for name in names for p in PARA_RE.split(parts.get(name, ""))]
+    # What its message should say ends golem's text, whichever part said it.
+    pieces = [p for p in paras if not p.startswith("Message:")] + [p for p in paras if p.startswith("Message:")]
     if extra := (node.get("extra") or "").strip():
         pieces.append(f"{EXTRA_HEAD}\n\n{extra}")
     if about_text.strip():

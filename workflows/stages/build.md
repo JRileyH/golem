@@ -71,7 +71,8 @@ Message: what to try and, briefly, what's deliberately not there yet.
 3. Build the whole thing in one pass, and fix what's broken or ugly in the
    browser at phone size.
 
-Message: one or two sentences on what Riggy can do on the site.
+Message: one or two sentences on what Riggy can do on the site. It's what he
+reads when golem tells him it's done.
 
 ## care.quick
 
@@ -80,5 +81,6 @@ Keep tests light: the image build is the only required check.
 ## care.thorough
 
 Test thoroughly: unit tests for the logic, and browser tests (Playwright) for
-the main and changed flows, running in CI. Smoke test the production build
-locally: build it, serve it, and run the main flow in the browser.
+the main and changed flows, running in CI. Hold the screenshots to the quality
+bar, and the spec's if there is one. Smoke test the production build locally:
+build it, serve it, and run the main flow in the browser.

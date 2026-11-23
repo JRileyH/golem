@@ -145,7 +145,7 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
         await golem.finish()
 
         guide, apply = (next(c for c in golem.harness.calls if c.label == name) for name in ("guide", "apply"))
-        assert "- your pick: You picked A (Field guide)." in guide.prompt and "Restyle the MVP" in apply.prompt
+        assert "- your pick: You picked A (Field guide)." in guide.prompt and "Restyle the whole app" in apply.prompt
         buildout, review, docs = golem.harness.calls[-3:]
         assert "# Your step: buildout" in buildout.prompt
         assert "> looks good but make the photos bigger" in buildout.prompt

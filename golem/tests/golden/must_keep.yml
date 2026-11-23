@@ -68,6 +68,70 @@ carried:
     "Add anything a future worker should know": "Retro: add anything a future worker on this project should know to `docs/lessons.md`."
   question.examine:  # no project conversation any more: he asks on its page
     "If the honest answer is": "say what you'd change; he can ask for it on the project's page."
+  standard.mvp: &mvp  # Build's first-version part, then how it builds
+    "Build the MVP from": "Build the first version, the MVP, from the plan (`docs/specs/mvp.md`), with tests for its core paths."
+    "Build the MVP, with tests": "Build the first version, the MVP, from the plan (`docs/specs/mvp.md`), with tests for its core paths."
+    "Riggy tries it on the live site next.": "Riggy tries it on the live site next: this is what he sees first."
+    "Check it in a real browser as you go": "Check the result in a real browser as you go (skills/browser.md), at phone and desktop sizes"
+    "Look at the screenshots.": "look at the screenshots: fix what looks wrong or feels clumsy."
+    "Fix what looks wrong or feels clumsy": "look at the screenshots: fix what looks wrong or feels clumsy."
+  standard.design: &web-design  # the Design stage's directions; the rest is its extra
+    "Make round 1 of its design pass": "Make a round of the project's design pass (skills/design.md): the doc, with directions for Riggy to pick from, built on his words in `docs/brief.md` and what the project is now."
+  standard.guide: &web-guide
+    "Don't restyle the app yet": "Don't restyle the app yet."
+  standard.apply: &web-apply
+    "Restyle the MVP from": "Restyle the whole app from `docs/design.md` and its assets (skills/design.md): tokens and fonts first, then every component, screen and state, the icons and manifest."
+    "Keep tests passing.": "Keep tests passing, and add or update them for what changed."
+  standard.buildout: &buildout  # Build's rest part; his reply, in what it's about
+    "Riggy has tried the MVP.": "Riggy tried it, and his reply is under \"Riggy's feedback\""
+    "His reply is under": "Riggy tried it, and his reply is under \"Riggy's feedback\""
+    "If he asked for changes, make those first": "If Riggy asked for changes (under \"Riggy's feedback\"), make those first, ahead of the rest of the plan."
+    "Update the spec if his feedback changed it.": "Update the plan if his feedback changed it."
+    "Build out the rest of the spec's": "Build out the rest of the plan: the spec's \"after the MVP\" list that's worth doing, with tests for core paths."
+  standard.review: &web-review  # the spec and the guide, in what it's held to
+    "Review it with skills/review.md, against": "Review it with skills/review.md against what it says to hold it to and `AGENTS.md` only"
+    "Fix what you find.": "Fix what you find, one commit per fix"
+  standard.docs: &web-docs
+    "It's what he reads when golem tells him the project is done.": "It's what he reads when golem tells him it's done."
+  rigorous.spec:  # Plan's thorough care
+    "Turn the request into a thorough spec.": "Research what makes this kind of thing good"
+    "Write the findings that matter into the spec.": "Write the findings that matter into the plan"
+    "Write `docs/specs/mvp.md` with skills/spec-writing.md": "with a concrete bar for \"good\": the details that make it delightful."
+  rigorous.spec-review:  # Review's plan part
+    "You are a fresh pair of eyes on `docs/specs/mvp.md`": "You are a fresh pair of eyes on the plan this step is about (below), with only `docs/brief.md` for context."
+    "Check it against Riggy's request": "Check it against Riggy's request: does it deliver what he asked for, is anything important missing, is anything there he didn't want, is the quality bar specific enough to build against, is each later item small enough to build in one go?"
+    "Edit the spec to fix what you find": "If you change the plan, note the significant changes at the end of it under \"Review notes\"."
+    "Message: the most important change you made.": "Message: the most important thing you fixed."
+  rigorous.scaffold:  # Build's thorough care; bin/test, which CI runs
+    "Follow skills/new-repo.md: app skeleton, test setup": "Test thoroughly: unit tests for the logic, and browser tests (Playwright) for the main and changed flows, running in CI."
+  rigorous.mvp:
+    <<: *mvp
+    "Build the MVP with thorough tests": "Test thoroughly: unit tests for the logic, and browser tests (Playwright) for the main and changed flows, running in CI."
+    "Look at the screenshots and hold them": "Hold the screenshots to the quality bar, and the spec's if there is one."
+    "Smoke test the production build locally": "Smoke test the production build locally: build it, serve it, and run the main flow in the browser."
+  rigorous.design: *web-design
+  rigorous.guide: *web-guide
+  rigorous.apply: *web-apply
+  rigorous.buildout:  # and its extra
+    <<: *buildout
+    "Build out the spec's \"after the MVP\" list, with thorough tests.": "Build out the whole \"after the MVP\" list."
+    "Polish: go through every screen": "In the polish, check keyboard and touch use and accessibility basics too."
+  rigorous.review:
+    <<: *web-review
+    "Be demanding: compare it to the spec's quality bar.": "Be demanding: compare it to the quality bar, and the spec's if there is one."
+  rigorous.second-pass:  # Review's fixes part, and its extra
+    "A second review, of the first review's fixes": "A second review, of the last review's fixes (below)"
+    "Are they right, complete and tested": "are they right, complete and tested, and did they break anything else?"
+    "Then use the whole app once more": "This is a new project, so use the whole app once more, as a first-time visitor would."
+    "Fix what you find.": "Fix what you find, one commit per fix"
+  rigorous.docs:
+    <<: *web-docs
+    "Add lessons that apply to every project": "Add lessons that apply to every project (a deploy gotcha, a CI trick) to the golem lessons file."
+  reckless.build:  # Build's everything part, then how, with quick care
+    "Tests are optional": "Keep tests light: the image build is the only required check."
+    "Build the whole thing.": "Build the whole thing in one pass"
+    "Check it in a real browser (skills/browser.md) at phone size": "fix what's broken or ugly in the browser at phone size."
+    "It's what he reads when golem tells him the project is done.": "It's what he reads when golem tells him it's done."
 dropped:
   feature.review:
     "You are a fresh pair of eyes on everything on this branch that isn't on `main` yet.": >-
@@ -84,3 +148,17 @@ dropped:
       What it's about (below) gives the range instead: the work since the job began.
   options.second-pass:
     "`git log origin/main..HEAD`": What it's about (below) gives the first review's fixes as an exact range.
+  standard.review: &web-fresh
+    "You are a fresh pair of eyes on everything on this branch that isn't on `main` yet.": >-
+      What it's about (below) gives the range instead: the work since the job last shipped.
+  rigorous.review: *web-fresh
+  rigorous.second-pass:
+    "`git log origin/main..HEAD`": What it's about (below) gives the first review's fixes as an exact range.
+  standard.apply: &web-next
+    "The buildout comes next and follows the guide.": >-
+      The intro already says anything visible follows `docs/design.md` from the design pass on, and
+      a restyle builds nothing new.
+  rigorous.apply: *web-next
+  standard.docs: &web-last
+    "The last step before this ships.": What it covers is said instead, under what the step is about.
+  rigorous.docs: *web-last

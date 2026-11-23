@@ -42,8 +42,9 @@ the usual way on.
   about the work since the last of its stage, else since the job last shipped, else
   the whole job (right after a Review, that review's fixes; after only planning, the
   plan), and a Review holds it to the request and what earlier blocks made; a Build is
-  about Riggy's pick, his reply, the plan, or else the request. The text for each stage, setting and
-  care is in `stages/<stage>.md`; Workflows → Blocks changes it for every block of the
+  about his reply to a check-in that sends it there, else Riggy's pick, his reply, the
+  plan, or else the request. The text for each stage, setting and care is in
+  `stages/<stage>.md`; Workflows → Blocks changes it for every block of the
   stage, and a job keeps the text it started with. **Test** runs the project's
   `bin/test`: `pass` on exit 0, else `fail` with what it printed.
 - **Custom agent**: a headless Claude Code run that does one piece of work and commits it,
@@ -94,5 +95,8 @@ as any block's. `stages/stages.yml` is the stages, their settings and usuals;
   Riggy after four fixes); its reckless tab pushes straight to main.
   `design_round.yml`: a design round and his pick.
 
-They were golem's playbooks, word for word; `golem/tests/golden/playbooks.json` keeps the
-steps each playbook gave a job, and the tests prove the built-ins walk the same.
+They were golem's playbooks, and are built from stage blocks now.
+`golem/tests/golden/playbooks.json` keeps the steps each playbook gave a job: the tests
+prove the built-ins walk the same, and that nothing a playbook told a step is lost
+without saying why (`golem/tests/golden/must_keep.yml`). `golem/tests/golden/composed/`
+is what each block is told, so a change to it shows as a diff (`just compose-builtins`).
