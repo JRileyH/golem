@@ -420,7 +420,7 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         prompts = {c.label: c.prompt for c in golem.harness.calls}
         assert "If the project has a design guide, `docs/design.md`,\n  everything you make that can be seen follows it" in prompts["change"]
         assert "Does it follow the design guide?" in (REPO / "skills/review.md").read_text() and "skills/review.md" in prompts["review"]
-        assert "`docs/design.md` if it changed the look" in prompts["docs"]
+        assert "`docs/design.md` if it changed the look" in " ".join(prompts["docs"].split())
 
     run(go())
 

@@ -1,9 +1,10 @@
 # Golem's stage blocks: agent blocks that already know their job (golem/golem/stages.py).
 #
 # Each stage has settings rather than a prompt; the first option of each is its default. Its text
-# is in <stage>.md, a `## <part>` section per part: `base` (every block of the stage), `plan` (a
-# Review of only planning work), `<setting>.<option>` and `care.<level>` (quick, usual,
-# thorough). Golem puts the parts a block uses together, with a section saying what the step is
+# is in <stage>.md, a `## <part>` section per part: `base` (every block of the stage), a Review's
+# `plan` and `fixes` instead of it (of only planning work; right after a review, of its fixes),
+# `<setting>.<option>` and `care.<level>` (quick, usual, thorough). `base: after` puts the base
+# after the setting's part. Golem puts the parts a block uses together, with a section saying what the step is
 # about (golem/golem/about.py) and the block's own extra instructions. Riggy can change any
 # part's text in Workflows → Blocks.
 #
@@ -33,6 +34,7 @@ build:
   turns: 400
   turn: build
   care: true
+  base: after  # what it builds, then how
   settings:
     builds:
       label: Builds
@@ -42,6 +44,8 @@ build:
         first-version: the first version (an MVP)
         rest: the rest of the plan
         everything: everything, in one pass
+  produces:
+    builds.auto: ["this job's mini-spec in docs/specs/, if it has one"]
 
 review:
   label: Review

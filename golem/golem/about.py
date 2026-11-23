@@ -3,11 +3,12 @@ out from where the job has been, by rules a person would use.
 
 - A Review or Docs step is about the work since the last of its own stage, else since the job
   last shipped, else everything the job has done. A Review right after a Review reviews the
-  first one's fixes; a Review of only planning work reviews the plan (its `plan` part). The
+  first one's fixes (its `fixes` part); a Review of only planning work reviews the plan (its
+  `plan` part). The
   range is a commit to diff from (the job's branch's head after that step, steps.head), so the
   worker sees exactly that work, merges squashed or not; with none recorded, all that isn't on
-  main yet. It's held to Riggy's request and what earlier blocks left for that (a spec, the
-  design guide, his pick).
+  main yet. A Review holds it to Riggy's request and what earlier blocks left for that (a spec,
+  the design guide, his pick).
 - A Build step is about the nearest real block before it: Riggy's pick, his reply to a check-in
   (which comes first), the plan, or else his request.
 - A Design step that writes the guide is about his pick.
@@ -33,7 +34,7 @@ SHIP_TYPES = (*SHIPPED, "pr", "checks", "merge", "deploy")
 @dataclass
 class About:
     text: str  # the section's body; "" for nothing to add
-    variant: str = ""  # "plan": a Review of only planning work
+    variant: str = ""  # a Review's: "plan", of only planning work; "fixes", of the last review's fixes
 
 
 def about(nodes: dict[str, dict], trace: list[Step], step: Step, request: str = "") -> About:
@@ -66,7 +67,7 @@ def _since(nodes: dict, done: list[Step], stage: str, request: str) -> About:
         if before and last.head:
             text = (f"The last review's fixes: `git log --oneline {before[:12]}..{last.head[:12]}` and `git diff {before[:12]}..{last.head[:12]}`."
                     + (f" It said: {_line(last.summary or '')}" if last.summary else ""))  # fmt: skip
-            return About(text + _hold(nodes, done, request))
+            return About(text + _hold(nodes, done, request), "fixes")
     anchor, since = None, ""
     same = [s for s in done if s.kind == "agent" and s.state == "done" and _stage(nodes, s) == stage]
     if same:
@@ -85,7 +86,7 @@ def _since(nodes: dict, done: list[Step], stage: str, request: str) -> About:
         text = f"{what} on this branch that isn't on `main` yet: `git log --oneline origin/main..HEAD` and `git diff origin/main...HEAD`."
     if after:
         text += "\n\nWhat each step since said:\n" + "\n".join(f"- {_label(nodes, s)}: {_line(s.summary or 'done')}" for s in after)
-    return About(text + _hold(nodes, done, request), variant)
+    return About(text + (_hold(nodes, done, request) if stage == "review" else ""), variant)
 
 
 def _built_from(nodes: dict, done: list[Step]) -> str:

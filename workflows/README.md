@@ -41,8 +41,8 @@ the usual way on.
   about; otherwise golem works that out (`golem/golem/about.py`): a Review or Docs is
   about the work since the last of its stage, else since the job last shipped, else
   the whole job (right after a Review, that review's fixes; after only planning, the
-  plan), held to the request and what earlier blocks made; a Build, about Riggy's
-  pick, his reply, the plan, or else the request. The text for each stage, setting and
+  plan), and a Review holds it to the request and what earlier blocks made; a Build is
+  about Riggy's pick, his reply, the plan, or else the request. The text for each stage, setting and
   care is in `stages/<stage>.md`; Workflows → Blocks changes it for every block of the
   stage, and a job keeps the text it started with. **Test** runs the project's
   `bin/test`: `pass` on exit 0, else `fail` with what it printed.

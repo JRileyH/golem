@@ -467,7 +467,7 @@ def blocks_page(blocks) -> str:
 def stage_page(blocks, key: str) -> str:
     """One stage's parts, each to change or put back to golem's."""
     stage = stages.catalog()[key]
-    what = {"base": "Every block of the stage", "plan": "A review of only planning work, instead of the first part"}
+    what = {"base": "Every block of the stage", **stages.VARIANTS}
     for s in stage.settings:
         for value, means in s.options:
             what[f"{s.key}.{value}"] = f"{s.label}: {means}"

@@ -4,8 +4,10 @@ Fix, Look, Options), set up with a few settings instead of a prompt.
 The catalog, `workflows/stages/stages.yml`, says each stage's settings (the first option of each
 is its default), whether it has a care setting (quick, usual, thorough), its usual turns and
 turn, its contract or outputs, and what it leaves for later blocks to hold to. Its text is in
-`workflows/stages/<stage>.md`, a `## <part>` section per part: `base`, `plan` (a Review of only
-planning work), `<setting>.<option>` and `care.<level>`.
+`workflows/stages/<stage>.md`, a `## <part>` section per part: `base` (or a Review's variant of
+it: `plan`, of only planning work; `fixes`, of the last review's fixes), `<setting>.<option>` and
+`care.<level>`. A stage whose settings say what it does (Build) has `base: after`, so its base
+says how after its setting says what.
 
 A stage block is an agent block with `stage`, its settings as keys of their own (`does:
 reports`), `care`, `extra` (instructions of its own, added after golem's) and `about` (the
@@ -33,6 +35,10 @@ from .store import Store
 
 FOLDER = Path(__file__).resolve().parents[2] / "workflows" / "stages"  # in a checkout; golem says where otherwise (use)
 CARE = ("quick", "usual", "thorough")
+VARIANTS = {  # a Review's first part, instead of its base, for what About found it's reviewing
+    "plan": "A review of only planning work, instead of the first part",
+    "fixes": "A review right after another review, of its fixes, instead of the first part",
+}
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
 EXTRA_HEAD = "Also, for this step:"
 ABOUT_HEAD = "## What this step is about"
@@ -60,6 +66,7 @@ class Stage:
     settings: tuple[Setting, ...]
     care: bool
     optional: bool
+    base_after: bool  # its setting's part says what, before its base says how (Build)
     spec: dict = field(hash=False, compare=False)  # turns, turn, contract, outputs, produces as written
 
     def pick(self, name: str, node: dict, default: object = None) -> object:
@@ -80,11 +87,16 @@ class Stage:
 
     def parts(self, node: dict, variant: str = "") -> list[str]:
         """The names of the parts a block uses, in the order they go together."""
-        found = ["plan" if variant == "plan" else "base"]
-        found += [f"{s.key}.{node.get(s.key, s.default)}" for s in self.settings]
+        first = [variant if variant in VARIANTS else "base"]
+        chosen = [f"{s.key}.{node.get(s.key, s.default)}" for s in self.settings]
+        found = chosen + first if self.base_after else first + chosen
         if self.care:
             found.append(f"care.{node.get('care') or 'usual'}")
         return found
+
+    def every_part(self, node: dict) -> set[str]:
+        """The parts a block might use, whatever About finds: what a job takes with it."""
+        return {*self.parts(node), *(p for v in VARIANTS for p in self.parts(node, v))}
 
     def summary(self, node: dict) -> str:
         """Its settings in a few words, for the graph: "reports · thorough"."""
@@ -123,11 +135,11 @@ def _load(folder: Path) -> tuple[dict[str, Stage], dict[str, dict[str, str]]]:
             Setting(name, str(v.get("label") or name), tuple((str(o), str(about)) for o, about in (v.get("options") or {}).items()))
             for name, v in (s.get("settings") or {}).items()
         )
-        found[key] = Stage(key, s["label"], s.get("help", ""), settings, bool(s.get("care")), bool(s.get("optional")), s)
+        found[key] = Stage(key, s["label"], s.get("help", ""), settings, bool(s.get("care")), bool(s.get("optional")), s.get("base") == "after", s)
         md = (folder / f"{key}.md").read_text() if (folder / f"{key}.md").exists() else ""
         pieces = SECTION_RE.split(md)
         texts[key] = {name: body.strip() for name, body in zip(pieces[1::2], pieces[2::2])}
-        known = {"base", "plan", *(f"{st.key}.{o}" for st in settings for o, _ in st.options), *(f"care.{c}" for c in CARE)}
+        known = {"base", *VARIANTS, *(f"{st.key}.{o}" for st in settings for o, _ in st.options), *(f"care.{c}" for c in CARE)}
         if extra := set(texts[key]) - known:
             raise ValueError(f"stages/{key}.md: parts no setting uses: {', '.join(sorted(extra))}")
     return found, texts
@@ -183,9 +195,7 @@ def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: st
     stage = catalog().get(node.get("stage") or "")
     if stage is None:
         return node.get("instructions") or ""
-    names = stage.parts(node, variant)
-    if variant == "plan" and not (parts.get("plan") or "").strip():
-        names[0] = "base"
+    names = [n if n not in VARIANTS or (parts.get(n) or "").strip() else "base" for n in stage.parts(node, variant)]
     pieces = [parts.get(name, "") for name in names]
     if extra := (node.get("extra") or "").strip():
         pieces.append(f"{EXTRA_HEAD}\n\n{extra}")
@@ -249,7 +259,7 @@ class Blocks:
         """A stage's parts as Riggy edits them: base, then each setting's, then care's."""
         golems = golems_text().get(stage, {})
         found = catalog().get(stage)
-        order = ["base", *(["plan"] if stage == "review" else []), *(f"{s.key}.{o}" for s in found.settings for o, _ in s.options)] if found else []
+        order = ["base", *(VARIANTS if stage == "review" else []), *(f"{s.key}.{o}" for s in found.settings for o, _ in s.options)] if found else []
         order += [f"care.{c}" for c in CARE] if found and found.care else []
         stored = self.store.stage_texts()
         out = []
@@ -270,7 +280,7 @@ class Blocks:
         stage = catalog().get(node.get("stage") or "")
         if stage is None:
             return {}
-        names = {*stage.parts(node), *stage.parts(node, "plan")}
+        names = stage.every_part(node)
         return {p.name: p.text for p in self.parts(stage.key) if p.name in names and p.text}
 
     def save(self, stage: str, name: str, text: str) -> None:

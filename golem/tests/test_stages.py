@@ -118,7 +118,7 @@ def test_a_review_is_about_the_work_since_the_last_review_else_the_last_ship_els
     found = about.about(NODES, trace, now, "a tree quiz")
     assert found.variant == "" and found.text.startswith(f"The work since the job began: `git log --oneline {'a' * 12}..HEAD`")
     assert "- spec: MVP: four photos.\n- build: The quiz works." in found.text
-    assert found.text.endswith("Hold it to: Riggy's request (above), `docs/brief.md`, `docs/specs/mvp.md`.")
+    assert found.text.endswith("Hold it to: Riggy's request (above), `docs/brief.md`, `docs/specs/mvp.md`, this job's mini-spec in docs/specs/, if it has one.")
 
     shipped = [*trace, *steps(("ship/push", "push", "d" * 40, "Pushed."))[0:1]]
     shipped[-1].position = 4

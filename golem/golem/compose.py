@@ -13,6 +13,7 @@ Pure but for reading golem's files.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -57,11 +58,12 @@ def told(snap: dict, path: list[str], nid: str) -> str:
     trace = []
     for i, prior in enumerate(before, start=1):
         kind, name = engine.kind_of(snap["nodes"][prior])
-        trace.append(Step(i, 1, i, kind, name, state="done", node_id=prior, head=f"{i:040x}", summary=f"(what {name} said)"))
+        head = hashlib.sha1(prior.encode()).hexdigest()  # a stand-in commit for each block's work
+        trace.append(Step(i, 1, i, kind, name, state="done", node_id=prior, head=head, summary=f"(what {name} said)"))
     here = Step(len(trace) + 1, 1, len(trace) + 1, "agent", node.get("name") or nid, node_id=nid)
     found = about.about(snap["nodes"], trace, here, "")
     golems = stages.golems_text().get(stage.key, {})
-    parts = {p: golems[p] for p in {*stage.parts(node), *stage.parts(node, "plan")} if golems.get(p)}
+    parts = {p: golems[p] for p in stage.every_part(node) if golems.get(p)}
     return stages.compose(node, parts, found.text, found.variant)
 
 

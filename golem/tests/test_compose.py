@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_workflows import CASES, REPLACED, old_steps, snapshot
+from test_workflows import CASES, REPLACED, golden, old_steps, snapshot
 
 from golem import compose, engine
 
@@ -50,22 +50,36 @@ def test_nothing_a_playbook_told_a_step_is_lost_without_saying_why(book, mode):
     snap = snapshot(builtins, REPLACED[(book, mode)][0], mode)
     path = engine.happy_path(snap)
     lost = []
+    # The playbook's intro, which every step got: still the workflow's, or said where it went.
+    intro, everything = snap["intros"].get("") or "", ""
+    for nid in path:
+        if snap["nodes"][nid].get("type") == "agent":
+            everything += "\n\n" + compose.told(snap, path, nid)
+    lost += _lost(f"{book}.intro", golden()[book]["intro"], flat(intro), flat(intro + everything), mode)
     for nid, old in zip(path, old_steps(book, mode)):
         if not old["instructions"]:
             continue
         node = snap["nodes"][nid]
         intro = "\n\n".join(t for t in (snap["intros"].get(""), snap["intros"].get(node.get("path") or "")) if t)
         now = flat(intro + "\n\n" + compose.told(snap, path, nid))
-        where = f"{book}.{old['name']}"
-        carried, dropped = KEEP["carried"].get(where) or {}, KEEP["dropped"].get(where) or {}
-        for s in sentences(old["instructions"]):
-            if flat(s) in now or any(s.startswith(k) for k in dropped):
-                continue
-            by = next((v for k, v in carried.items() if s.startswith(k)), None)
-            if by is not None and flat(by) in now:
-                continue
-            lost.append(f"{where}: “{s}”")
-        for name in set(NAMED.findall(old["instructions"])):
-            if name not in now and not any(name in k for k in dropped):
-                lost.append(f"{where}: no longer names {name}")
+        lost += _lost(f"{book}.{old['name']}", old["instructions"], now, now, mode)
     assert not lost, "Said no more, and not in golden/must_keep.yml:\n" + "\n".join(lost)
+
+
+def _lost(where: str, old: str, now: str, carried_in: str, mode: str) -> list[str]:
+    """What of `old` isn't in `now` (flattened), and isn't carried (in `carried_in`: the words, or
+    the words in each mode) or dropped by golden/must_keep.yml under `where`."""
+    carried, dropped = KEEP["carried"].get(where) or {}, KEEP["dropped"].get(where) or {}
+    lost = []
+    for s in sentences(old):
+        if flat(s) in now or any(s.startswith(k) for k in dropped):
+            continue
+        by = next((v for k, v in carried.items() if s.startswith(k)), None)
+        by = by.get(mode) if isinstance(by, dict) else by
+        if by is not None and flat(by) in carried_in:
+            continue
+        lost.append(f"{where}: “{s}”")
+    for name in set(NAMED.findall(old)):
+        if name not in now and not any(name in k for k in dropped):
+            lost.append(f"{where}: no longer names {name}")
+    return lost

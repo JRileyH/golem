@@ -71,10 +71,11 @@ def test_each_builtin_walks_the_steps_its_playbook_had(builtins, book, mode):
     # A stage block's text is golem's for its settings: test_compose holds it to the playbook's.
     staged = [i < len(nodes) and bool(nodes[i].get("stage")) for i in range(len(old))]
     assert [as_step(n) for n in nodes] == [{**s, "instructions": ""} if st else s for s, st in zip(old, staged)]
-    # The intro is the playbook's, then (for those that build for the web) the quality bar its steps had from step.md.
+    # The intro is the playbook's (test_compose holds it, sentence by sentence), then, for those
+    # that build for the web, the quality bar its steps had from step.md.
     intro = snap["intros"][""]
-    assert intro.startswith(golden()[book]["intro"])
-    assert intro[len(golden()[book]["intro"]) :].strip().startswith("# Quality bar") or intro == golden()[book]["intro"]
+    assert ("# Quality bar" in intro) == (book not in ("question", "proposals"))
+    assert "# Quality bar" not in golden()[book]["intro"]
 
 
 @pytest.mark.parametrize("book, mode", CASES)

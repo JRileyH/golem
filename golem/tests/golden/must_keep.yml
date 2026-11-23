@@ -5,14 +5,40 @@
 # is told (the workflow's text and its own, composed: golem/golem/compose.py), word for word,
 # unless it's listed here, by "<playbook>.<step>", under
 #
-#   carried: the start of the sentence, and the words in what it's told now that carry it
+#   carried: the start of the sentence, and the words in what it's told now that carry it (or
+#            a map of mode to the words in that mode, for what the mode's tab says its own way)
 #   dropped: the start of the sentence, and why it's let go
+#
+# `<playbook>.intro` is the playbook's text every step got: the words go in the workflow's
+# intro, or (carried) in any of its blocks.
 #
 # And every file and skill it named (`docs/specs/mvp.md`, skills/review.md) must still be named.
 # Rebuilding a built-in on stage blocks (they say things more generally) lists what moved here,
 # for Riggy to read beside the composed diff.
 
 carried:
+  feature.intro:  # each tab's Build says its mode's bar, as its care
+    "The project's mode sets the bar":
+      reckless: "Keep tests light: the image build is the only required check."
+      standard: "Add or update tests for the paths you touch"
+      rigorous: "Test thoroughly: unit tests for the logic, and browser tests (Playwright) for the main and changed flows"
+  feature.change:
+    "For anything bigger than a small fix": "For anything bigger than a small fix, with no plan before this step, write a short mini-spec in `docs/specs/`"
+    "Make the change, and add or update tests": "Add or update tests for the paths you touch, and keep all the project's tests passing"
+    "Check the result in a real browser": "Check the result in a real browser as you go (skills/browser.md), at phone and desktop sizes"
+  feature.review:
+    "Review it with skills/review.md against": "Review it with skills/review.md against what it says to hold it to and `AGENTS.md` only"
+  feature.second-pass:
+    "A second review, of the first review's fixes": "A second review, of the last review's fixes (below): are they right, complete and tested, and did they break anything else?"
+    "Fix what you find.": "Fix what you find, one commit per fix"
+  feature.docs:
+    "Update `README.md` and `AGENTS.md` if": "Update them where the work this step is about (below) made them wrong, and `docs/design.md` if it changed the look"
+    "Add anything a future worker should know": "Retro: add anything a future worker on this project should know to `docs/lessons.md`."
   question.examine:  # no project conversation any more: he asks on its page
     "If the honest answer is": "say what you'd change; he can ask for it on the project's page."
-dropped: {}
+dropped:
+  feature.review:
+    "You are a fresh pair of eyes on everything on this branch that isn't on `main` yet.": >-
+      What it's about (below) gives the range instead: the work since the job began.
+  feature.second-pass:
+    "`git log origin/main..HEAD`": What it's about (below) gives the first review's fixes as an exact range.

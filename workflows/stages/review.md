@@ -13,6 +13,12 @@ want, is the quality bar specific enough to build against, is each later item
 small enough to build in one go? If you change the plan, note the significant
 changes at the end of it under "Review notes".
 
+## fixes
+
+A second review, of the last review's fixes (below): are they right, complete
+and tested, and did they break anything else? Then use the changed flows once
+more in the browser on a phone.
+
 ## does.fixes
 
 Fix what you find, one commit per fix, each message saying what was wrong.
@@ -28,6 +34,6 @@ from that alone.
 
 ## care.thorough
 
-Be demanding: hold it to the plan's quality bar. Then use the changed flows once
-more in the browser as a first-time visitor on a phone, and smoke test the
-production build locally.
+Be demanding: compare it to the quality bar, and the spec's if there is one.
+Smoke test the production build locally: build it, serve it, and run the main
+flow in the browser.

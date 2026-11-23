@@ -7,10 +7,6 @@ Decide anything the request leaves open, record it in `docs/decisions.md`, and
 carry on. Use `blocked` only if the request is ambiguous in a way that changes
 what gets built, or would destroy something irreversible (deleting data).
 
-The project's mode sets the bar: in reckless mode keep tests light; in standard,
-test the paths you touch; in rigorous, test thoroughly, including browser tests
-for changed flows.
-
 # Quality bar
 
 Riggy uses these himself and shows them to friends, mostly on his phone. Build

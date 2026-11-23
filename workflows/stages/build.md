@@ -1,20 +1,21 @@
 ## base
 
-Build it, and add or update tests for the paths you touch. Keep the project's
-tests passing. Check the result in a real browser as you go (skills/browser.md),
-at phone and desktop sizes, and look at the screenshots: fix what looks wrong
-or feels clumsy.
-
-Decide anything left open, record it in `docs/decisions.md`, and carry on. Use
-`blocked` only if it's ambiguous in a way that changes what gets built, or
-would destroy something irreversible (deleting data).
+Add or update tests for the paths you touch, and keep all the project's tests
+passing: `bin/test` runs them (if the project has none yet, add one as
+skills/new-repo.md says). Check the result in a real browser as you go
+(skills/browser.md), at phone and desktop sizes, and look at the screenshots:
+fix what looks wrong or feels clumsy.
 
 ## builds.auto
 
 Build what this step is about (below): Riggy's pick, his reply, the plan, or
-his request. For anything bigger than a small fix with no plan before it, write
-a short mini-spec in `docs/specs/` first (what changes, what doesn't, how you'll
-know it works).
+his request.
+
+1. Work out what Riggy wants. If it's a bug, reproduce it first.
+2. For anything bigger than a small fix, with no plan before this step, write a
+   short mini-spec in `docs/specs/` (what changes, what doesn't, how you'll know
+   it works).
+3. Make the change.
 
 ## builds.skeleton
 
