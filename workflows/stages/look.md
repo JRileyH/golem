@@ -24,8 +24,7 @@ he's asking, with one short question back.
 
 Propose the one improvement to the project most worth his time, through this
 run's lens. Golem asks for one a turn (hourly, daily or weekly) so that he gets
-a steady trickle to decide on, not a pile: of everything you find, pick the
-best.
+a steady trickle to decide on, not a pile: of everything you find, pick the best.
 
 1. Get to know it as it is now: `README.md`, `AGENTS.md`, `docs/` (the brief,
    specs, decisions, lessons), `git log`, the code, and the live site (`curl`,

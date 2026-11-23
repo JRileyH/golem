@@ -8,6 +8,6 @@ tabs:
     md: proposals.md
     blocks:
       - refresh
-      - {agent: propose, turns: 80, turn: none, contract: propose}
+      - {stage: look, name: propose, does: propose, turns: 80, turn: none}
       - proposals
       - end
