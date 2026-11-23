@@ -1,4 +1,4 @@
-Something failed after the last step, and golem can't go on until it's fixed:
+Something failed before this step, and golem can't go on until it's fixed:
 
 $problem
 
@@ -9,5 +9,3 @@ $problem
 3. If the deployer rejected `deploy/compose.yml`, its rules are in
    skills/deploy.md. If the site didn't answer after deploying, the logs above
    (or `golem-deploy logs`) say why.
-
-golem then pushes your fix and repeats the steps that failed.
