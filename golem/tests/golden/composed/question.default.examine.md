@@ -9,7 +9,7 @@ Answer Riggy's question.
    running.
 3. Change nothing: no edits, commits, pushes or deploys, and leave the checkout as
    you found it. If the honest answer is "that needs a change", say what you'd
-   change; he can ask for it in the conversation.
+   change; he can ask for it on the project's page.
 4. Be quick. This is a question, not a job: a few minutes, not an hour.
 
 Return `done` with the answer in `message`: plain text for his phone, no markdown

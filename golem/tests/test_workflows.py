@@ -53,7 +53,7 @@ def snapshot(builtins, key: str, mode: str) -> dict:
 def as_step(node: dict) -> dict:
     kind, name = engine.kind_of(node)
     return {"kind": kind, "name": name, "turns": node.get("turns") or None, "optional": bool(node.get("optional")),
-            "instructions": node.get("instructions", "") if node["type"] == "agent" else ""}  # fmt: skip
+            "instructions": node.get("instructions", "") if node["type"] == "agent" and not node.get("stage") else ""}  # fmt: skip
 
 
 def old_steps(book: str, mode: str) -> list[dict]:
@@ -66,8 +66,11 @@ def old_steps(book: str, mode: str) -> list[dict]:
 def test_each_builtin_walks_the_steps_its_playbook_had(builtins, book, mode):
     key, _ = REPLACED[(book, mode)]
     snap = snapshot(builtins, key, mode)
-    path = engine.happy_path(snap)
-    assert [as_step(snap["nodes"][n]) for n in path] == old_steps(book, mode)
+    nodes = [snap["nodes"][n] for n in engine.happy_path(snap)]
+    old = old_steps(book, mode)
+    # A stage block's text is golem's for its settings: test_compose holds it to the playbook's.
+    staged = [i < len(nodes) and bool(nodes[i].get("stage")) for i in range(len(old))]
+    assert [as_step(n) for n in nodes] == [{**s, "instructions": ""} if st else s for s, st in zip(old, staged)]
     # The intro is the playbook's, then (for those that build for the web) the quality bar its steps had from step.md.
     intro = snap["intros"][""]
     assert intro.startswith(golden()[book]["intro"])

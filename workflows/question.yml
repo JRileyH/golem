@@ -14,6 +14,6 @@ tabs:
     md: question.md
     blocks:
       - refresh
-      - {agent: examine, turns: 60, turn: none}
+      - {stage: look, name: examine, does: answer, turns: 60, turn: none}
       - answer
       - end

@@ -12,5 +12,7 @@
 # Rebuilding a built-in on stage blocks (they say things more generally) lists what moved here,
 # for Riggy to read beside the composed diff.
 
-carried: {}
+carried:
+  question.examine:  # no project conversation any more: he asks on its page
+    "If the honest answer is": "say what you'd change; he can ask for it on the project's page."
 dropped: {}
