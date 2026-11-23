@@ -12,32 +12,32 @@ tabs:
     md: options.md
     blocks:
       - setup
-      - {agent: options, turns: 200, turn: none, contract: options}
+      - {stage: options, turns: 200, turn: none}
       - {choose: choose, optional: true, more: options}
-      - {agent: change, turns: 400}
-      - {agent: review, turns: 150, optional: true, turn: none}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: build, name: change, turns: 400}
+      - {stage: review, turns: 150, optional: true, turn: none}
+      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end
   rigorous:
     md: options.md
     blocks:
       - setup
-      - {agent: options, turns: 200, turn: none, contract: options}
+      - {stage: options, turns: 200, turn: none}
       - {choose: choose, optional: true, more: options}
-      - {agent: change, turns: 400}
-      - {agent: review, turns: 150, optional: true, turn: none}
-      - {agent: second-pass, turns: 150, optional: true, turn: none}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: build, name: change, care: thorough, turns: 400}
+      - {stage: review, care: thorough, turns: 150, optional: true, turn: none}
+      - {stage: review, name: second-pass, care: thorough, turns: 150, optional: true, turn: none}
+      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end
   reckless:
     md: options.md
     blocks:
       - setup
-      - {agent: options, turns: 200, turn: none, contract: options}
+      - {stage: options, turns: 200, turn: none}
       - {choose: choose, optional: true, more: options}
-      - {agent: change, turns: 400}
-      - {agent: docs, turns: 60, optional: true, turn: none}
+      - {stage: build, name: change, care: quick, turns: 400}
+      - {stage: docs, message: changed, care: quick, turns: 60, optional: true, turn: none}
       - {use: ship, tab: default}
       - end

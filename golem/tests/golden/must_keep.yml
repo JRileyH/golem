@@ -31,6 +31,23 @@ carried:
   feature.second-pass:
     "A second review, of the first review's fixes": "A second review, of the last review's fixes (below): are they right, complete and tested, and did they break anything else?"
     "Fix what you find.": "Fix what you find, one commit per fix"
+  options.intro:  # as in feature
+    "The project's mode sets the bar":
+      reckless: "Keep tests light: the image build is the only required check."
+      standard: "Add or update tests for the paths you touch"
+      rigorous: "Test thoroughly: unit tests for the logic, and browser tests (Playwright) for the main and changed flows"
+  options.change:  # Build's `pick` part
+    "Build what Riggy picked from the options the step before made.": "Build what Riggy picked from the options an earlier step made."
+    "Add or update tests for the paths you touch, and check the result": "Check the result next to the option's screenshots."
+  options.review:
+    "Review it with skills/review.md against Riggy's pick": "Hold it to: Riggy's request (above); what he picked, with its files in `docs/options/` (under \"Done so far\"), and what he said about it"
+  options.second-pass:
+    "A second review, of the first review's fixes": "A second review, of the last review's fixes (below): are they right, complete and tested, and did they break anything else?"
+    "Fix what you find.": "Fix what you find, one commit per fix"
+  options.docs:
+    "Update `README.md` and `AGENTS.md` if": "Update them where the work this step is about (below) made them wrong, and `docs/design.md` if it changed the look"
+    "Add anything a future worker should know": "Retro: add anything a future worker on this project should know to `docs/lessons.md`."
+    "Message: what changed, in Riggy's terms": "Message: what changed, in Riggy's terms (\"the quiz now shows the answer after each question\"), not the code's."
   feature.docs:
     "Update `README.md` and `AGENTS.md` if": "Update them where the work this step is about (below) made them wrong, and `docs/design.md` if it changed the look"
     "Add anything a future worker should know": "Retro: add anything a future worker on this project should know to `docs/lessons.md`."
@@ -41,4 +58,9 @@ dropped:
     "You are a fresh pair of eyes on everything on this branch that isn't on `main` yet.": >-
       What it's about (below) gives the range instead: the work since the job began.
   feature.second-pass:
+    "`git log origin/main..HEAD`": What it's about (below) gives the first review's fixes as an exact range.
+  options.review:
+    "You are a fresh pair of eyes on everything on this branch that isn't on `main` yet.": >-
+      What it's about (below) gives the range instead: the work since the job began.
+  options.second-pass:
     "`git log origin/main..HEAD`": What it's about (below) gives the first review's fixes as an exact range.

@@ -1,10 +1,10 @@
 # Golem's stage blocks: agent blocks that already know their job (golem/golem/stages.py).
 #
 # Each stage has settings rather than a prompt; the first option of each is its default. Its text
-# is in <stage>.md, a `## <part>` section per part: `base` (every block of the stage), a Review's
-# `plan` and `fixes` instead of it (of only planning work; right after a review, of its fixes),
-# `<setting>.<option>` and `care.<level>` (quick, usual, thorough). `base: after` puts the base
-# after the setting's part. Golem puts the parts a block uses together, with a section saying what the step is
+# is in <stage>.md, a `## <part>` section per part: `base` (every block of the stage),
+# `<setting>.<option>`, `care.<level>` (quick, usual, thorough) and its `variants`, each used
+# `instead` of a part when what the step is about calls for it (golem/golem/about.py). `base:
+# after` puts the base after the setting's part. Golem puts the parts a block uses together, with a section saying what the step is
 # about (golem/golem/about.py) and the block's own extra instructions. Riggy can change any
 # part's text in Workflows → Blocks.
 #
@@ -35,6 +35,8 @@ build:
   turn: build
   care: true
   base: after  # what it builds, then how
+  variants:
+    pick: {instead: builds.auto, when: "Building Riggy's pick, after a Riggy picks block"}
   settings:
     builds:
       label: Builds
@@ -54,6 +56,9 @@ review:
   turn: none
   optional: true
   care: true
+  variants:
+    plan: {instead: base, when: A review of only planning work}
+    fixes: {instead: base, when: "A review right after another review, of its fixes"}
   settings:
     does:
       label: What it does

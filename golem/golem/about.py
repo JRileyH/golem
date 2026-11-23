@@ -9,8 +9,8 @@ out from where the job has been, by rules a person would use.
   worker sees exactly that work, merges squashed or not; with none recorded, all that isn't on
   main yet. A Review holds it to Riggy's request and what earlier blocks left for that (a spec,
   the design guide, his pick).
-- A Build step is about the nearest real block before it: Riggy's pick, his reply to a check-in
-  (which comes first), the plan, or else his request.
+- A Build step is about the nearest real block before it: Riggy's pick (its `pick` part), his
+  reply to a check-in (which comes first), the plan, or else his request.
 - A Design step that writes the guide is about his pick.
 - A Fix step is about what failed (its problem, which golem adds anyway).
 - A block can say which earlier block it's about (`about`), and then it's that block's work.
@@ -34,7 +34,7 @@ SHIP_TYPES = (*SHIPPED, "pr", "checks", "merge", "deploy")
 @dataclass
 class About:
     text: str  # the section's body; "" for nothing to add
-    variant: str = ""  # a Review's: "plan", of only planning work; "fixes", of the last review's fixes
+    variant: str = ""  # a Review's "plan" (of only planning work) or "fixes" (of the last review's); a Build's "pick"
 
 
 def about(nodes: dict[str, dict], trace: list[Step], step: Step, request: str = "") -> About:
@@ -50,7 +50,7 @@ def about(nodes: dict[str, dict], trace: list[Step], step: Step, request: str = 
     if stage in ("review", "docs"):
         return _since(nodes, done, stage, request)
     if stage == "build" or (stage == "design" and node.get("makes") == "guide"):
-        return About(_built_from(nodes, done))
+        return _built_from(nodes, done)
     if stage == "fix" and not step.problem:
         failed = next((s for s in reversed(done) if s.state == "failed"), None)
         if failed:
@@ -89,20 +89,22 @@ def _since(nodes: dict, done: list[Step], stage: str, request: str) -> About:
     return About(text + (_hold(nodes, done, request) if stage == "review" else ""), variant)
 
 
-def _built_from(nodes: dict, done: list[Step]) -> str:
+def _built_from(nodes: dict, done: list[Step]) -> About:
     for s in reversed(done):
+        if s.kind == "choose" and s.state == "skipped":
+            return About("Riggy left the pick to you: build the strongest of the options, from its files, and say which.", "pick")
         if s.state != "done":
             continue
         if s.kind == "choose":
-            return f"What Riggy picked: {_line(s.summary or 'his pick')} Build that, from its files."
+            return About(f"What Riggy picked: {_line(s.summary or 'his pick')} Build that, from its files.", "pick")
         if s.kind == "checkin":
-            return "Riggy tried it, and his reply is under \"Riggy's feedback\": what he asked for comes first."
+            return About("Riggy tried it, and his reply is under \"Riggy's feedback\": what he asked for comes first.")
         if s.kind == "agent" and _stage(nodes, s) == "plan":
             made = _produces(nodes, s)
-            return "The plan" + (f" ({', '.join(made)})" if made else "") + f": build from it. It said: {_line(s.summary or '')}".rstrip(" :")
+            return About("The plan" + (f" ({', '.join(made)})" if made else "") + f": build from it. It said: {_line(s.summary or '')}".rstrip(" :"))
         if s.kind == "agent" and _stage(nodes, s) not in LOOK_PAST:
             break  # other work before it: nothing more to say than the request
-    return "Riggy's request (above)."
+    return About("Riggy's request (above).")
 
 
 def _their_work(nodes: dict, done: list[Step], visit: Step) -> str:
@@ -117,11 +119,21 @@ def _hold(nodes: dict, done: list[Step], request: str) -> str:
     held = ["Riggy's request (above)"]
     for s in done:
         if s.kind == "choose" and s.state == "done":
-            held.append("what he picked, with its files (under \"Done so far\")")
+            held.append(f"what he picked, with its files{_picked_from(nodes, done, s)} (under \"Done so far\"), and what he said about it")
         for made in _produces(nodes, s) if s.state == "done" else []:
             if made not in held:
                 held.append(f"`{made}`" if "/" in made and " " not in made else made)
-    return "\n\nHold it to: " + ", ".join(dict.fromkeys(held)) + "."
+    return "\n\nHold it to: " + "; ".join(dict.fromkeys(held)) + "."
+
+
+PICKS_IN = {"options": "docs/options/", "design": "docs/design/rounds/"}  # where a maker's options go, by contract
+
+
+def _picked_from(nodes: dict, done: list[Step], pick: Step) -> str:
+    """Where the options a pick chose from are: " in `docs/options/`", from the block that made them."""
+    maker = next((s for s in reversed(done) if s.position < pick.position and s.kind == "agent"), None)
+    where = PICKS_IN.get((nodes.get(maker.node_id) or {}).get("contract") or "") if maker else None
+    return f" in `{where}`" if where else ""
 
 
 def _produces(nodes: dict, s: Step) -> list[str]:

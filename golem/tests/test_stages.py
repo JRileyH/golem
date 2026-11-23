@@ -118,7 +118,7 @@ def test_a_review_is_about_the_work_since_the_last_review_else_the_last_ship_els
     found = about.about(NODES, trace, now, "a tree quiz")
     assert found.variant == "" and found.text.startswith(f"The work since the job began: `git log --oneline {'a' * 12}..HEAD`")
     assert "- spec: MVP: four photos.\n- build: The quiz works." in found.text
-    assert found.text.endswith("Hold it to: Riggy's request (above), `docs/brief.md`, `docs/specs/mvp.md`, this job's mini-spec in docs/specs/, if it has one.")
+    assert found.text.endswith("Hold it to: Riggy's request (above); `docs/brief.md`; `docs/specs/mvp.md`; this job's mini-spec in docs/specs/, if it has one.")
 
     shipped = [*trace, *steps(("ship/push", "push", "d" * 40, "Pushed."))[0:1]]
     shipped[-1].position = 4
@@ -137,6 +137,9 @@ def test_a_review_right_after_a_review_checks_its_fixes_and_one_of_only_planning
     trace = steps(("setup", "setup", "a" * 40, ""), ("build", "agent", "b" * 40, "Built."), ("review", "agent", "c" * 40, "Fixed two bugs."))
     found = about.about(NODES, trace, Step(9, 1, 9, "agent", "again", node_id="again"))
     assert found.text.startswith(f"The last review's fixes: `git log --oneline {'b' * 12}..{'c' * 12}`") and "It said: Fixed two bugs." in found.text
+    assert found.variant == "fixes"
+    told = stages.compose(NODES["again"], stages.golems_text()["review"], found.text, found.variant)
+    assert told.startswith("A second review, of the last review's fixes (below)") and "fresh pair of eyes" not in told
     planned = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."))
     found = about.about(NODES, planned, Step(9, 1, 9, "agent", "check", node_id="check"))
     assert found.variant == "plan" and found.text.startswith("The plan since the job began")
@@ -144,7 +147,13 @@ def test_a_review_right_after_a_review_checks_its_fixes_and_one_of_only_planning
 
 def test_a_build_is_about_his_pick_his_reply_the_plan_or_his_request():
     pick = steps(("setup", "setup", "a" * 40, ""), ("choose", "choose", "", "You picked B (Pastel). Files: docs/options/job-1/b/."))
-    assert about.about(NODES, pick, Step(9, 1, 9, "agent", "build", node_id="build")).text.startswith("What Riggy picked: You picked B (Pastel).")
+    found = about.about(NODES, pick, Step(9, 1, 9, "agent", "build", node_id="build"))
+    assert found.text.startswith("What Riggy picked: You picked B (Pastel).") and found.variant == "pick"
+    told = stages.compose(NODES["build"], stages.golems_text()["build"], found.text, found.variant)
+    assert told.startswith("Build what Riggy picked from the options an earlier step made.") and "Make the change." not in told
+    pick[-1].state = "skipped"  # left to it: still a pick, the strongest
+    found = about.about(NODES, pick, Step(9, 1, 9, "agent", "build", node_id="build"))
+    assert found.variant == "pick" and found.text.startswith("Riggy left the pick to you: build the strongest")
     planned = steps(("setup", "setup", "a" * 40, ""), ("spec", "agent", "b" * 40, "MVP: four photos."))
     assert about.about(NODES, planned, Step(9, 1, 9, "agent", "build", node_id="build")).text.startswith(
         "The plan (docs/brief.md, docs/specs/mvp.md): build from it. It said: MVP: four photos."

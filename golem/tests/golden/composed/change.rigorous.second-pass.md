@@ -14,4 +14,4 @@ flow in the browser.
 
 The last review's fixes: `git log --oneline 7550b672e162..61e62b213a1a` and `git diff 7550b672e162..61e62b213a1a`. It said: (what review said)
 
-Hold it to: Riggy's request (above), this job's mini-spec in docs/specs/, if it has one.
+Hold it to: Riggy's request (above); this job's mini-spec in docs/specs/, if it has one.

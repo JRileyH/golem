@@ -17,4 +17,4 @@ The work since the job began: `git log --oneline 80437a44a661..HEAD` and `git di
 What each step since said:
 - change: (what change said)
 
-Hold it to: Riggy's request (above), this job's mini-spec in docs/specs/, if it has one.
+Hold it to: Riggy's request (above); this job's mini-spec in docs/specs/, if it has one.
