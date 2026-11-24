@@ -1924,7 +1924,7 @@ def side_by_side(golem: Golem, changes: int = 2, workers: int = 3):
     return [golem.store.add_job("trees", "change", f"change {n}", "feature", title=f"Change {n}") for n in range(1, changes + 1)]
 
 
-def test_two_changes_overlap_but_take_turns_building_and_shipping(golem):
+def test_two_changes_overlap_take_turns_building_and_ship_together(golem):
     async def go():
         a, b = side_by_side(golem)
         gate = golem.scheduler.harness = JobGate((a.id, "change"), (a.id, "review"))
@@ -1939,52 +1939,220 @@ def test_two_changes_overlap_but_take_turns_building_and_shipping(golem):
         await soon(lambda: (b.id, "change") in gate.started)
         assert (a.id, "review") in gate.started and a.id in golem.scheduler.running
 
-        await soon(lambda: golem.store.job(b.id).state == "done")  # B got to shipping first, A still reviewing
-        assert a.id in golem.scheduler.running and len(golem.deployer.deploys) == 1
+        # B gets to shipping first and waits for A, still reviewing, so they go out together.
+        await soon(lambda: turns.waiting_for(golem.store, golem.store.job(b.id)) == f"waiting for job {a.id} so they ship together")
+        await asyncio.sleep(0.05)
+        assert golem.deployer.deploys == [] and plan.label(current(golem, b.id)) == "push"
         gate.let_go(a.id, "review")
-        await soon(lambda: golem.store.job(a.id).state == "done")
-        actions = golem.workspace.actions
-        assert [a for a in actions if a.startswith(("push", "open PR", "merge"))] == [
-            f"push golem/job-{b.id}", "open PR #1: Change 2: change + review + docs", "merge PR #1",
-            f"push golem/job-{a.id}", "open PR #2: Change 1: change + review + docs", "merge PR #2",
+        await soon(lambda: golem.store.job(a.id).state == golem.store.job(b.id).state == "done")
+        actions = [x for x in golem.workspace.actions if x.startswith(("push", "open PR", "merge", "back to main"))]
+        assert actions == [
+            f"merge golem/job-{b.id} into job {a.id}", f"push golem/job-{a.id}", "open PR #1: Change 1; Change 2", "merge PR #1",
+            f"back to main: job {b.id}",
         ]  # fmt: skip
-        assert len(golem.deployer.deploys) == 2
+        assert len(golem.deployer.deploys) == 1
         loop.cancel()
 
     run(go())
 
 
-def test_one_change_ships_at_a_time_however_long_its_ci_takes(golem, monkeypatch):
+def a_change_beside(golem: Golem, n: int, slug: str = "trees"):
+    """Another change asked for on the project, the scheduler woken for it."""
+    job = golem.store.add_job(slug, "change", f"change {n}", "feature", title=f"Change {n}")
+    golem.scheduler.wake()
+    return job
+
+
+def test_a_change_ready_while_another_ships_waits_however_long_its_ci_takes(golem, monkeypatch):
     monkeypatch.setattr(scheduler, "CI_POLL", timedelta(0))  # check CI again straight away
     async def go():
-        a, b = side_by_side(golem)
+        [a] = side_by_side(golem, changes=1)
+        golem.store.update_project("trees", parallel_jobs=2)
         golem.scheduler.harness = JobGate()
-        golem.workspace.ci_results = [CI("pending", "build: in_progress")] * 20  # A's PR, for a while
+        golem.workspace.ci_results = [CI("pending", "build: in_progress")] * 5000  # A's PR, until the test says
         loop = asyncio.create_task(golem.scheduler.run_forever())
+        await soon(lambda: (at := current(golem, a.id)) is not None and plan.label(at) == "CI")
+        b = a_change_beside(golem, 2)  # asked for once A is shipping: it waits for the next shipment
+        await soon(lambda: turns.waiting_for(golem.store, golem.store.job(b.id)) == f"waiting for job {a.id} to finish shipping")
+        golem.workspace.ci_results.clear()
         await soon(lambda: golem.store.job(a.id).state == golem.store.job(b.id).state == "done")
         actions = [x for x in golem.workspace.actions if x.startswith(("push", "open PR", "merge"))]
         assert actions == [
             f"push golem/job-{a.id}", "open PR #1: Change 1: change + review + docs", "merge PR #1",
             f"push golem/job-{b.id}", "open PR #2: Change 2: change + review + docs", "merge PR #2",
         ]  # fmt: skip
-        assert sum("pending" in x for x in golem.workspace.actions) == 20  # B waited through all of it
+        assert golem.store.shipments_of(a.id) == golem.store.shipments_of(b.id) == []  # each went alone
         loop.cancel()
 
     run(go())
 
 
-def test_a_fix_while_shipping_runs_while_another_change_builds(golem):
+def test_a_fix_while_shipping_runs_while_a_change_asked_for_since_builds(golem):
     async def go():
-        a, b = side_by_side(golem)
-        gate = golem.scheduler.harness = JobGate((b.id, "change"))
+        [a] = side_by_side(golem, changes=1)
+        golem.store.update_project("trees", parallel_jobs=2)
+        gate = golem.scheduler.harness = JobGate((a.id, "fix"))
         golem.workspace.ci_results = [CI("failed", "npm test: 1 failing")]  # A's PR
         loop = asyncio.create_task(golem.scheduler.run_forever())
-        await soon(lambda: (a.id, "fix") in gate.started)  # A has the ship turn: its fix is part of it
-        assert b.id in golem.scheduler.running and gate.started.count((b.id, "change")) == 1  # B building all along
+        await soon(lambda: (w := turns.wants(golem.store, golem.store.job(a.id))) is not None and w.kind == "ship" and bool(w.started))
+        b = a_change_beside(golem, 2)
+        gate.held[(b.id, "change")] = asyncio.Event()
+        await soon(lambda: (a.id, "fix") in gate.started and (b.id, "change") in gate.started)  # A has the ship turn: its fix is part of it
+        assert {a.id, b.id} <= set(golem.scheduler.running)
+        gate.let_go(a.id, "fix")
         await soon(lambda: golem.store.job(a.id).state == "done")
+        assert b.id in golem.scheduler.running and gate.started.count((b.id, "change")) == 1  # B building all along
         gate.let_go(b.id, "change")
         await soon(lambda: golem.store.job(b.id).state == "done")
         loop.cancel()
+
+    run(go())
+
+
+def ship_steps(golem: Golem, job_id: int) -> list[tuple[str, str, str]]:
+    return [(plan.label(s), s.state, s.summary or "") for s in plan.shown(golem.store.steps(job_id)) if s.kind in plan.CLASSES and plan.CLASSES[s.kind] == "ship"]
+
+
+async def steps_until(golem: Golem, check) -> None:
+    """Turn the scheduler a step at a time until `check()` is true."""
+    for _ in range(200):
+        if check():
+            return
+        await golem.step()
+    raise AssertionError("never happened")
+
+
+def test_changes_ready_to_ship_go_out_together_in_one_pr_ci_run_and_deploy(golem):
+    async def go():
+        a, b, c = side_by_side(golem, changes=3)
+        golem.store.update_job(b.id, issue=7)  # the shared PR closes it
+        await golem.finish()
+        assert [golem.store.job(j.id).state for j in (a, b, c)] == ["done"] * 3
+        actions = [x for x in golem.workspace.actions if x.startswith(("push", "open PR", "merge", "back to main", "CI"))]
+        assert actions == [
+            f"merge golem/job-{b.id} into job {a.id}", f"merge golem/job-{c.id} into job {a.id}", f"push golem/job-{a.id}",
+            "open PR #1: Change 1; Change 2; Change 3", actions[4], "merge PR #1", actions[6],
+            f"back to main: job {b.id}", f"back to main: job {c.id}",
+        ]  # fmt: skip
+        assert actions[4].startswith("CI on") and actions[6].startswith("CI on")  # once on the PR, once on main
+        assert len(golem.deployer.deploys) == 1
+
+        [body] = golem.workspace.bodies
+        assert f"### Job {b.id}: Change 2\n\nCloses #7\n\n- **change:** (fake) change done" in body
+        assert f"### Job {c.id}: Change 3\n\nCloses #2\n\n- **change:**" in body  # the issue its setup opened
+        assert body.endswith(f"Opened by golem (job {a.id}), shipping jobs {a.id}, {b.id} and {c.id} together; it merges this once CI passes.")
+
+        # A's steps shipped all three; B's and C's went by as done, saying so, with its PR and deploy.
+        sync = next(s for s in golem.store.steps(a.id) if s.kind == "sync" and s.turn == "ship")
+        assert sync.summary == f"Caught up: merged in jobs {b.id} and {c.id} to ship with it."
+        deploy = next(s for s in golem.store.steps(a.id) if s.kind == "deploy")
+        assert deploy.summary.endswith(f"is live, with jobs {b.id} and {c.id}.")
+        theirs = ship_steps(golem, b.id)
+        assert [(label, state) for label, state, _ in theirs] == [("push", "done"), ("PR", "done"), ("CI", "done"), ("merge", "done"), ("deploy", "done")]
+        assert theirs[1][2] == f"With job {a.id}: PR #1 is open, with jobs {b.id} and {c.id}."
+        assert theirs[4][2] == f"With job {a.id}: {deploy.summary}"
+        assert set(next(s for s in golem.store.steps(b.id) if s.kind == "deploy").links) >= {"pr", "site", "commit"}
+        [shipment] = golem.store.shipments_of(c.id)
+        assert (shipment.carrier, list(shipment.jobs), shipment.state) == (a.id, [a.id, b.id, c.id], "shipped")
+
+        said = golem.chat.texts("trees")
+        assert sum(t.startswith("✓ deploy:") for t in said) == 1 and sum(t.startswith("Done:") for t in said) == 3
+
+    run(go())
+
+
+def test_a_change_asked_for_before_a_shipment_starts_joins_it_and_one_after_waits_for_the_next(golem):
+    async def go():
+        a, b = side_by_side(golem, changes=2)
+        golem.store.update_project("trees", parallel_jobs=4)
+        await steps_until(golem, lambda: turns.waiting_for(golem.store, golem.store.job(a.id)) == f"waiting for job {b.id} so they ship together")
+        c = a_change_beside(golem, 3)  # A is waiting for B: C goes in the same shipment, and A waits for it too
+        await steps_until(golem, lambda: golem.store.shipping())
+        [shipment] = golem.store.shipping()
+        assert (shipment.carrier, list(shipment.jobs)) == (a.id, [a.id, b.id, c.id])
+        d = a_change_beside(golem, 4)  # asked for once it's started: it waits for the next
+        await golem.finish()
+        assert [golem.store.job(j.id).state for j in (a, b, c, d)] == ["done"] * 4
+        assert [x for x in golem.workspace.actions if x.startswith("open PR")] == [
+            "open PR #1: Change 1; Change 2; Change 3", "open PR #2: Change 4: change + review + docs",
+        ]  # fmt: skip
+        assert len(golem.deployer.deploys) == 2 and golem.store.shipments_of(d.id) == []
+
+    run(go())
+
+
+def test_a_change_waiting_on_riggy_doesnt_hold_up_the_others_shipping(golem):
+    async def go():
+        a, b, c = side_by_side(golem, changes=3)
+        golem.store.update_job(c.id, state="waiting")  # asked him something: it could be days
+        await golem.finish()
+        assert [golem.store.job(j.id).state for j in (a, b, c)] == ["done", "done", "waiting"]
+        [shipment] = golem.store.shipments_of(b.id)
+        assert list(shipment.jobs) == [a.id, b.id] and golem.store.shipments_of(c.id) == []
+
+    run(go())
+
+
+def test_changes_shipping_together_that_conflict_are_merged_by_one_resolve(golem):
+    async def go():
+        a, b = side_by_side(golem)
+        golem.harness.script = by_label({})
+        golem.workspace.merges = [(2, ["src/app.js", "README.md"])]  # B's branch into A's, the first time
+        await golem.finish()
+        assert golem.store.job(a.id).state == golem.store.job(b.id).state == "done"
+        assert [(plan.label(s), s.state) for s in plan.shown(golem.store.steps(a.id)) if s.turn == "ship"][:4] == [
+            ("catch up with main", "failed"), ("resolve", "done"), ("catch up with main", "done"), ("push", "done"),
+        ]  # fmt: skip
+        resolve = next(c for c in golem.harness.calls if c.label == "resolve")
+        assert f"Job {b.id} (“Change 2”) is ready to ship too, so it ships with this job" in resolve.prompt
+        assert f"(`git merge golem/job-{b.id}`) conflicts in:\n- src/app.js\n- README.md" in resolve.prompt
+        assert "It was asked for: “change 2”" in resolve.prompt and resolve.cwd == golem.workspace.tree_path(a.id)
+        assert (f"Change 1 ships with job {b.id}, and merging them conflicts: 2 file(s) conflict with what ships with it "
+                f"(job {b.id}). Merging them in.") in golem.chat.texts("trees")  # fmt: skip
+        assert len(golem.deployer.deploys) == 1
+
+    run(go())
+
+
+def test_a_fix_after_ci_fails_on_a_shipment_hears_whose_work_is_in_it(golem):
+    async def go():
+        a, b = side_by_side(golem)
+        golem.harness.script = by_label({})
+        golem.workspace.ci_results = [CI("failed", "npm test: 1 failing")]  # the shipment's PR
+        await golem.finish()
+        fix = next(c for c in golem.harness.calls if c.label == "fix")
+        assert f"This job's branch has the work of job {b.id} (“Change 2”) in it too" in fix.prompt
+        assert golem.store.job(a.id).state == golem.store.job(b.id).state == "done" and len(golem.deployer.deploys) == 1
+
+    run(go())
+
+
+def test_stopping_the_change_carrying_a_shipment_leaves_the_others_to_ship_without_it(golem):
+    async def go():
+        a, b, c = side_by_side(golem, changes=3)
+        await steps_until(golem, lambda: (at := current(golem, a.id)) is not None and plan.label(at) == "CI")
+        assert await golem.control.kill(a.id) == f"Stopped job {a.id}."
+        assert [s.state for s in golem.store.shipments_of(b.id)] == ["dropped"]
+        await golem.finish()
+        assert [golem.store.job(j.id).state for j in (a, b, c)] == ["killed", "done", "done"]
+        dropped, shipped = golem.store.shipments_of(c.id)
+        assert (dropped.carrier, dropped.state, shipped.carrier, list(shipped.jobs), shipped.state) == (a.id, "dropped", b.id, [b.id, c.id], "shipped")
+        assert [x for x in golem.workspace.actions if x.startswith("open PR")][-1] == "open PR #2: Change 2; Change 3"
+        assert len(golem.deployer.deploys) == 1
+
+    run(go())
+
+
+def test_a_change_stopped_once_merged_into_a_shipment_still_goes_out_with_it(golem):
+    async def go():
+        a, b, c = side_by_side(golem, changes=3)
+        await steps_until(golem, lambda: (at := current(golem, a.id)) is not None and plan.label(at) == "CI")
+        said = await golem.control.kill(b.id)
+        assert said == f"Stopped job {b.id}. Its work was already merged in to ship with job {a.id}'s, so it still goes out with it."
+        await golem.finish()
+        assert [golem.store.job(j.id).state for j in (a, b, c)] == ["done", "killed", "done"]
+        assert [s.state for s in golem.store.shipments_of(b.id)] == ["shipped"] and len(golem.deployer.deploys) == 1
+        assert ship_steps(golem, b.id)[0][1] == "pending"  # stopped: nothing of its own went by
 
     run(go())
 

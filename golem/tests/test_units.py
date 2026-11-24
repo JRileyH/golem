@@ -184,6 +184,65 @@ def test_changes_on_one_project_take_turns_at_building_and_shipping(tmp_path):
     assert turns.wants(store, q) is None
 
 
+def test_changes_ready_to_ship_wait_for_the_others_on_their_way_and_go_together(tmp_path):
+    from golem import shipments, turns
+
+    store = Store(tmp_path / "golem.db")
+    store.add_project("trees", "Trees", "s")
+    store.update_project("trees", parallel_jobs=4)
+    names = ["setup", "sync", "change", "review", "push", "pr", "checks", "merge", "deploy", "alert"]
+    turn = {"sync": "build", "change": "build", "push": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship"}
+
+    def change():
+        job = store.add_job("trees", "change", "r", "feature")
+        kinds = {"change": "agent", "review": "agent"}
+        store.add_steps(job.id, [Step(0, 0, 0, kinds.get(n, n), n, turn=turn.get(n, "none")) for n in names])
+        return job, store.steps(job.id)
+
+    def on(job, steps, name: str, at: str = "", state: str = "queued"):
+        target = next(s for s in steps if s.name == name)
+        for s in steps:
+            if s.position < target.position:
+                store.update_step(s.id, state="done", started_at="2026-11-24T10:00:00+00:00", ended_at="2026-11-24T10:00:00+00:00")
+        store.update_step(target.id, state="running" if at else "pending", started_at=at or None)
+        return store.update_job(job.id, state=state), target
+
+    (a, a_steps), (b, b_steps), (c, c_steps) = change(), change(), change()
+    a, a_push = on(a, a_steps, "push")  # ready to ship
+    b, _ = on(b, b_steps, "review", "2026-11-24T11:00:00+00:00", "running")  # still on its way
+    c, c_push = on(c, c_steps, "push")
+    assert shipments.ready(store, a) and shipments.on_its_way(store, b) and not shipments.on_its_way(store, a)
+    assert turns.blocked_by(store, a) == ("together", b) and turns.blocked_by(store, c) == ("together", b)
+    assert turns.waiting_for(store, a) == f"waiting for job {b.id} so they ship together"
+
+    b = store.update_job(b.id, state="waiting")  # asked Riggy something: the others don't wait for him
+    assert turns.blocked_by(store, a) is None and turns.blocked_by(store, c) == ("together", a)  # the oldest carries it
+    store.update_job(b.id, state="running")
+    store.update_project("trees", parallel_jobs=2)  # as many ready as go at once: they go
+    assert turns.blocked_by(store, a) is None
+    store.update_project("trees", parallel_jobs=4)
+
+    shipment = shipments.form(store, a, a_push.id)
+    assert (shipment.carrier, shipment.jobs) == (a.id, {a.id: a_push.id, c.id: c_push.id})
+    assert turns.blocked_by(store, c) == ("riding", a) and turns.waiting_for(store, c) == f"shipping with job {a.id}"
+    assert shipments.rides(store, c) == shipment and shipments.rides(store, a) is None and shipments.form(store, a, a_push.id) is None
+    d, d_steps = change()
+    d, _ = on(d, d_steps, "push")  # ready once it's started: the next shipment
+    assert turns.blocked_by(store, d) == ("ship", a) and turns.waiting_for(store, d) == f"waiting for job {a.id} to finish shipping"
+
+    assert shipments.over(store, shipment) == "shipping" and not shipments.gathered(store, shipment)
+    on(a, a_steps, "deploy", "2026-11-24T12:00:00+00:00", "parked")
+    assert shipments.over(store, shipment) == "shipping"
+    on(a, a_steps, "alert")
+    assert shipments.over(store, shipment) == "shipped"
+    store.update_job(a.id, state="killed")
+    assert shipments.over(store, shipment) == "dropped"
+
+    # One change at a time: nothing ships together, nothing waits.
+    store.update_project("trees", parallel_jobs=1)
+    assert not shipments.ready(store, d) and shipments.form(store, d, 0) is None
+
+
 def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
     from golem.proposals import MAX_PER_RUN, collect, past
     from golem.store import Proposal

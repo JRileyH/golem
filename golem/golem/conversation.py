@@ -133,8 +133,9 @@ def changes_card(project: Project, back: str) -> str:
     return (
         "<section class='card settings' id=changes><h2>Changes at once</h2><p class=sub>How many changes golem works "
         "on here at the same time. Each gets its own branch and checkout; they overlap at planning, review and docs, "
-        "take turns at building and shipping, and catch up with what shipped before they do. Parallel workers, in "
-        "Settings, caps the total across projects.</p>"
+        "take turns at building, and catch up with what shipped before they do. They ship together: one that's done waits "
+        "for the others still being worked on, so one PR, CI run and deploy ships them all, up to this many at a time. "
+        "Parallel workers, in Settings, caps the total across projects.</p>"
         f"<form method=post action=/act class=row-form>{_hidden(action='setting', slug=project.slug, name='parallel_jobs', back=back)}"
         f"<label for=changes-at-once>At once</label><select id=changes-at-once name=value onchange='this.form.submit()'>{options}</select>"
         "</form></section>"

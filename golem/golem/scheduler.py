@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, legacy, options, plan, proposals, stages, teardown, turns
+from . import about, adopt, engine, legacy, options, plan, proposals, shipments, stages, teardown, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -51,7 +51,7 @@ from .history import records
 from .talk import STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
-from .store import ACTIVE, LOOKS, MAX_WORKERS, Job, Project, Proposal, Step, Store, later, now
+from .store import ACTIVE, LOOKS, MAX_WORKERS, Job, Project, Proposal, Shipment, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
@@ -127,6 +127,7 @@ class Outcome:
     port: str = ""  # the block's output it leaves by; "" for its usual one (its first)
     counters: dict[str, int] = field(default_factory=dict)  # counters it sets, at its level (vet's gaps)
     context: str | None = None  # what it found for the next agent block, if anything
+    said: str = ""  # what golem tells Riggy about it, where that isn't the usual
 
 
 class Scheduler:
@@ -152,6 +153,7 @@ class Scheduler:
         # The workflows jobs run (workflows.py), signed with a secret workers never get.
         self.library = Library(store, settings.process_dir / "workflows", settings.web_password)
         self.running: dict[int, Running] = {}  # by job id
+        self.shipping_out: set[int] = set()  # shipments whose riders are being seen out (ship_out)
         self._wake = asyncio.Event()
 
     # --- control --------------------------------------------------------------
@@ -185,6 +187,11 @@ class Scheduler:
         self.store.update_job(job_id, state="killed")
         if job_id in self.running:
             self.running[job_id].task.cancel()
+        for s in self.store.shipping(job.slug):  # it was shipping others' changes with its own: they're ready again
+            if s.carrier == job_id:
+                self.store.end_shipment(s.id, "dropped")
+                log.info("shipment %s dropped: job %s stopped", s.id, job_id)
+        self.wake()
         return True
 
     async def drop_project(self, slug: str) -> None:
@@ -213,6 +220,7 @@ class Scheduler:
         try:
             while True:
                 await self.tidy()  # what jobs that ended left
+                await self.ship_out()  # the jobs that rode along in a shipment that's over
                 if self.upgrades.holding():  # nothing new starts; the upgrade goes once nothing's running
                     if self.upgrades.state == "pending" and not self.running:
                         await self.upgrades.start()
@@ -235,6 +243,8 @@ class Scheduler:
         busy = {r.slug for r in self.running.values()}
         for job in self.store.ready_jobs(at):
             if job.id in self.running or turns.behind(self.store, job) is not None:  # it waits to start: in order
+                continue
+            if shipments.rides(self.store, job):  # another job's ship steps are shipping its work (shipments.py)
                 continue
             if self.side_by_side(job):
                 if turns.blocked_by(self.store, job, set(self.running)) is None:
@@ -375,15 +385,19 @@ class Scheduler:
 
     def prepare(self, job: Job) -> Step | None:
         """The job's current step, ready to run: the job's steps written the first time, a catch-up
-        with main put in where its turn at building or shipping begins (turns.py), the job running
-        and its step started. None if it has no step left."""
+        with main put in where its turn at building or shipping begins (turns.py), the other changes
+        ready to ship going with it if it's shipping (shipments.py), the job running and its step
+        started. None if it has no step left."""
         steps = self.ensure_steps(job)
         step = plan.current(steps)
         if step is None:
             return None
         if self.needs_sync(job, steps, step):
             self.insert(job.id, [Step(0, job.id, 0, "sync", "sync", turn=plan.turn_of(steps, step))], after=step.position - 1)
-            step = plan.current(self.store.steps(job.id))
+            steps = self.store.steps(job.id)
+            step = plan.current(steps)
+            if plan.turn_of(steps, step) == "ship" and (found := shipments.form(self.store, self.store.job(job.id), step.id)):
+                log.info("job %s ships jobs %s with it", job.id, ", ".join(map(str, found.riders)))
         self.store.update_job(job.id, state="running")
         if step.started_at is None:
             step = self.store.update_step(step.id, state="running", started_at=now())
@@ -455,7 +469,8 @@ class Scheduler:
                 self.insert(job.id, [resolve, Step(0, job.id, 0, "sync", "sync", turn=step.turn)], after=step.position)
                 if tries < MAX_RESOLVES:
                     self.store.update_job(job.id, state="queued", attempts=0)
-                    await self.say(project, f"Main moved on under {plan.title(job)}: {outcome.summary}. Merging it in.", notice=True)
+                    said = outcome.said or f"Main moved on under {plan.title(job)}: {outcome.summary}. Merging it in."
+                    await self.say(project, said, notice=True)
                 else:
                     self.store.update_job(job.id, state="waiting", attempts=0)
                     await self.say(
@@ -485,6 +500,7 @@ class Scheduler:
                 log.info("didn't adopt %s: %s", project.slug, outcome.summary)
                 return
         self.store.put("limit_notice", "0")
+        await self.ship_out()  # past its run of ship steps, it's shipped what rode along with it
 
     async def skip_now(self, job: Job, step: Step, summary: str) -> None:
         """Riggy skipped a step from the status page: it's passed over by its `skip_to` output."""
@@ -967,22 +983,49 @@ class Scheduler:
 
     async def do_sync(self, job: Job, project: Project, step: Step) -> Outcome:
         """Catch the job's branch up with main where its turn at building or shipping begins
-        (turns.py): another change may have shipped since it branched."""
+        (turns.py): another change may have shipped since it branched. Shipping others' changes
+        with its own (shipments.py), it merges their branches in too; a conflict with any of
+        them goes to one resolve step."""
         branch, tree = self.branch(job), self.tree(job)
         await self.workspace.start_branch(project.slug, branch, job=tree)
         await self.workspace.commit_all(project.slug, "Work left uncommitted", job=tree)
         merged, conflicts = await self.workspace.sync_branch(project.slug, job=tree)
+        problems = []
         if conflicts:
             shipped = [f"#{j.id} “{plan.title(j)}”" for j in self.store.jobs(("done",), limit=20) if j.slug == project.slug][:3]
-            problem = (
+            problems.append(
                 f"Main has {merged} commit(s) this job's branch ({branch}) doesn't, from other work on this project "
                 f"that shipped since it branched{(' (' + ', '.join(shipped) + ')') if shipped else ''}. Merging main "
-                f"in conflicts in:\n" + "\n".join(f"- {f}" for f in conflicts)
+                f"in (`git fetch origin && git merge origin/main`) conflicts in:\n" + "\n".join(f"- {f}" for f in conflicts)
             )
-            return Outcome("resolve", f"{len(conflicts)} file(s) conflict with what shipped since", problem=problem)
-        if not merged:
-            return Outcome("skipped", "Up to date with main.")
-        return Outcome("done", f"Caught up with main: merged in {merged} new commit(s).")
+        riders, clashes, gathered, clashing = self.riders(job), [], [], set(conflicts)
+        for rider in riders:  # waiting at their first ship step: nothing of theirs is running
+            theirs = self.branch(rider)
+            await self.workspace.ensure_tree(project.slug, rider.id)
+            await self.workspace.commit_all(project.slug, "Work left uncommitted", job=rider.id)
+            found, files = await self.workspace.merge_branch(project.slug, theirs, job=tree)
+            if files:
+                clashes.append(rider)
+                clashing |= set(files)
+                problems.append(
+                    f"Job {rider.id} (“{plan.title(rider)}”) is ready to ship too, so it ships with this job: golem merges "
+                    f"its branch ({theirs}) into this one. It was asked for: “{_first_line(rider.request, 300)}”. Merging it "
+                    f"in (`git merge {theirs}`) conflicts in:\n" + "\n".join(f"- {f}" for f in files)
+                )
+            elif found:
+                gathered.append(rider)
+        if problems:
+            if not clashes:
+                return Outcome("resolve", f"{len(conflicts)} file(s) conflict with what shipped since", problem="\n\n".join(problems))
+            summary = f"{len(clashing)} file(s) conflict with what ships with it ({shipments.names(clashes)})"
+            said = f"{plan.title(job)} ships with {shipments.names(riders)}, and merging them conflicts: {summary}. Merging them in."
+            return Outcome("resolve", summary, problem="\n\n".join(problems), said=said)
+        done = [f"merged in {merged} new commit(s) from main"] if merged else []
+        if gathered:
+            done.append(f"merged in {shipments.names(gathered)} to ship with it")
+        if not done:
+            return Outcome("skipped", "Up to date with main" + (f", and has {shipments.names(riders)} in already." if riders else "."))
+        return Outcome("done", f"Caught up: {' and '.join(done)}." if gathered else f"Caught up with main: merged in {merged} new commit(s).")
 
     async def do_push(self, job: Job, project: Project, step: Step) -> Outcome:
         branch, tree = self.branch(job), self.tree(job)
@@ -1000,26 +1043,45 @@ class Scheduler:
         return Outcome("done", f"Pushed {sha[:7]} to main.", {"commit": self.commit_url(project, sha)})
 
     async def do_pr(self, job: Job, project: Project, step: Step) -> Outcome:
+        """The job's PR, opened if need be. Shipping others' changes with its own (shipments.py),
+        it's all of theirs: each one's issue closed by it, and what each did."""
+        riders = self.riders(job)
+        parts = [self.pr_part(job, project, step)]
+        for rider in riders:
+            at = plan.current(self.store.steps(rider.id))
+            parts.append(self.pr_part(rider, project, at, rider=True) if at else (plan.title(rider), "", ""))
+        if not riders:
+            title, issue, work = parts[0]
+            body = "\n\n".join([p for p in (issue, work) if p] + [f"Opened by golem (job {job.id}); it merges this once CI passes."])
+        else:
+            jobs = [job, *riders]
+            title = "; ".join(plan.title(j) for j in jobs)
+            sections = [
+                "\n\n".join(p for p in (f"### Job {j.id}: {plan.title(j)}", issue, work) if p) for j, (_, issue, work) in zip(jobs, parts)
+            ]
+            body = "\n\n".join([*sections, f"Opened by golem (job {job.id}), shipping {shipments.names(jobs)} together; it merges this once CI passes."])
+        pr = await self.workspace.open_pr(project.slug, self.branch(job), title, body)
+        if pr is None:
+            return Outcome("skipped", "Nothing to merge.")
+        return Outcome("done", f"PR #{pr.number} is open{self.along(riders)}.", {"pr": pr.url})
+
+    def pr_part(self, job: Job, project: Project, step: Step, rider: bool = False) -> tuple[str, str, str]:
+        """A job's part of a PR, from its steps up to `step` (its PR step, or for one riding along in
+        another's shipment, its first ship step): a title, its issue's line, and what each step did."""
         steps = plan.planned(self.settings, self.store, job)
         work = _since_last(steps, step, "merge")
         names = " + ".join(s.name for s in work) or ("brief" if job.kind == "adopt" else "changes")
         title = project.name if job.kind in ("new", "adopt") else plan.title(job)
-        last = not any(s.kind == "pr" for s in steps if s.position > step.position and s.state == "pending")
+        later = [s for s in steps if s.kind == "pr" and s.state == "pending" and (s.position >= step.position if rider else s.position > step.position)]
+        last = len(later) <= 1 if rider else not later  # riding along: the first of its own is this one
         issue = f"{'Closes' if last else 'Part of'} #{job.issue}" if job.issue else ""
-        body = "\n\n".join(
-            [p for p in (issue, "\n".join(f"- **{s.name}:** {s.summary}" for s in work if s.summary)) if p]
-            + [f"Opened by golem (job {job.id}); it merges this once CI passes."]
-        )
-        pr = await self.workspace.open_pr(project.slug, self.branch(job), f"{title}: {names}", body)
-        if pr is None:
-            return Outcome("skipped", "Nothing to merge.")
-        return Outcome("done", f"PR #{pr.number} is open.", {"pr": pr.url})
+        return f"{title}: {names}", issue, "\n".join(f"- **{s.name}:** {s.summary}" for s in work if s.summary)
 
     async def do_checks(self, job: Job, project: Project, step: Step) -> Outcome:
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
         if pr is None:
             return Outcome("skipped", "No PR to check.", port="pass")
-        return await self.wait_for_ci(project, step, pr.sha, f"PR #{pr.number}")
+        return self.carrying(job, await self.wait_for_ci(project, step, pr.sha, f"PR #{pr.number}"))
 
     async def do_merge(self, job: Job, project: Project, step: Step) -> Outcome:
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
@@ -1037,15 +1099,17 @@ class Scheduler:
             return Outcome("skipped", f"{sha[:7]} is live already.", port="pass")
         ci = await self.wait_for_ci(project, step, sha, "main")
         if ci.state != "done":
-            return ci
+            return self.carrying(job, ci)
         deployment = await self.deployer.deploy(project.slug, sha)
         if not deployment.ok:
             problem = f"The deployer couldn't deploy {sha[:7]}:\n{deployment.problem}"
-            return Outcome("failed", f"the deployer refused {sha[:7]}", {"commit": self.commit_url(project, sha)}, problem, port="fail")
+            refused = Outcome("failed", f"the deployer refused {sha[:7]}", {"commit": self.commit_url(project, sha)}, problem, port="fail")
+            return self.carrying(job, refused)
         url = self.settings.project_url(project.slug)
         if self.store.card(project.slug) is None:  # live for the first time: on the projects page
             await self.refresh_card(project, job)
-        return Outcome("done", f"{sha[:7]} is live.", {"site": url, "commit": self.commit_url(project, sha)}, port="pass")
+        live = f"{sha[:7]} is live{self.along(self.riders(job))}."
+        return Outcome("done", live, {"site": url, "commit": self.commit_url(project, sha)}, port="pass")
 
     async def do_checkin(self, job: Job, project: Project, step: Step) -> Outcome:
         """Ask Riggy and wait for his reply: by default, to try the live site. His reply goes to
@@ -1200,7 +1264,7 @@ class Scheduler:
         live = any(s.kind == "deploy" and s.state == "done" for s in steps) or self.store.card(project.slug) is not None
         message = plan.last_said(steps) or (f"{project.name} is live." if live else f"{plan.title(job)} is done.")
         link = url if live else (f"{self.settings.repo_url(project.slug)}/issues/{job.issue}" if job.issue else "")
-        if job.issue and not any(s.kind == "pr" and s.state == "done" for s in steps):  # no PR closed its issue (reckless, or nothing to merge)
+        if job.issue and not any(s.kind == "pr" and s.state == "done" and s.links.get("pr") for s in steps):  # no PR closed it (reckless, nothing to merge)
             await self.workspace.close_issue(project.slug, job.issue, _join(f"Done: {message}", f"\n{url}" if live else ""))
         await self.say(project, _join(f"Done: {message}", link))
         await self.status(f"Finished job {job.id} on {project.name}" + (f": {url}" if live else "."), notice=True)
@@ -1216,6 +1280,59 @@ class Scheduler:
             await self.cards.refresh(self.store.project(project.slug) or project, checkout)
         except Exception:
             log.exception("couldn't make the card for %s", project.slug)
+
+    async def ship_out(self) -> None:
+        """Shipments whose carrier is past its run of ship steps (shipments.py): once it shipped,
+        the riders' ship steps go by as done with its PR and deploy, and each carries on from
+        there; if it was stopped first, they're ready to ship again."""
+        for s in self.store.shipping():
+            state = shipments.over(self.store, s)
+            if state == "shipping" or s.id in self.shipping_out:  # another step's settling is seeing to it
+                continue
+            self.shipping_out.add(s.id)
+            try:
+                if state == "shipped":
+                    await self.ride_out(s)
+                self.store.end_shipment(s.id, state)
+            finally:
+                self.shipping_out.discard(s.id)
+            log.info("shipment %s (jobs %s): %s", s.id, ", ".join(map(str, s.jobs)), state)
+            self.wake()
+
+    async def ride_out(self, s: Shipment) -> None:
+        """The riders' runs of ship steps, done: what the carrier's did, said as theirs. Each
+        one's tree goes back to main, where its work is now, and its branch goes."""
+        carrier = self.store.job(s.carrier)
+        theirs: dict[str, Step] = {}  # the carrier's ship steps that went through, the last of each kind
+        for x in shipments.run_from(self.store.steps(s.carrier), s.jobs[s.carrier]):
+            if x.state == "done":
+                theirs[x.kind] = x
+        links = {k: v for kind in ("pr", "merge", "push-main", "deploy") if kind in theirs for k, v in theirs[kind].links.items()}
+        for rid in s.riders:
+            rider = self.store.job(rid)
+            if rider is None or rider.state not in ACTIVE:
+                continue
+            if rider.worktree:
+                try:
+                    await self.workspace.back_to_main(s.slug, self.branch(rider), job=rider.id)
+                except WorkspaceError as e:
+                    log.warning("job %s's tree after shipping with job %s: %s", rid, s.carrier, e)
+            for _ in range(engine.INLINE_LIMIT):
+                rider = self.store.job(rid)
+                steps = self.store.steps(rid)
+                at = plan.current(steps)
+                if at is None or not shipments.in_run(steps, at, s.jobs[rid]):
+                    break
+                same = theirs.get(at.kind)
+                summary = f"With job {s.carrier}: {same.summary}" if same and same.summary else f"Shipped with job {s.carrier}."
+                when = now()
+                closed = {"state": "done", "summary": summary, "links": links, "started_at": at.started_at or when, "ended_at": when, "error": None}
+                finished, _ = self.walk_on(rider, at, Outcome("done", summary, links), closed)
+                self.store.update_job(rid, state="done" if finished else "queued", attempts=0, resume_session=None)
+                if finished:
+                    break
+        if carrier is not None:
+            log.info("job %s shipped jobs %s with it", carrier.id, ", ".join(map(str, s.riders)))
 
     async def missing_cards(self) -> None:
         """Cards for live projects that don't have one yet: those live before cards existed."""
@@ -1248,6 +1365,32 @@ class Scheduler:
     def branch(self, job: Job) -> str:
         """Where a job's work goes between merges."""
         return f"{JOB_BRANCHES}{job.id}"
+
+    def riders(self, job: Job) -> list[Job]:
+        """The changes riding along in the shipment the job carries (shipments.py), oldest first:
+        those still under way."""
+        found = shipments.shipment_of(self.store, job)
+        if found is None or found.carrier != job.id:
+            return []
+        return [r for r in map(self.store.job, found.riders) if r is not None and r.state in ACTIVE]
+
+    @staticmethod
+    def along(riders: list[Job]) -> str:
+        """What a step shipping riders' work too adds to what it says: ", with jobs 13 and 14"; "" for none."""
+        return f", with {shipments.names(riders)}" if riders else ""
+
+    def carrying(self, job: Job, outcome: Outcome) -> Outcome:
+        """A failure while shipping others' changes with the job's own: the fix that follows is
+        told the branch has their work too."""
+        riders = self.riders(job)
+        if outcome.state != "failed" or not riders:
+            return outcome
+        theirs = ", ".join(f"{r.id} (“{plan.title(r)}”)" for r in riders)
+        note = (
+            f"This job's branch has the work of job{'s' if len(riders) > 1 else ''} {theirs} in it too: they're shipping "
+            "together with this job, so what failed may be in theirs. Fix it wherever it is, keeping what each job was for."
+        )
+        return replace(outcome, problem=f"{outcome.problem}\n\n{note}")
 
     def tree(self, job: Job) -> int | None:
         """Which checkout the job works in, for the workspace's calls: its own tree (its id), or

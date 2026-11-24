@@ -22,7 +22,8 @@ the golem image.
   golem can't give. It changes nothing; its answer is structured output.
 - `resolve.md`: the instructions of a `resolve` step, which golem inserts when a
   change's branch conflicts with main as it catches up (changes taking turns on
-  one project, `golem/golem/turns.py`): merge main in, keeping both intents.
+  one project, `golem/golem/turns.py`), or with another change shipping with it
+  (`golem/golem/shipments.py`): merge them in, keeping both intents.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
 - `request.md`: which workflow a request on a project's page is for (by what each

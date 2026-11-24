@@ -275,7 +275,10 @@ def headline(lane: LaneData, now: datetime) -> str:
     piece = progress.current(progress.pieces(lane.steps))
     if piece is None:
         return escape(lane.state.capitalize()) + "."
-    if piece.state == "todo" and lane.state.startswith("waiting for job"):  # its turn at building or shipping (turns.py)
+    turn = lane.state.startswith(("waiting for job", "shipping with job"))  # waiting its turn (turns.py, shipments.py)
+    if turn and piece.step.state in ("done", "skipped") and not piece.shipping:  # its work's done: it waits to ship it
+        return f"{escape(lane.state.capitalize())}."
+    if piece.state == "todo" and turn:
         return f"{escape(lane.state.capitalize())}, then {escape(piece.name.lower())}."
     if piece.state == "todo":
         eta = lane.etas.get(piece.step.position)
@@ -303,6 +306,8 @@ def piece_meta(lane: LaneData, x: progress.Piece, now: datetime) -> str:
         case "now":
             if x.shipping:
                 return progress.SHIPPING.get(x.shipping.kind, "shipping")
+            if s.state in ("done", "skipped"):  # its work's done and its shipping hasn't started: waiting its turn
+                return "ready to ship"
             if not s.started_at:
                 return "starting"
             usual = estimate(lane.known, s)

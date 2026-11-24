@@ -94,6 +94,8 @@ class Workspace(Protocol):
     async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
     async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
     async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]: ...
+    async def merge_branch(self, slug: str, branch: str, *, job: int | None = None) -> tuple[int, list[str]]: ...
+    async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None: ...
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
@@ -417,18 +419,30 @@ class GitHubWorkspace:
         didn't, the files they conflict in). A conflict is merged back out again, so the checkout
         is always left clean, and a resolve step can do the merge itself (turns.py)."""
         await self.git(slug, "fetch", "--quiet", "--prune", "origin", job=job)
-        behind = int(await self.git(slug, "rev-list", "--count", "HEAD..origin/main", job=job))
+        return await self._merge(slug, "origin/main", job)
+
+    async def merge_branch(self, slug: str, branch: str, *, job: int | None = None) -> tuple[int, list[str]]:
+        """Merge another job's branch into the checkout's, to ship them together (shipments.py):
+        (how many commits it had that this didn't, the files they conflict in), the checkout left
+        clean as sync_branch leaves it. (0, []) if there's no such branch."""
+        code, _ = await run("git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=self.path(slug))
+        if code != 0:
+            return 0, []
+        return await self._merge(slug, branch, job)
+
+    async def _merge(self, slug: str, ref: str, job: int | None) -> tuple[int, list[str]]:
+        behind = int(await self.git(slug, "rev-list", "--count", f"HEAD..{ref}", job=job))
         if not behind:
             return 0, []
         async with self.lock(slug):
-            code, out = await run("git", "merge", "--no-edit", "--quiet", "origin/main", cwd=self.where(slug, job))
+            code, out = await run("git", "merge", "--no-edit", "--quiet", ref, cwd=self.where(slug, job))
         if code == 0:
             return behind, []
         conflicts = (await self.git(slug, "diff", "--name-only", "--diff-filter=U", job=job)).splitlines()
         async with self.lock(slug):
             await run("git", "merge", "--abort", cwd=self.where(slug, job))
         if not conflicts:
-            raise WorkspaceError(f"merging main into {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
+            raise WorkspaceError(f"merging {ref} into {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
         return behind, conflicts
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
@@ -528,6 +542,7 @@ class LocalWorkspace:
         self.has_work = True
         self.ci_results: list[CI] = []
         self.syncs: list[tuple[int, list[str]]] = []  # what catching up with main finds, in turn; then nothing new
+        self.merges: list[tuple[int, list[str]]] = []  # what merging another job's branch in finds, in turn; then a commit
         self.branch: str | None = None  # the last branch started, in any checkout
         self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
         self.trees: set[int] = set()  # jobs with a tree
@@ -666,6 +681,15 @@ class LocalWorkspace:
         found = self.syncs.pop(0) if self.syncs else (0, [])
         self.actions.append(f"sync job {job}: {found[0]} new" + (f", conflicts in {', '.join(found[1])}" if found[1] else ""))
         return found
+
+    async def merge_branch(self, slug: str, branch: str, *, job: int | None = None) -> tuple[int, list[str]]:
+        found = self.merges.pop(0) if self.merges else (1, [])
+        self.actions.append(f"merge {branch} into job {job}" + (f": conflicts in {', '.join(found[1])}" if found[1] else ""))
+        return found
+
+    async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None:
+        self.actions.append(f"back to main: job {job}")
+        self.branches.pop(job, None)
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
         pr = self.prs.get((slug, branch))

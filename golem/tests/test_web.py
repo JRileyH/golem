@@ -598,6 +598,26 @@ def test_a_project_with_two_changes_shows_each_and_who_waits_for_whom(golem, pag
 
 
 
+def test_changes_ready_to_ship_say_who_they_wait_for_and_who_ships_them(golem, page):
+    from golem import shipments
+
+    sign_in(page)
+    golem.store.update_job(page.job.id, state="done")
+    golem.store.update_project("trees", parallel_jobs=2)
+    a = golem.store.add_job("trees", "change", "bigger cards", "feature", title="Bigger Cards")
+    b = golem.store.add_job("trees", "change", "a round timer", "feature", title="Round Timer")
+    start(golem, a, "review")
+    start(golem, b, "push")  # its work's done: it waits for A's, so they ship together
+    home = page.get("/").text
+    assert f"Waiting for job {a.id} so they ship together." in home and "Write the docs:" not in home  # not still writing them
+
+    start(golem, a, "push")
+    shipments.form(golem.store, golem.store.job(a.id), plan.current(golem.store.steps(a.id)).id)
+    home = page.get("/").text
+    assert f"Shipping with job {a.id}." in home
+    assert f"Stopped job {b.id}. Its work" not in act(page, action="kill", job=str(b.id))  # A hasn't merged it in yet
+
+
 def test_how_many_workers_and_what_memory_each_has(golem, page, monkeypatch):
     monkeypatch.setattr(web.config, "memory_cap", lambda: 1536 * 2**20)
     assert "id=workers" not in page.get("/settings").text  # signed out: nothing to change

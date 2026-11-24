@@ -213,6 +213,16 @@ CREATE TABLE IF NOT EXISTS proposals (
     decided_at TEXT,
     issue INTEGER                    -- its GitHub issue: a record, never read back
 );
+-- Changes on one project that ship together (shipments.py): one job's ship steps carry them all.
+CREATE TABLE IF NOT EXISTS shipments (
+    id INTEGER PRIMARY KEY,
+    slug TEXT NOT NULL,
+    carrier INTEGER NOT NULL,        -- the job whose ship steps ship them all
+    jobs TEXT NOT NULL,              -- JSON [[job id, step id]…], the carrier first: each job and the step its run of ship steps began at
+    state TEXT NOT NULL DEFAULT 'shipping',  -- shipping | shipped | dropped (the carrier stopped before it shipped)
+    created_at TEXT NOT NULL,
+    ended_at TEXT
+);
 """
 
 # Columns added after the first release, added to older databases on open.
@@ -304,7 +314,7 @@ class Project:
     # Kinds of proposal he turned off, comma-separated (proposals.LENSES): every kind is on
     # until he turns it off, new ones too.
     proposals_off: str = ""
-    # Changes that may be under way at once; they take turns at building and shipping (turns.py).
+    # Changes that may be under way at once; they take turns at building and ship together (turns.py, shipments.py).
     parallel_jobs: int = 1
 
 
@@ -364,6 +374,25 @@ class Proposal:
     created_at: str
     decided_at: str | None
     issue: int | None = None  # its GitHub issue, a record of it there: golem never reads it back
+
+
+@dataclass
+class Shipment:
+    """Changes on one project shipping together (shipments.py): the carrier's ship steps ship them
+    all, and the others' go by as done once it has."""
+
+    id: int
+    slug: str
+    carrier: int  # the job whose ship steps ship them all
+    jobs: dict[int, int]  # each job it ships, the carrier first: the step its run of ship steps began at
+    state: str  # shipping | shipped | dropped
+    created_at: str
+    ended_at: str | None = None
+
+    @property
+    def riders(self) -> list[int]:
+        """The jobs it ships besides the carrier, oldest first."""
+        return [j for j in self.jobs if j != self.carrier]
 
 
 @dataclass
@@ -551,6 +580,7 @@ class Store:
             )
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE proposals SET slug = ? WHERE slug = ?", (new, old))
+            self.db.execute("UPDATE shipments SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE cards SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE messages SET channel = ? WHERE channel = ?", (new, old))
             self.db.execute("DELETE FROM projects WHERE slug = ?", (old,))
@@ -566,6 +596,7 @@ class Store:
             self.db.execute(f"DELETE FROM runs WHERE job_id IN ({jobs})", (slug,))
             self.db.execute(f"DELETE FROM steps WHERE job_id IN ({jobs})", (slug,))
             self.db.execute("DELETE FROM proposals WHERE slug = ?", (slug,))
+            self.db.execute("DELETE FROM shipments WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM jobs WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM cards WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM messages WHERE channel = ?", (slug,))
@@ -918,6 +949,40 @@ class Store:
             self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
         return self.steps(job_id)
 
+    # --- shipments ------------------------------------------------------------
+
+    def add_shipment(self, slug: str, carrier: int, jobs: dict[int, int]) -> Shipment:
+        """Changes shipping together: `jobs` maps each (the carrier first) to the step its run of ship steps began at."""
+        cur = self.db.execute(
+            "INSERT INTO shipments (slug, carrier, jobs, created_at) VALUES (?, ?, ?, ?)",
+            (slug, carrier, json.dumps([[j, s] for j, s in jobs.items()]), now()),
+        )
+        return self.shipment(cur.lastrowid)
+
+    def shipment(self, shipment_id: int) -> Shipment | None:
+        row = self.db.execute("SELECT * FROM shipments WHERE id = ?", (shipment_id,)).fetchone()
+        return _shipment(row) if row else None
+
+    def shipping(self, slug: str | None = None) -> list[Shipment]:
+        """Shipments under way, oldest first: the project's (one at most: it holds the turn to ship), or every project's."""
+        where, args = ("AND slug = ?", (slug,)) if slug else ("", ())
+        rows = self.db.execute(f"SELECT * FROM shipments WHERE state = 'shipping' {where} ORDER BY id", args)
+        return [_shipment(r) for r in rows]
+
+    def shipments_of(self, job_id: int) -> list[Shipment]:
+        """The shipments a job went out in, or is going out in, oldest first."""
+        rows = self.db.execute(
+            "SELECT DISTINCT shipments.* FROM shipments, json_each(shipments.jobs) WHERE json_extract(json_each.value, '$[0]') = ?"
+            " ORDER BY shipments.id",
+            (job_id,),
+        )
+        return [_shipment(r) for r in rows]
+
+    def end_shipment(self, shipment_id: int, state: str) -> Shipment:
+        assert state in ("shipped", "dropped"), state
+        self.db.execute("UPDATE shipments SET state = ?, ended_at = ? WHERE id = ?", (state, now(), shipment_id))
+        return self.shipment(shipment_id)
+
     # --- workflows ------------------------------------------------------------
 
     def workflows(self, archived: bool = True) -> list[Workflow]:
@@ -1184,6 +1249,12 @@ def _step(row: sqlite3.Row | dict) -> Step:
     data["design"] = json.loads(data.get("design") or "{}")
     data["optional"] = bool(data["optional"])
     return Step(**data)
+
+
+def _shipment(row: sqlite3.Row) -> Shipment:
+    data = dict(row)
+    data["jobs"] = {int(j): int(s) for j, s in json.loads(data["jobs"])}
+    return Shipment(**data)
 
 
 def _workflow(row: sqlite3.Row) -> Workflow:

@@ -26,7 +26,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from . import options, plan, stages
+from . import options, plan, shipments, stages
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
@@ -184,9 +184,13 @@ class Control:
 
     async def kill(self, job_id: int) -> str:
         job, project = self._job(job_id)
+        riding = shipments.rides(self.store, job)
         self.scheduler.kill(job.id)
-        await self.scheduler.say(project, f"Stopped job {job.id}, from the status page.", notice=True, job=job)
-        return f"Stopped job {job.id}."
+        note = ""
+        if riding is not None and shipments.gathered(self.store, riding):  # merged into the carrier's branch already
+            note = f" Its work was already merged in to ship with job {riding.carrier}'s, so it still goes out with it."
+        await self.scheduler.say(project, f"Stopped job {job.id}, from the status page.{note}", notice=True, job=job)
+        return f"Stopped job {job.id}.{note}"
 
     async def setting(self, slug: str, name: str, value: str) -> str:
         """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
@@ -209,7 +213,7 @@ class Control:
             if not value.isdigit() or int(value) not in CHANGES_AT_ONCE:
                 raise ControlError(f"Pick {CHANGES_AT_ONCE[0]} to {CHANGES_AT_ONCE[-1]} changes at once.")
             self.store.update_project(slug, parallel_jobs=int(value))
-            said = "One change at a time" if value == "1" else f"Up to {value} changes at once, taking turns building and shipping"
+            said = "One change at a time" if value == "1" else f"Up to {value} changes at once, taking turns building and shipping together"
             if len(under_way := self.store.change_jobs(slug)) > int(value):
                 said += f" (the {len(under_way)} under way carry on)"
             self.scheduler.wake()

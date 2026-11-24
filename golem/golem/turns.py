@@ -9,6 +9,8 @@ CI. Two things go one job at a time per project (plan.CLASSES):
   leave its conflicts for later; the next builds from what the last one shipped.
 - shipping: from catching up with main, through the push, PR, CI and merge, to the deploy.
   Main moves only under the job shipping, so what CI checked is what's merged and deployed.
+  Changes ready to ship at once go together, the oldest's ship steps shipping them all
+  (shipments.py).
 
 A job holds a turn while its current step is of that kind and that run of steps (plan.run_before)
 has started. Parked (on CI, a retry, a usage limit) it keeps it. Waiting on Riggy it lets a
@@ -56,10 +58,16 @@ def holds(job: Job, turn: Turn) -> bool:
 
 def blocked_by(store: Store, job: Job, running: set[int] = frozenset()) -> tuple[str, Job] | None:
     """The turn the job's current step needs and the other change on its project that has it,
-    or None if it can go. A job ahead of it (under way first) or running a step now has it."""
+    or None if it can go. A job ahead of it (under way first) or running a step now has it.
+    Shipping, changes go together (shipments.py): one ready waits for the others on their way
+    ("together"), and one riding along in another's shipment waits for it ("riding")."""
+    from . import shipments
+
     mine = wants(store, job)
     if mine is None:
         return None
+    if mine.kind == "ship" and (held := shipments.held(store, job, mine)) is not None:
+        return held
     for other in store.change_jobs(job.slug):
         theirs = wants(store, other) if other.id != job.id else None
         if theirs is None or theirs.kind != mine.kind or not holds(other, theirs):
@@ -96,5 +104,9 @@ def waiting_for(store: Store, job: Job) -> str:
     if held is None:
         return ""
     kind, other = held
+    if kind == "riding":
+        return f"shipping with job {other.id}" + (" (it's waiting on you)" if other.state == "waiting" else "")
+    if kind == "together":
+        return f"waiting for job {other.id} so they ship together"
     doing = "building" if kind == "build" else "shipping"
     return f"waiting for job {other.id} to finish {doing}" + (" (it's waiting on you)" if other.state == "waiting" else "")
