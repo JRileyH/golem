@@ -236,60 +236,42 @@ def test_a_job_from_before_steps_were_tracked_picks_up_at_its_phase(golem):
 
 from test_flow import TREES  # noqa: E402
 
-from golem.control import Control, ControlError  # noqa: E402
+from golem.control import Control  # noqa: E402
 
 
-def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem):
+def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem, careful):
     async def go():
         room = await idle_project(golem)
-        await Control(golem.store, golem.scheduler).setting(room, "mode", "rigorous")
-        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
+        await Control(golem.store, golem.scheduler).setting(room, "mode", "careful")
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Bigger Cards"}]})
         job = await golem.ask(room, "make the cards bigger")
-        assert (job.workflow, job.mode) == ("change", "rigorous")
-        # A request that asks for another mode runs in that one, this once.
+        assert (job.workflow, job.mode) == ("change", "careful")
+        # A request that picks the usual way runs that way, this once.
         golem.store.update_job(job.id, state="done")
-        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "reckless", "title": "Quick Fix"}]})
-        job = await golem.ask(room, "quick and dirty: fix the typo")
-        assert job.mode == "reckless" and golem.store.project("tree-cards").mode == "rigorous"
+        golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Quick Fix"}]})
+        job = await golem.ask(room, "fix the typo", mode="")
+        assert job.mode == "" and golem.store.project("tree-cards").mode == "careful"
 
     run(go())
 
 
-def test_a_request_can_pick_its_workflow_and_mode(golem):
+def test_a_request_can_pick_its_workflow_and_mode(golem, careful):
     async def go():
         room = await idle_project(golem)
-        golem.harness.script = by_label({"request": [{"workflow": "options", "mode": "rigorous", "title": "Typo Fixes"}]})
-        job = await golem.ask(room, "fix the typo on the about page\nand the one in the footer", workflow="change", mode="reckless")
-        assert (job.workflow, job.mode, job.title) == ("change", "reckless", "Typo Fixes")  # his picks over the call's
+        golem.harness.script = by_label({"request": [{"workflow": "options", "title": "Typo Fixes"}]})
+        job = await golem.ask(room, "fix the typo on the about page\nand the one in the footer", workflow="change", mode="careful")
+        assert (job.workflow, job.mode, job.title) == ("change", "careful", "Typo Fixes")  # his picks over the call's
         assert job.request == "fix the typo on the about page\nand the one in the footer"  # his lines kept
         ask = next(c for c in golem.harness.calls if c.label == "request")
         assert ask.schema["properties"]["workflow"]["enum"] == ["change", "design", "options", "question"]
-        golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none"}]})
+        golem.harness.script = by_label({"request": [{"workflow": "change"}]})
         asked = await golem.ask(room, "how big are the cards?", workflow="question", mode="")
         assert (asked.workflow, asked.start, asked.mode) == ("question", "look", "")
-        golem.harness.script = by_label({"request": [{"workflow": "question", "mode": "none"}]})
-        odd = await golem.ask(room, "make a thing", workflow="web_app")  # not one for a request: the call's pick
-        assert odd.workflow == "question"
+        golem.harness.script = by_label({"request": [{"workflow": "question"}]})
+        odd = await golem.ask(room, "make a thing", workflow="web_app", mode="fancy")  # not one for a request: the call's pick; no such mode
+        assert odd.workflow == "question" and odd.mode == ""
 
     run(go())
-
-
-def test_modes_are_made_renamed_and_deleted_in_settings(golem):
-    control = Control(golem.store, golem.scheduler)
-    assert "Added the careful mode" in control.add_mode("careful", "He says to take care.")
-    import pytest
-
-    with pytest.raises(ControlError, match="one word"):
-        control.add_mode("Very Careful", "")
-    with pytest.raises(ControlError, match="already"):
-        control.add_mode("careful", "")
-    control.mode_ingest("careful", "  He says to take great care. ")
-    assert golem.store.mode("careful").ingest == "He says to take great care."
-    assert "Renamed careful to cautious" in control.rename_mode("careful", "cautious")
-    assert control.fallback_mode("cautious").endswith("run in cautious mode.")
-    assert plan.mode_for(golem.store, None) == "cautious"
-    control.delete_mode("cautious")
-    assert golem.store.mode("cautious") is None and plan.mode_for(golem.store, None) == ""
 
 
 # --- each job's own activity, and one change at a time ------------------------------------

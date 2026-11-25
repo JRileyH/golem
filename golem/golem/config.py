@@ -23,7 +23,6 @@ class Settings:
     # Signs Riggy in on the web app. No default: it's set in .env or golem won't start.
     web_password: str
     # What a new project gets unless the dictation or a command says otherwise.
-    default_mode: str = ""
     default_model: str = "opus"
     default_effort: str = "high"
     # What CI builds project images for: this box's own architecture.
@@ -45,7 +44,6 @@ class Settings:
             raise SystemExit("HARNESS must be claude or fake")
         defaults = {
             # The mode requests run in when nothing says: a mode's name, or "" for none ("standard" was none).
-            "default_mode": "" if env.get("GOLEM_DEFAULT_MODE", "standard") in ("standard", "none", "default") else env["GOLEM_DEFAULT_MODE"].strip().lower(),
             "default_model": _choice(env, "GOLEM_MODEL", "opus", MODELS),
             "default_effort": _choice(env, "GOLEM_EFFORT", "high", EFFORTS),
         }

@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     summary TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT '',  -- the mode its requests run in unless they ask for another: Riggy's setting
+    mode TEXT NOT NULL DEFAULT '',  -- the mode (plan.MODES) its requests run in unless they ask for another: Riggy's setting
     model TEXT NOT NULL DEFAULT 'opus',
     effort TEXT NOT NULL DEFAULT 'high',
     paused INTEGER NOT NULL DEFAULT 0,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     worktree INTEGER NOT NULL DEFAULT 0, -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
     start TEXT NOT NULL DEFAULT 'change', -- where it came from and what it may do (STARTS)
     workflow TEXT NOT NULL DEFAULT '',   -- the workflow it runs, by key ('' from before workflows)
-    mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in: which of the workflow's tabs ('' for the default)
+    mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in (plan.MODES); '' for the usual way
     graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
     vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
@@ -112,14 +112,6 @@ CREATE TABLE IF NOT EXISTS stage_texts (
     sig TEXT NOT NULL DEFAULT '',    -- golem's signature: changed outside the web app, golem's text is used
     updated_at TEXT NOT NULL,
     PRIMARY KEY (stage, part)
-);
--- Modes: ways of working a request can ask for ("be thorough"), each with what to look for. A
--- workflow's tab for the mode is used when it has one.
-CREATE TABLE IF NOT EXISTS modes (
-    name TEXT PRIMARY KEY,
-    ingest TEXT NOT NULL DEFAULT '',
-    position INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
@@ -303,7 +295,6 @@ ACTIVE = ("queued", "running", "waiting", "parked")
 FINISHED = ("done", "failed", "killed")
 # Steps in these states are still to do: the first of them is the job's current step.
 OPEN = ("pending", "running", "waiting")
-MODES = ("reckless", "standard", "rigorous")
 # Where a job comes from, which says what it may do: a new project from the inbox, a change to
 # one from its conversation, a question about one (look), golem's own look for improvements
 # (propose), taking on a repo golem didn't make (adopt). `sub` is for workflows used only inside
@@ -383,14 +374,6 @@ class Tab:
     problems: list[dict]
     sig: str
     updated_at: str
-
-
-@dataclass
-class Mode:
-    name: str
-    ingest: str
-    position: int
-    created_at: str = ""
 
 
 @dataclass
@@ -515,7 +498,7 @@ class Job:
     worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
     start: str = "change"  # where it came from (STARTS)
     workflow: str = ""  # the workflow it runs, by key; "" from before workflows
-    mode: str = ""  # which of the workflow's tabs: a mode, or "" for its default
+    mode: str = ""  # the mode it runs in (plan.MODES); "" for the usual way
     graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
@@ -595,6 +578,12 @@ class Store:
             self.db.execute("UPDATE projects SET model = '' WHERE model = 'opus'")
             self.db.execute("UPDATE projects SET effort = '' WHERE effort = 'high'")
             self.put("project_engines", "1")
+        if self.get("golems_modes") is None:
+            # Modes were Riggy's to make, each a tab of a workflow; now they're golem's (plan.MODES),
+            # and none of the old ones is among them.
+            self.db.execute("DROP TABLE IF EXISTS modes")
+            self.db.execute("UPDATE projects SET mode = ''")
+            self.put("golems_modes", "1")
 
     def _columns(self, table: str) -> set[str]:
         return {r["name"] for r in self.db.execute(f"PRAGMA table_info({table})")}
@@ -1138,43 +1127,6 @@ class Store:
     def drop_tab(self, workflow_id: int, mode: str) -> None:
         assert mode, "a workflow always has its default tab"
         self.db.execute("DELETE FROM workflow_tabs WHERE workflow_id = ? AND mode = ?", (workflow_id, mode))
-
-    # --- modes ----------------------------------------------------------------
-
-    def modes(self) -> list[Mode]:
-        return [Mode(**r) for r in self.db.execute("SELECT * FROM modes ORDER BY position, name")]
-
-    def mode(self, name: str) -> Mode | None:
-        """By name, any case."""
-        row = self.db.execute("SELECT * FROM modes WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
-        return Mode(**row) if row else None
-
-    def add_mode(self, name: str, ingest: str = "") -> Mode:
-        last = self.db.execute("SELECT MAX(position) AS last FROM modes").fetchone()["last"]
-        self.db.execute(
-            "INSERT INTO modes (name, ingest, position, created_at) VALUES (?, ?, ?, ?)", (name, ingest, (last or 0) + 1, now())
-        )
-        return self.mode(name)
-
-    def update_mode(self, name: str, new_name: str | None = None, ingest: str | None = None) -> Mode:
-        """Rename a mode (its tabs and the projects that default to it keep it) or change what it's for."""
-        with self.db:
-            self.db.execute("BEGIN")
-            if ingest is not None:
-                self.db.execute("UPDATE modes SET ingest = ? WHERE name = ?", (ingest, name))
-            if new_name is not None and new_name != name:
-                self.db.execute("UPDATE modes SET name = ? WHERE name = ?", (new_name, name))
-                self.db.execute("UPDATE workflow_tabs SET mode = ? WHERE mode = ?", (new_name, name))
-                self.db.execute("UPDATE projects SET mode = ? WHERE mode = ?", (new_name, name))
-        return self.mode(new_name or name)
-
-    def delete_mode(self, name: str) -> None:
-        """The mode goes, with its tabs; projects that defaulted to it default to golem's fallback."""
-        with self.db:
-            self.db.execute("BEGIN")
-            self.db.execute("DELETE FROM workflow_tabs WHERE mode = ?", (name,))
-            self.db.execute("UPDATE projects SET mode = '' WHERE mode = ?", (name,))
-            self.db.execute("DELETE FROM modes WHERE name = ?", (name,))
 
     # --- defaults -------------------------------------------------------------
 

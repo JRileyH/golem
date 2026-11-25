@@ -11,7 +11,7 @@ merging, deploying and telling Riggy, where the job's workflow has them).
 - Repo: $repo. Your working directory is this job's own checkout of it, on the branch `$branch`.
   Each job's checkout starts fresh, so dependencies may not be installed yet: install them
   before you run anything.
-- Job: $kind, **$mode mode**
+- Job: $kind
 - GitHub issue for this job: $issue
 
 Riggy's request that started this job:

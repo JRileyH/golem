@@ -108,7 +108,7 @@ def settings_html(project: Project, tags: list[str], modes: list[str] = ()) -> s
     """How golem works on it, and its tag. Its default mode is the mode its requests run in unless
     they ask for another: only Riggy sets it."""
     slug, back = project.slug, f"/p/{project.slug}/settings"
-    mode = select_form("mode", project.mode, tuple(modes), "golem's default", action="setting", slug=slug, back=back)
+    mode = select_form("mode", project.mode, tuple(modes), "the usual way", action="setting", slug=slug, back=back) if modes else ""
     engine = "".join(
         f"<span>{name.title()}</span>"
         + select_form(name, getattr(project, name), values, "each step's default", action="setting", slug=slug, back=back)
@@ -117,7 +117,8 @@ def settings_html(project: Project, tags: list[str], modes: list[str] = ()) -> s
     return (
         "<section class='card settings'><h2>How golem works on it</h2>"
         "<p class=sub>From the next request (its default mode, which a request can ask to change) or the next step (model, effort).</p>"
-        f"<div class=row-form><span>Default mode</span>{mode}</div><div class=row-form>{engine}</div>"
+        + (f"<div class=row-form><span>Default mode</span>{mode}</div>" if mode else "")
+        + f"<div class=row-form>{engine}</div>"
         f"<div class=row-form>{_pause(project, back)}</div></section>"
         + changes_card(project, back)
         + "<section class='card settings'><h2>Tag</h2><p class=sub>What sort of project it is, on the projects page. "

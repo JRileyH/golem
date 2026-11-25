@@ -11,7 +11,7 @@ the description.
   first heading, usually), else a short, friendly one. 1 to 4 words.
 - summary: one to three sentences on what it is and who it's for, in plain words.
   Leave out how it's built, run or deployed, and instructions about how to work
-  on it (mode, model, effort).
+  on it (model, effort).
 - title: what it is, in 2 to 5 plain words of Title Case ("Tabletop Card
   Printer"). It names the job of adopting it, so where the name is what it's
   called, the title says what it is: not the name again. No quotes, no full
@@ -33,11 +33,6 @@ the description.
 $tags
 
 - new_tag: only when tag is `new`; otherwise leave it out.
-- mode: one of these, only if he asked for that way of working (each says what to
-  look for). Otherwise `none`.
-
-$modes
-
 - model: `fable`, `opus`, `sonnet` or `haiku` only if he named one. Otherwise
   `unspecified`.
 - effort: `low`, `medium`, `high`, `xhigh` or `max` only if he said one ("extra

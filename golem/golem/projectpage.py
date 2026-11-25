@@ -82,18 +82,19 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
 
 
 def ask_form(project: Project, picks: Picks) -> str:
-    """A request: a job of its own. Workflow and mode on Auto leave them to golem (the request
-    call), as the words say; the project's default mode otherwise."""
+    """A request: a job of its own. A workflow on Auto is golem's pick (the request call), as the
+    words say; the mode on Auto, the project's default (only while golem has modes: plan.MODES)."""
     flows = "".join(f"<option value='{escape(k)}'>{escape(n)}</option>" for k, n in picks.workflows)
     modes = "".join(f"<option>{escape(m)}</option>" for m in picks.modes)
+    mode = f"<label>Mode <select name=mode><option value=auto>Auto</option><option value=''>Usual</option>{modes}</select></label>" if modes else ""
     return (
         f"<form method=post action='/p/{escape(project.slug)}/ask' class='card ask-form' data-send>"
         "<label class=ask-label for=ask-text>Ask for…</label>"
         "<textarea id=ask-text name=text rows=2 required placeholder='A change, or a question about it…'></textarea>"
         "<div class=ask-row>"
         f"<label>Workflow <select name=workflow><option value=''>Auto</option>{flows}</select></label>"
-        f"<label>Mode <select name=mode><option value=auto>Auto</option><option value=''>None</option>{modes}</select></label>"
-        "<button class=primary>Ask</button></div></form>"
+        + mode
+        + "<button class=primary>Ask</button></div></form>"
     )
 
 

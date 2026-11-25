@@ -773,7 +773,7 @@ def new(client, path="/new", **form):
     return r
 
 
-def test_a_new_project_is_named_on_its_form(golem, app):
+def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
     from test_flow import TREES
 
     assert "Sign%20in" in app.get("/new", follow_redirects=False).headers["location"]
@@ -782,8 +782,11 @@ def test_a_new_project_is_named_on_its_form(golem, app):
     cookie = r.headers["set-cookie"].lower()
     assert "max-age=7776000" in cookie and "samesite=lax" in cookie
     html = app.get("/new").text
-    assert "<option value='web_app' selected" in html and "golem&#x27;s default (none)" in html and "<option>Game</option>" in html
+    assert "<option value='web_app' selected" in html and "<option>Game</option>" in html
+    assert "name=mode>" not in html  # golem has no modes to pick
     assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
+    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care."})  # one that has: the Mode field, the usual way first
+    assert "<select name=mode><option value='' selected>Usual</option><option value='careful'>careful</option>" in app.get("/new").text
 
     r = new(app, name="", slug="Bad Slug!", idea="", mode="nope", model="gpt")  # what's wrong comes back with what he wrote
     html = r.text
@@ -795,11 +798,11 @@ def test_a_new_project_is_named_on_its_form(golem, app):
 
     golem.harness.script = [TREES]
     r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for identifying northeastern us trees", workflow="web_app",
-            mode="reckless", tag="Game", model="opus", effort="")  # fmt: skip
+            mode="careful", tag="Game", model="opus", effort="")  # fmt: skip
     job = golem.store.active_job("trees")
     assert r.headers["location"] == f"/p/trees/jobs/{job.id}?msg=" + quote("Started Tree Cards: Tree Flashcard Game.")  # on to its page
     project = golem.store.project("trees")
-    assert (project.name, project.tag, project.model, job.mode, job.state) == ("Tree Cards", "Game", "opus", "reckless", "queued")
+    assert (project.name, project.tag, project.model, job.mode, job.state) == ("Tree Cards", "Game", "opus", "careful", "queued")
     assert app.get("/inbox", follow_redirects=False).headers["location"] == "/"  # golem's own conversation is no more
     assert "Ask%20on%20a%20project" in app.post("/say", data={"channel": "inbox", "text": "hi"}, follow_redirects=False).headers["location"]
 
@@ -864,8 +867,8 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert "name=action value='rename'" in html and "name=action value='project-slug'" in html and "action=/say" not in html
     act(app, action="rename", slug="tree-cards", value="Leaf Cards")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
-    assert "rigorous%20mode" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")
-    assert golem.store.project("tree-cards").mode == "rigorous"
+    assert "no%20mode" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")
+    assert golem.store.project("tree-cards").mode == ""
     assert "type%20tree-cards%20exactly" in act(app, action="project-delete", slug="tree-cards", value="trees")
     location = act(app, action="project-slug", slug="tree-cards", value="leaf-cards", back="/p/tree-cards/settings")
     assert location.startswith("/p/leaf-cards/settings?msg=Moved%20Leaf%20Cards%20to%20leaf-cards")
@@ -1151,15 +1154,14 @@ def test_a_job_page_lists_its_steps_and_one_from_before_workflows_shows_the_way_
     assert "The way it went" in html and "class=trail" in html
 
 
-def test_there_is_no_workflow_editor_and_modes_are_in_settings(golem, page):
+def test_there_is_no_workflow_editor_and_blocks_are_in_settings(golem, page):
     sign_in(page)
     for path in ("/workflows", "/workflows/1", "/workflows/1.json", "/static/flow.js", "/static/editor.js"):
         assert page.get(path).status_code == 404, path
     assert page.post("/workflows/1/save", json={}).status_code in (404, 405)
     html = page.get("/settings").text
-    assert "href=/settings/blocks>Blocks</a>" in html and "href=/settings/modes>Modes</a>" in html and "href='/workflows'" not in html
-    modes = page.get("/settings/modes").text
-    assert "id=modes" in modes and "He wants extra care taken" in modes and "<a href='/settings' class='item on'" in modes
+    assert "href=/settings/blocks>Blocks</a>" in html and "/settings/modes" not in html and "href='/workflows'" not in html
+    assert page.get("/settings/modes").status_code == 404
 
 
 def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_latest_change(golem, page):

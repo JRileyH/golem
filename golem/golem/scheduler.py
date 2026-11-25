@@ -334,7 +334,7 @@ class Scheduler:
                 continue
             wf = self.library.fallback("change")
             job = self.store.add_job(p.slug, "change", proposals.request(p), wf.key if wf else "feature", title=plan.clean_title(p.title))
-            job = self.store.update_job(job.id, workflow=wf.key if wf else "", mode=plan.mode_for(self.store, project))
+            job = self.store.update_job(job.id, workflow=wf.key if wf else "", mode=plan.mode_for(project))
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)

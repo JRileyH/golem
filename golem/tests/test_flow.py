@@ -60,12 +60,12 @@ def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     run(go())
 
 
-def test_a_new_project_takes_the_workflow_mode_tag_and_engine_riggy_picked(golem):
+def test_a_new_project_takes_the_workflow_mode_tag_and_engine_riggy_picked(golem, careful):
     async def go():
         golem.harness.script = [TREES]
-        job = await golem.new_project("trees, quickly", workflow="web_app", mode="reckless", tag="Game", model="opus", effort="max")
+        job = await golem.new_project("trees, carefully", workflow="web_app", mode="careful", tag="Game", model="opus", effort="max")
         project = golem.store.project("tree-cards")
-        assert (job.workflow, job.mode, project.tag, project.model, project.effort, project.mode) == ("web_app", "reckless", "Game", "opus", "max", "")
+        assert (job.workflow, job.mode, project.tag, project.model, project.effort, project.mode) == ("web_app", "careful", "Game", "opus", "max", "")
         golem.harness.script = [{"summary": "s", "title": "t"}]
         other = await golem.new_project("birds", name="Birds", mode="", tag="Nope")
         assert other.mode == "" and golem.store.project("birds").tag == ""  # no mode, and only a tag there is
@@ -408,10 +408,10 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         job = golem.store.active_job("tree-cards")
         assert (job.title, job.request) == ("Library View Redesign", words)  # tidied; his words kept as they were
         ask = next(c for c in golem.harness.calls if c.label == "request")
-        assert ask.schema["required"] == ["workflow", "mode", "title"] and words in ask.prompt
+        assert ask.schema["required"] == ["workflow", "title"] and words in ask.prompt
         assert ask.schema["properties"]["workflow"]["enum"] == ["change", "design", "options", "question"]
         assert "- `question` (only looks: builds nothing): He wants to know something" in ask.prompt
-        assert "- `rigorous`: He wants extra care taken" in ask.prompt
+        assert "mode" not in ask.schema["properties"]  # golem doesn't guess a mode: Riggy picks one
 
         await golem.step()
         assert golem.chat.texts(room)[-1] == "Working on it: Library View Redesign"
@@ -1524,20 +1524,20 @@ def test_pausing_a_project_or_all_work(golem):
 # --- settings, names and slugs ------------------------------------------------
 
 
-def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem):
+def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem, careful):
     async def go():
         golem.harness.script = [{**TREES, "title": "Leaf Guessing Game"}]
-        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", mode="rigorous", model="fable", effort="max")
+        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", mode="careful", model="fable", effort="max")
         project = golem.store.project("leaf-peeper")
         assert (project.name, project.mode, project.model, project.effort) == ("Leaf Peeper", "", "fable", "max")  # its default is Riggy's to set
         job = golem.store.active_job("leaf-peeper")
-        assert (job.workflow, job.mode) == ("web_app", "rigorous")
+        assert (job.workflow, job.mode) == ("web_app", "careful")
         await golem.until("spec")
         golem.harness.script = [verdict("done")]
         await golem.step()
         call = golem.harness.calls[-1]
         assert (call.model, call.effort) == ("fable", "max")
-        assert "# Your step: spec" in call.prompt and "**rigorous mode**" in call.prompt
+        assert "# Your step: spec" in call.prompt
         job = golem.store.active_job("leaf-peeper")
         assert len(plan.planned(golem.settings, golem.store, job)) == 33
         assert golem.store.runs()[0]["model"] == "fable/max"
@@ -1546,14 +1546,14 @@ def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem)
 
 
 def test_unpicked_settings_use_the_defaults(tmp_path):
-    golem = Golem(tmp_path, default_mode="reckless", default_model="sonnet", default_effort="xhigh")
+    golem = Golem(tmp_path, default_model="sonnet", default_effort="xhigh")
 
     async def go():
         golem.harness.script = [TREES]
         await golem.new_project("trees")
         project = golem.store.project("tree-cards")
-        assert (project.mode, project.model, project.effort) == ("", "", "")  # each step's default; golem's default mode
-        assert golem.store.active_job("tree-cards").mode == "reckless"
+        assert (project.mode, project.model, project.effort) == ("", "", "")  # each step's default; the usual way
+        assert golem.store.active_job("tree-cards").mode == ""
         await golem.until("spec")
         await golem.step()
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "xhigh")
@@ -1561,15 +1561,15 @@ def test_unpicked_settings_use_the_defaults(tmp_path):
     run(go())
 
 
-def test_a_projects_settings(golem):
+def test_a_projects_settings(golem, careful):
     from golem.control import ControlError
 
     async def go():
         await new_project(golem, [])
         job = golem.store.active_job("tree-cards")
-        said = await golem.control.setting("tree-cards", "mode", "rigorous")
-        assert said == f"Tree Cards: requests run in rigorous mode unless they ask for another; job {job.id}, not started yet, too."
-        assert golem.store.job(job.id).mode == "rigorous" and golem.store.project("tree-cards").mode == "rigorous"
+        said = await golem.control.setting("tree-cards", "mode", "careful")
+        assert said == f"Tree Cards: requests run in careful mode unless they ask for another; job {job.id}, not started yet, too."
+        assert golem.store.job(job.id).mode == "careful" and golem.store.project("tree-cards").mode == "careful"
         await golem.control.setting("tree-cards", "effort", "max")
         await golem.control.setting("tree-cards", "model", "sonnet")
         assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").effort) == ("sonnet", "max")
@@ -1583,10 +1583,9 @@ def test_a_projects_settings(golem):
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "max")
 
         # Once the job has started, it carries on as it is.
-        await golem.control.setting("tree-cards", "mode", "reckless")
-        assert golem.store.job(job.id).mode == "rigorous" and golem.store.project("tree-cards").mode == "reckless"
-        await golem.control.setting("tree-cards", "model", "")
         await golem.control.setting("tree-cards", "mode", "")
+        assert golem.store.job(job.id).mode == "careful" and golem.store.project("tree-cards").mode == ""
+        await golem.control.setting("tree-cards", "model", "")
         assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").mode) == ("", "")
         assert golem.chat.texts("tree-cards") == [m for m in golem.chat.texts("tree-cards") if "from the status page" not in m]  # the page says it
 

@@ -197,3 +197,10 @@ class Golem:
 @pytest.fixture
 def golem(tmp_path):
     return Golem(tmp_path)
+
+
+@pytest.fixture
+def careful(monkeypatch):
+    """A mode of golem's (plan.MODES), for the tests of picking one: golem ships none yet."""
+    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care taken."})
+    return "careful"

@@ -443,7 +443,7 @@ def create_app(
         return FileResponse(path, media_type=options.IMAGE_TYPES[path.suffix], headers=headers)
 
     def picks() -> projectpage.Picks:
-        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))], [m.name for m in store.modes()])
+        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))], list(plan.MODES))
 
     def project_view(request: Request, project: Project, job: Job | None) -> Response:
         """A project's page, open on `job` (else the one it opens on: projectpage.chosen). A job
@@ -519,7 +519,7 @@ def create_app(
         mode = form.get("mode", "auto")
         if not text:
             return _back(form, "Write something first.")
-        if mode not in ("auto", "") and store.mode(mode) is None:
+        if mode not in ("auto", "") and mode not in plan.MODES:
             return _back(form, f"There's no mode called {mode}.")
         job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode)
         return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.")
@@ -548,7 +548,7 @@ def create_app(
         data, jobs = project_lanes(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
         page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:],
-                                          modes=[m.name for m in store.modes()])  # fmt: skip
+                                          modes=list(plan.MODES))  # fmt: skip
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
@@ -558,7 +558,7 @@ def create_app(
         flows_ = scheduler.library.choices(("new",))
         fallback = scheduler.library.fallback("new")
         return newproject.Choices([(w.key, w.name, " ".join(w.ingest.split())) for w in flows_], fallback.key if fallback else "",
-                                  [m.name for m in store.modes()], plan.mode_for(store, None), [t.name for t in store.tags()], settings.org)  # fmt: skip
+                                  list(plan.MODES), [t.name for t in store.tags()], settings.org)  # fmt: skip
 
     def new_page(request: Request, new: newproject.Filled | None = None, adopting: newproject.Filled | None = None, status: int = 200) -> Response:
         signed = signed_in(request)
@@ -569,10 +569,10 @@ def create_app(
         return response
 
     def picked_mode(value: str, errors: dict[str, str]) -> str | None:
-        """A form's mode: None for golem's default ("auto"), "" for none, else one of the modes."""
-        if value == "auto":
-            return None
-        if value and store.mode(value) is None:
+        """A form's mode: "" for none, else one of golem's (plan.MODES)."""
+        if value in ("auto", ""):
+            return ""
+        if value not in plan.MODES:
             errors["mode"] = f"There's no mode called {value}."
         return value
 
@@ -679,13 +679,6 @@ def create_app(
         return respond(request, title, blockspage.stage_page(scheduler.library.blocks, key), signed, here="settings",
                        up=("/settings/blocks", "Blocks"))  # fmt: skip
 
-    async def modes_page(request: Request) -> Response:
-        """The modes requests can ask for, what each is for, and golem's default."""
-        signed = signed_in(request)
-        if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20modes.", 303)
-        return respond(request, "Modes", home.modes_card(store), signed, here="settings", up=("/settings", "Settings"))
-
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
@@ -784,16 +777,6 @@ def create_app(
                     message = control.tag_color(form.get("name", ""), value)
                 case "tag-delete":
                     message = control.delete_tag(form.get("name", ""))
-                case "mode-add":
-                    message = control.add_mode(value, form.get("ingest", ""))
-                case "mode-rename":
-                    message = control.rename_mode(form.get("name", ""), value)
-                case "mode-ingest":
-                    message = control.mode_ingest(form.get("name", ""), value)
-                case "mode-delete":
-                    message = control.delete_mode(form.get("name", ""))
-                case "fallback-mode":
-                    message = control.fallback_mode(value)
                 case "note":
                     message = await control.note(job, value, step, position)
                 case "rename":
@@ -882,7 +865,7 @@ def create_app(
             Route("/insights", insights_page),
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
-            Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page), Route("/settings/modes", modes_page),
+            Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),
             Route("/act", act, methods=["POST"]),

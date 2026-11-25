@@ -219,11 +219,6 @@ def catalog(found: dict[str, Builtin], modes: tuple[str, ...] = ()):
 
 # --- workflows in golem's database ----------------------------------------------------
 
-# The modes golem starts with, and what a request says to ask for one.
-MODES = {
-    "rigorous": 'He wants extra care taken: "be thorough", "take your time", "make it excellent", "rigorous mode".',
-    "reckless": 'He wants it fast over careful: "quick and dirty", "just hack it together", "reckless mode".',
-}
 FALLBACK = "fallback_"  # kv: the workflow (by key) each start type uses when nothing else fits
 
 
@@ -267,7 +262,7 @@ class Library:
 
     def seed(self) -> list[str]:
         """Golem's built-ins in the database: new ones added, unedited ones brought up to date,
-        and an edited one told when golem has a newer version. The modes golem starts with, once.
+        and an edited one told when golem has a newer version.
         Returns the keys it wrote."""
         self.resign_if_rekeyed()
         self.blocks.seed()
@@ -287,11 +282,6 @@ class Library:
                     wrote.append(key)
             if b.fallback and self.store.get(FALLBACK + b.start) is None:
                 self.store.put(FALLBACK + b.start, key)
-        if self.store.get("modes_seeded") is None:
-            for name, ingest in MODES.items():
-                if self.store.mode(name) is None:
-                    self.store.add_mode(name, ingest)
-            self.store.put("modes_seeded", "1")
         return wrote
 
     def _write(self, wf: Workflow, b: Builtin) -> None:
@@ -333,7 +323,7 @@ class Library:
                 subs[wf.key] = validate.SubInfo(
                     wf.name, tuple(engine.outputs_of(default.working if default else {})), tuple(m for m in tabs if m), wf.archived
                 )
-        return validate.Catalog(subs, self.resolve, tuple(m.name for m in self.store.modes()))
+        return validate.Catalog(subs, self.resolve)
 
     def pin(self, wf: Workflow, start: str, mode: str) -> dict:
         """A job's own copy of the workflow, for its mode (engine.flatten). Raises GraphError if

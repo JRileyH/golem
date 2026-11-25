@@ -64,15 +64,15 @@ def test_github_is_checked_first_and_a_blocked_repo_makes_nothing(golem):
     run(go())
 
 
-def test_an_adopted_repo_becomes_a_project_with_his_words_and_picks(golem):
+def test_an_adopted_repo_becomes_a_project_with_his_words_and_picks(golem, careful):
     async def go():
-        said = await adopt(golem, "cards for my table", mode="rigorous", tag="Game")
+        said = await adopt(golem, "cards for my table", mode="careful", tag="Game")
         assert said == "Adopting Mimic: first golem checks it over."
         project = golem.store.project("mimic")
         assert (project.name, project.summary, project.mode, project.tag) == ("Mimic", "Printable cards for a D&D table.", "", "Game")
         job = golem.store.active_job("mimic")
         # No grace: the page said everything it was for, and the check starts straight away.
-        assert (job.kind, job.playbook, job.workflow, job.mode, job.state, job.request) == ("adopt", "adopt", "adopt", "rigorous", "queued", "cards for my table")
+        assert (job.kind, job.playbook, job.workflow, job.mode, job.state, job.request) == ("adopt", "adopt", "adopt", "careful", "queued", "cards for my table")
         assert [m.text for m in golem.store.job_messages(job.id)] == ["cards for my table"]
         [triage] = golem.harness.calls
         assert (triage.model, triage.label) == ("haiku", "adopt") and "Tabletop data in, visual outputs out." in triage.prompt

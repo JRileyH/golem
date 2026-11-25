@@ -8,7 +8,7 @@ that need more than its settings.
   answer at once (adopt.py); then it's a project like any other, its job checking it over.
 - A request on a project's page: always a job of its own, queued behind any change under way
   (turns.py). The request call titles it and, unless Riggy picked them, says which workflow it's
-  for (a change, options first, a design pass, only an answer…) and whether it asks for a mode.
+  for (a change, options first, a design pass, only an answer…).
 - Moving a project to a new address, and deleting one.
 
 One at a time, so two can't both take the same address.
@@ -57,8 +57,6 @@ class Bot:
         self.deployer = deployer
         self.library = scheduler.library
         self.lock = asyncio.Lock()
-        if store.get("fallback_mode") is None and settings.default_mode:  # GOLEM_DEFAULT_MODE, until Settings says
-            store.put("fallback_mode", settings.default_mode)
 
     # --- new projects ---------------------------------------------------------
 
@@ -66,7 +64,7 @@ class Bot:
                           model: str = "", effort: str = "") -> Job:  # fmt: skip
         """A project as Riggy named it on the New project form, and its first job, which starts
         straight away: the form already said all a minute's grace was for. `workflow`: one for new
-        projects by key, else the fallback; `mode` None for golem's default, "" for none. The
+        projects by key, else the fallback; `mode` one of golem's (plan.MODES), or "" for none. The
         project's own default mode stays unset: only Riggy sets that, in its settings. Raises
         ValueError if the address can't be had (web.py checks first, and says why)."""
         async with self.lock:
@@ -80,7 +78,7 @@ class Bot:
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
             title = about.title or project.name  # without a model: what he called it, not his first line cut short
-            job = self.start_job(project, wf, self.fallback_mode() if mode is None else mode, idea.strip(), title, kind="new")
+            job = self.start_job(project, wf, plan.mode_for(project, mode or ""), idea.strip(), title, kind="new")
             await self.chat.heard(slug, idea.strip(), job=job.id)
             return job
 
@@ -119,7 +117,7 @@ class Bot:
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
             wf = self.builtin("adopt", "adopt")
-            job = self.start_job(project, wf, self.fallback_mode() if mode is None else mode, words or plan.adopting(slug), brief.title, kind="adopt")
+            job = self.start_job(project, wf, plan.mode_for(project, mode or ""), words or plan.adopting(slug), brief.title, kind="adopt")
             if words:
                 await self.chat.heard(slug, words, job=job.id)
             return job, f"Adopting {project.name}: first golem checks it over."
@@ -137,22 +135,9 @@ class Bot:
             log_path=self.settings.state_dir / "triage" / "adopt.jsonl.gz",
             env={k: v for k, v in os.environ.items() if k not in WORKER_ENV_DENY},
             tags=[t.name for t in self.store.tags()],
-            modes=self.modes(),
         )
 
-    # --- workflows and modes (workflows.py) -------------------------------------
-
-    def modes(self) -> list[intake.Choice]:
-        return [intake.Choice(m.name, m.ingest) for m in self.store.modes()]
-
-    def fallback_mode(self) -> str:
-        """The mode a request runs in when nothing says otherwise: golem's setting, else none."""
-        return plan.mode_for(self.store, None)
-
-    def mode_for(self, project: Project, asked: str) -> str:
-        """The mode a project's request runs in: what it asked for, else the project's default
-        (Riggy's setting), else golem's."""
-        return plan.mode_for(self.store, project, asked)
+    # --- workflows (workflows.py) -------------------------------------------------
 
     def kinds(self) -> list[options.Kind]:
         """The workflows a project's request can be for: changes, and those that only look."""
@@ -176,14 +161,13 @@ class Bot:
     async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None) -> Job:
         """What Riggy asked for on a project's page: always a job of its own, queued behind any
         change under way (turns.behind). The request call titles it and, unless he picked them,
-        says which workflow it's for and whether it asks for a mode; `mode` "" is none."""
+        says which workflow it's for. `mode` None for the project's default, "" for none."""
         fallback = self.library.fallback("change")
-        asked = await options.read_request(self.harness, self.settings, text, self.kinds(), [(m.name, m.ingest) for m in self.store.modes()],
-                                           fallback.key if fallback else "")  # fmt: skip
+        asked = await options.read_request(self.harness, self.settings, text, self.kinds(), fallback.key if fallback else "")
         picked = self.store.workflow(key=workflow) if workflow else None
         if picked is None or picked.archived or picked.start not in ("change", "look"):
             picked = self.store.workflow(key=asked.workflow) or fallback
-        mode = self.mode_for(project, asked.mode) if mode is None else mode
+        mode = plan.mode_for(project) if mode is None else plan.mode_for(None, mode)
         async with self.lock:
             job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
         await self.chat.heard(project.slug, text, job=job.id)
@@ -221,7 +205,7 @@ class Bot:
             self.store.add_note(job.id, request)
             follow = "The current job will update the references and redeploy."
         else:
-            self.start_job(project, self.library.fallback("change") or self.store.workflow(key="change"), self.mode_for(project, ""), request,
+            self.start_job(project, self.library.fallback("change") or self.store.workflow(key="change"), plan.mode_for(project), request,
                            f"Move to {new}")  # fmt: skip
             follow = "A job is updating the references and will redeploy."
         return (

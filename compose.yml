@@ -20,7 +20,6 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN:?set BASE_DOMAIN in .env}
       EDGE_PORT: ${EDGE_PORT:-}
       HARNESS: ${HARNESS:-claude}
-      GOLEM_DEFAULT_MODE: ${GOLEM_DEFAULT_MODE:-standard}
       GOLEM_MODEL: ${GOLEM_MODEL:-opus}
       GOLEM_EFFORT: ${GOLEM_EFFORT:-high}
       GOLEM_WEB_PASSWORD: ${GOLEM_WEB_PASSWORD:?set GOLEM_WEB_PASSWORD in .env}

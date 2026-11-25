@@ -330,7 +330,6 @@ class Request:
 
     workflow: str  # the workflow it's for, by key
     title: str  # "" without a model: plan.title falls back to his words
-    mode: str = ""  # the mode it asks for; "" if it doesn't say
 
 
 @dataclass(frozen=True)
@@ -344,28 +343,23 @@ class Kind:
     ingest: str
 
 
-async def read_request(harness: Harness, settings: Settings, text: str, kinds: list[Kind], modes: list[tuple[str, str]] = (),
-                       fallback: str = "") -> Request:  # fmt: skip
+async def read_request(harness: Harness, settings: Settings, text: str, kinds: list[Kind], fallback: str = "") -> Request:
     """Which workflow a request is for (`kinds`, by what each is for: a change, options to pick
-    from first, a design pass, only an answer…) and whether it asks for one of the `modes`. The
-    same call names the job it starts. Without a model, golem's built-ins by rule; anything else
-    is the `fallback`."""
+    from first, a design pass, only an answer…). The same call names the job it starts. Without
+    a model, golem's built-ins by rule; anything else is the `fallback`."""
     by_handle = {k.handle: k for k in kinds}
-    names = [m for m, _ in modes]
     if settings.harness != "fake" and kinds:
-        props = {"workflow": {"enum": list(by_handle)}, "mode": {"enum": [*names, "none"]}, "title": TITLE}
-        required = ["workflow", "mode", "title"]
+        props = {"workflow": {"enum": list(by_handle)}, "title": TITLE}
+        required = ["workflow", "title"]
         listed = "\n".join(
             f"  - `{k.handle}`{' (only looks: builds nothing)' if k.looks else ''}: {' '.join(k.ingest.split()) or '(no description)'}"
             for k in kinds
         )
-        moded = "\n".join(f"  - `{m}`: {' '.join(about.split()) or '(no description)'}" for m, about in modes) or "  (none)"
         schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
-        values = {"$workflows": listed, "$modes": moded, "$request": text.strip()}
+        values = {"$workflows": listed, "$request": text.strip()}
         v = await _ask(harness, settings, "request", values, schema)
         if v and v.get("workflow") in by_handle:
-            mode = v.get("mode") if v.get("mode") in names else ""
-            return Request(by_handle[v["workflow"]].key, plan.clean_title(v.get("title")), mode)
+            return Request(by_handle[v["workflow"]].key, plan.clean_title(v.get("title")))
     keys = {k.key for k in kinds}
     for key, fits in (("design", lambda t: DESIGN_RE.search(t)), ("options", asks_for_options), ("question", asks_a_question)):
         if key in keys and fits(text):

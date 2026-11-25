@@ -80,15 +80,16 @@ def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
     return BOOKS.get(job.playbook, "change"), mode
 
 
-def mode_for(store: Store, project: Project | None, asked: str = "") -> str:
-    """The mode a request runs in: what it asked for, else its project's default (Riggy's
-    setting), else golem's (Settings), else none: each workflow's default tab."""
-    if asked:
+# Golem's modes: ways of working a job can be in, each with what it means. "" is the usual way.
+MODES: dict[str, str] = {}
+
+
+def mode_for(project: Project | None, asked: str = "") -> str:
+    """The mode a job runs in: what Riggy picked for it, else its project's default (his
+    setting), else none."""
+    if asked in MODES:
         return asked
-    if project and project.mode and store.mode(project.mode):
-        return project.mode
-    found = store.get("fallback_mode") or ""
-    return found if found and store.mode(found) else ""
+    return project.mode if project and project.mode in MODES else ""
 
 
 def snapshot(job: Job) -> dict | None:

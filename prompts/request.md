@@ -1,6 +1,6 @@
-Riggy sent a message about one of his projects. Decide which kind of request it is
-and whether it asks for a particular way of working, give it a title, and return
-them as the structured output. Don't use any other tools or ask questions.
+Riggy sent a message about one of his projects. Decide which kind of request it is,
+give it a title, and return them as the structured output. Don't use any other
+tools or ask questions.
 
 - workflow: which of these his message is, by what each is for:
 
@@ -11,11 +11,6 @@ $workflows
   "can you add a quiz mode?" is a change. Otherwise, if it's not clear whether he
   only wants to know something, the one that only looks is the cheap mistake: an
   answer costs a few minutes, a change can take an hour.
-
-- mode: one of these, only if he asked for that way of working (each says what to
-  look for). Otherwise `none`.
-
-$modes
 
 - title: what it's about, in 2 to 5 words of Title Case, like the name of a
   ticket. It's what golem calls the work everywhere, so it names the work

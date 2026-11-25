@@ -34,8 +34,8 @@ the golem image.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
 - `request.md`: which workflow a request on a project's page is for (by what each
-  is for: a change, options first, a design pass, a question…), whether it asks
-  for a mode, and a title for the job it starts ("Library View Redesign"). It's
+  is for: a change, options first, a design pass, a question…), and a title for the
+  job it starts ("Library View Redesign"). It's
   always a job of its own; what Riggy picks in the Ask box wins over this.
 - `classify.md`: which of an Ask Riggy block's outputs his reply means.
 - `pick.md`: what Riggy's reply to some options says: a pick, or other options.

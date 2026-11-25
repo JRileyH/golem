@@ -34,19 +34,6 @@ README_CHARS = 6000  # of an adopted repo's README, for its brief
 
 
 @dataclass(frozen=True)
-class Choice:
-    """A workflow or a mode a request can be for, and what it's for in Riggy's words (its ingest prompt)."""
-
-    name: str
-    ingest: str = ""
-
-
-def choices(found: Iterable[Choice]) -> str:
-    """Workflows or modes as the prompt lists them: each by name, with what it's for."""
-    return "\n".join(f"  - `{c.name}`: {' '.join(c.ingest.split()) or '(no description)'}" for c in found) or "  (none)"
-
-
-@dataclass(frozen=True)
 class Brief:
     name: str
     slug: str
@@ -54,7 +41,6 @@ class Brief:
     tag: str = ""  # one of the tags, a new one (`new_tag`), or "" for none
     new_tag: bool = False
     # Only what the dictation asked for; None means use the default.
-    mode: str | None = None
     model: str | None = None
     effort: str | None = None
     # What it is in a few plain words ("Tree Flashcard Game"), its first job's title; "" without a model.
@@ -101,7 +87,7 @@ async def summarize(harness: Harness, prompt_path: Path, name: str, idea: str, c
     return Summary(" ".join(str(v.get("summary") or "").split())[:1000] or idea_summary(idea), clean_title(v.get("title")))
 
 
-def adopt_schema(tags: list[str], modes: Iterable[str] = ()) -> dict:
+def adopt_schema(tags: list[str]) -> dict:
     """An adopted repo's brief (its slug is the repo's name)."""
     return {
         "type": "object",
@@ -111,11 +97,10 @@ def adopt_schema(tags: list[str], modes: Iterable[str] = ()) -> dict:
             "title": {"type": "string", "description": "What it is in 2 to 5 plain words, Title Case: 'Tree Flashcard Game'"},
             "tag": {"enum": [*tags, "none", "new"]},
             "new_tag": {"type": "string", "description": "Only when tag is new: its name, one or two words"},
-            "mode": {"enum": [*modes, "none"]},
             "model": {"enum": [*MODELS, "unspecified"]},
             "effort": {"enum": [*EFFORTS, "unspecified"]},
         },
-        "required": ["name", "summary", "title", "tag", "mode", "model", "effort"],
+        "required": ["name", "summary", "title", "tag", "model", "effort"],
         "additionalProperties": False,
     }
 
@@ -130,20 +115,19 @@ def adopt_fallback(slug: str, words: str, about: About) -> Brief:
 
 async def adopt_triage(
     harness: Harness, prompt_path: Path, slug: str, words: str, about: About, cwd: Path, log_path: Path, env: dict,
-    tags: Iterable[str] = (), modes: Iterable[Choice] = (),
+    tags: Iterable[str] = (),
 ) -> Brief:  # fmt: skip
     """The brief for a repo golem adopts: what Riggy said about it wins over its README and description."""
-    tags, modes = list(tags), list(modes)
+    tags = list(tags)
     prompt = _fill(
         prompt_path.read_text(), tags=_listed(tags), slug=slug, words=words.strip() or "(nothing)",
         description=about.description.strip() or "(none)", readme=about.readme[:README_CHARS].strip() or "(none)",
-        modes=choices(modes),
     )  # fmt: skip
-    v = await _ask(harness, prompt, adopt_schema(tags, [m.name for m in modes]), cwd, log_path, env, "adopt")
+    v = await _ask(harness, prompt, adopt_schema(tags), cwd, log_path, env, "adopt")
     fallback = adopt_fallback(slug, words, about)
     if v is None:
         return fallback
-    return _brief(v, str(v.get("name") or "").strip()[:60] or fallback.name, slug, fallback.summary, tags, modes)
+    return _brief(v, str(v.get("name") or "").strip()[:60] or fallback.name, slug, fallback.summary, tags)
 
 
 async def _ask(harness: Harness, prompt: str, wanted: dict, cwd: Path, log_path: Path, env: dict, label: str) -> dict | None:
@@ -162,7 +146,7 @@ async def _ask(harness: Harness, prompt: str, wanted: dict, cwd: Path, log_path:
     return result.verdict
 
 
-def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: list[Choice] = ()) -> Brief:
+def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str]) -> Brief:
     tag, new = _tag(v.get("tag"), v.get("new_tag"), tags)
     return Brief(
         name,
@@ -170,7 +154,6 @@ def _brief(v: dict, name: str, slug: str, summary: str, tags: list[str], modes: 
         str(v.get("summary") or summary).strip()[:1000],
         tag=tag,
         new_tag=new,
-        mode=_pick(v.get("mode"), tuple(m.name for m in modes)),
         model=_pick(v.get("model"), MODELS),
         effort=_pick(v.get("effort"), EFFORTS),
         title=clean_title(v.get("title")),

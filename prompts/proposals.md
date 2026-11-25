@@ -6,7 +6,6 @@ propose an improvement he can say yes or no to.
 # The project
 
 - Project: $name (`$slug`) — $summary
-- Mode: $mode
 - Live URL: $url
 - Repo: $repo. Your working directory is a checkout of its own, on `$branch`. Install
   dependencies before you run anything: it starts without them.
