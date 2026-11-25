@@ -11,7 +11,7 @@ from .proposals import LENSES, Lens, kinds, past
 from .store import Job, Project, Proposal, Step
 
 # Golem's own steps worth telling a worker about in "Done so far".
-TOLD = {"merge", "push-main", "deploy", "checkin", "choose"}
+TOLD = {"merge", "deploy", "checkin", "choose"}
 
 
 class Prompts:

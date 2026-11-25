@@ -47,7 +47,7 @@ JUDGED = [
     {"agent": "build", "turns": 10},
     {"agent": "judge", "turns": 10, "turn": "none", "fail": "tries",
      "outputs": [{"name": "pass", "about": "it does what was asked"}, {"name": "fail", "about": "it doesn't yet"}]},
-    {"use": "ship", "tab": "default"},
+    {"use": "ship"},
     "end",
     {"counter": "tries"},
     {"condition": "again", "all": [["counter", "tries", "<", 5]], "true": "build", "false": "ship"},
@@ -109,7 +109,7 @@ def test_a_job_that_goes_round_too_often_asks_before_going_on(golem):
 TESTED = [
     "setup",
     {"script": "tests", "command": "test -f ok.txt || (echo 'npm test: ok.txt is missing'; exit 3)", "fail": "mend"},
-    {"use": "ship", "tab": "default"},
+    {"use": "ship"},
     "end",
     {"agent": "mend", "turns": 20, "done": "tests"},
 ]
@@ -239,18 +239,6 @@ from test_flow import TREES  # noqa: E402
 from golem.control import Control, ControlError  # noqa: E402
 
 
-def test_a_new_project_in_rigorous_mode_runs_the_rigorous_tab(golem):
-    async def go():
-        golem.harness.script = [TREES]
-        job = await golem.new_project("a flashcard game for trees", mode="rigorous")
-        assert (job.workflow, job.mode) == ("web_app", "rigorous") and golem.store.project("tree-cards").mode == ""
-        steps = golem.scheduler.ensure_started(job)
-        assert "spec-review" in [s.name for s in plan.planned(golem.settings, golem.store, golem.store.job(job.id))]
-        assert plan.snapshot(golem.store.job(job.id))["levels"][""]["tab"] == "rigorous" and steps
-
-    run(go())
-
-
 def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem):
     async def go():
         room = await idle_project(golem)
@@ -258,14 +246,11 @@ def test_a_project_with_a_default_mode_runs_its_requests_in_it(golem):
         golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
         job = await golem.ask(room, "make the cards bigger")
         assert (job.workflow, job.mode) == ("change", "rigorous")
-        names = [s.name for s in plan.planned(golem.settings, golem.store, job)]
-        assert "second-pass" in names  # Change's rigorous tab
         # A request that asks for another mode runs in that one, this once.
         golem.store.update_job(job.id, state="done")
         golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "reckless", "title": "Quick Fix"}]})
         job = await golem.ask(room, "quick and dirty: fix the typo")
         assert job.mode == "reckless" and golem.store.project("tree-cards").mode == "rigorous"
-        assert "review" not in [s.name for s in plan.planned(golem.settings, golem.store, job)]
 
     run(go())
 

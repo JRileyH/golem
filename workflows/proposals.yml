@@ -3,11 +3,9 @@ name: Proposals
 start: propose
 fallback: true
 ingest: Golem's own look at a live project for improvements to propose, when it has nothing else to do.
-tabs:
-  default:
-    md: proposals.md
-    blocks:
-      - refresh
-      - {stage: look, name: propose, does: propose, turns: 80, turn: none}
-      - proposals
-      - end
+md: proposals.md
+blocks:
+  - refresh
+  - {stage: look, name: propose, does: propose, turns: 80, turn: none}
+  - proposals
+  - end

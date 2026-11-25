@@ -169,23 +169,6 @@ def test_standard_steps_walk_to_the_mvp_checkin_and_on_to_a_deployed_done(golem)
     run(go())
 
 
-def test_reckless_goes_straight_to_main(tmp_path):
-    golem = Golem(tmp_path, default_mode="reckless")
-
-    async def go():
-        room = await new_project(golem, [verdict("done", "Flip cards to learn twenty trees.")])
-        await golem.finish()
-        job = golem.store.jobs()[0]
-        assert job.state == "done"
-        assert golem.labels(job.id) == ["set up", "build", "push to main", "deploy", "done"]
-        assert [a for a in golem.workspace.actions if not a.startswith("CI on")] == ["push main"]
-        assert golem.chat.texts(room)[-1] == f"Done: Flip cards to learn twenty trees.\n{URL}"
-        # No PR closed its issue, so golem does: GitHub's record says it finished (history.py reads it, if it's adopted again).
-        assert golem.workspace.closed == [(room, job.issue, f"Done: Flip cards to learn twenty trees.\n\n{URL}")]
-
-    run(go())
-
-
 def test_a_worker_has_no_say_in_what_comes_next(golem):
     """Whatever a worker says, golem runs the next step; only its own last steps finish a job."""
 
@@ -441,20 +424,6 @@ def test_a_change_goes_by_the_title_the_request_call_gave_it(golem):
         assert "If the project has a design guide, `docs/design.md`,\n  everything you make that can be seen follows it" in prompts["change"]
         assert "Does it follow the design guide?" in (REPO / "skills/review.md").read_text() and "skills/review.md" in prompts["review"]
         assert "`docs/design.md` if it changed the look" in " ".join(prompts["docs"].split())
-
-    run(go())
-
-
-def test_a_change_in_reckless_mode_skips_the_review(golem):
-    async def go():
-        await new_project(golem, [])
-        golem.store.update_project("tree-cards", mode="reckless")
-        golem.store.update_job(golem.store.active_job("tree-cards").id, state="done")
-        await golem.ask("tree-cards", "bigger photos")
-        await golem.finish()
-        job = golem.store.jobs()[0]
-        assert golem.labels(job.id) == ["set up", "change", "docs", "push", "PR", "CI", "merge", "deploy", "done"]
-        assert golem.workspace.closed == []  # its PR closes its issue
 
     run(go())
 
@@ -1570,7 +1539,7 @@ def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem)
         assert (call.model, call.effort) == ("fable", "max")
         assert "# Your step: spec" in call.prompt and "**rigorous mode**" in call.prompt
         job = golem.store.active_job("leaf-peeper")
-        assert len(plan.planned(golem.settings, golem.store, job)) == 35
+        assert len(plan.planned(golem.settings, golem.store, job)) == 33
         assert golem.store.runs()[0]["model"] == "fable/max"
 
     run(go())
@@ -1585,7 +1554,7 @@ def test_unpicked_settings_use_the_defaults(tmp_path):
         project = golem.store.project("tree-cards")
         assert (project.mode, project.model, project.effort) == ("", "", "")  # each step's default; golem's default mode
         assert golem.store.active_job("tree-cards").mode == "reckless"
-        await golem.until("build")
+        await golem.until("spec")
         await golem.step()
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "xhigh")
 

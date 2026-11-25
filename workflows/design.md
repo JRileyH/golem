@@ -13,9 +13,7 @@ what gets built.
 A review in this job checks the look above all: every screen and state follows
 the guide, light and dark, on a phone and wide, and text passes contrast.
 
-The project's mode sets the bar: in reckless mode keep tests light; in standard,
-test the paths you touch; in rigorous, test thoroughly, including browser tests
-for the screens that changed.
+Test the paths you touch, including browser tests for the screens that changed.
 
 # Quality bar
 

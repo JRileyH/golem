@@ -9,37 +9,13 @@ ingest: >-
   picks, and golem builds the look and writes it down for later work. One screen or
   one piece is not this: "redo the library page as a grid" is a change, "show me
   some logo ideas" is options.
-tabs:
-  default:
-    md: design.md
-    blocks:
-      - setup
-      - {use: design_round, nothing: review}
-      - {stage: design, name: guide, makes: guide, turns: 200}
-      - {stage: design, name: apply, makes: restyle, turns: 400}
-      - {stage: review, turns: 150, optional: true, turn: none}
-      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
-  rigorous:
-    md: design.md
-    blocks:
-      - setup
-      - {use: design_round, nothing: review}
-      - {stage: design, name: guide, makes: guide, turns: 200}
-      - {stage: design, name: apply, makes: restyle, turns: 400}
-      - {stage: review, care: thorough, turns: 150, optional: true, turn: none}
-      - {stage: review, name: second-pass, care: thorough, turns: 150, optional: true, turn: none}
-      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
-  reckless:
-    md: design.md
-    blocks:
-      - setup
-      - {use: design_round, nothing: docs}
-      - {stage: design, name: guide, makes: guide, turns: 200}
-      - {stage: design, name: apply, makes: restyle, turns: 400}
-      - {stage: docs, message: changed, care: quick, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
+md: design.md
+blocks:
+  - setup
+  - {use: design_round, nothing: review}
+  - {stage: design, name: guide, makes: guide, turns: 200}
+  - {stage: design, name: apply, makes: restyle, turns: 400}
+  - {stage: review, turns: 150, optional: true, turn: none}
+  - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
+  - {use: ship}
+  - end

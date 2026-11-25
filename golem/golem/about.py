@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from . import stages
 from .store import Step
 
-SHIPPED = ("push", "push-main")  # the work up to here went out
+SHIPPED = ("push",)  # the work up to here went out
 LOOK_PAST = ("review", "docs")  # what a Build looks past for what it's building from: a plan's review, say
 REPLIED = "Riggy tried it, and his reply is under \"Riggy's feedback\": what he asked for comes first."
 

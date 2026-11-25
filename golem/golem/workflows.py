@@ -1,27 +1,23 @@
 """Golem's built-in workflows: YAML block lists in `workflows/`, read into graphs.
 
-Each `workflows/<key>.yml` is one workflow: its name, start type, ingest prompt and tabs (its
-default and any for a mode). A tab is a list of blocks, wired in order: a block's first output
-goes to the next block unless it names another; its other outputs name theirs by block id.
+Each `workflows/<key>.yml` is one workflow: its name, start type, ingest prompt, its markdown and
+its blocks, wired in order: a block's first output goes to the next block unless it names
+another; its other outputs name theirs by block id.
 
     key: change
     name: Change
     start: change
     ingest: He's asking for a feature, a fix or a change to be made.
-    tabs:
-      default:
-        md: change.md          # the intro, and a `## <name>` section per agent block
-        blocks:
-          - setup
-          - {agent: change, turns: 400}
-          - {agent: review, turns: 150, optional: true, turn: none}
-          - {stage: docs, message: changed}   # a stage block: golem's text, set up (stages.py)
-          - {use: ship, tab: default}     # a container: the `ship` sub-workflow
-          - end
+    md: change.md                  # the intro, and a `## <name>` section per agent block
+    blocks:
+      - setup
+      - {stage: build, name: change, turns: 400}   # a stage block: golem's text, set up (stages.py)
+      - {stage: review, turns: 150, optional: true, turn: none}
+      - {use: ship}                # a container: the `ship` sub-workflow
+      - end
 
 A block's id is its name (an agent's, a container's workflow…) unless it says `id:`; a name
-used twice gets -2, -3. The markdown is a playbook's body: text every agent block gets, then
-each agent block's instructions.
+used twice gets -2, -3.
 """
 
 from __future__ import annotations
@@ -46,7 +42,7 @@ STAGE_FIELDS = ("turns", "optional", "turn", "model", "effort", "skip_to", "id",
 FIELDS = {  # what each block type may set, besides its kind key and wires
     "agent": ("turns", "optional", "turn", "contract", "outputs", "model", "effort", "skip_to", "id"),
     "do": ("id",),
-    "use": ("tab", "name", "id"),
+    "use": ("name", "id"),
     "checkin": ("message", "reply_to", "optional", "turn", "outputs", "skip_to", "id"),
     "choose": ("optional", "skip_to", "id"),
     "counter": ("id",),
@@ -65,10 +61,7 @@ class Builtin:
     start: str
     ingest: str
     fallback: bool
-    tabs: dict[str, dict] = field(default_factory=dict)  # mode ("" for default) -> graph
-
-    def graph(self, mode: str) -> dict:
-        return self.tabs.get(mode) or self.tabs[""]
+    graph: dict = field(default_factory=dict)
 
 
 _LOADED: dict[tuple, dict[str, Builtin]] = {}
@@ -94,26 +87,20 @@ def _load_all(folder: Path) -> dict[str, Builtin]:
             raise ValueError(f"{path.name}: start is one of {', '.join(STARTS)}")
         specs[spec["key"]] = spec
     outputs: dict[str, list[str]] = {}
-    for key, spec in specs.items():  # what each sub-workflow's containers' outputs are, from its default tab
+    for key, spec in specs.items():  # what each sub-workflow's containers' outputs are
         if spec["start"] == "sub":
-            default = spec["tabs"]["default"]["blocks"]
-            outputs[key] = [b["output"] for b in default if isinstance(b, dict) and "output" in b]
+            outputs[key] = [b["output"] for b in spec["blocks"] if isinstance(b, dict) and "output" in b]
     found = {}
     for key, spec in specs.items():
-        tabs, used = {}, {}
-        for tab, body in spec["tabs"].items():
-            md = (folder / body["md"]).read_text() if body.get("md") else ""
-            try:
-                tabs["" if tab == "default" else tab] = graph = build(body["blocks"], md, spec["start"] == "sub", outputs)
-            except ValueError as e:
-                raise ValueError(f"{key}.yml, tab {tab}: {e}") from None
-            names = used.setdefault(body.get("md", ""), set())
-            names |= {n["name"] for n in graph["nodes"] if n["type"] == "agent"}
-        for md, names in used.items():  # a tab can share another's markdown, but every section is some tab's
-            parts = SECTION_RE.split((folder / md).read_text()) if md else [""]
-            if extra := set(parts[1::2]) - names:
-                raise ValueError(f"{md}: sections without an agent block: {', '.join(sorted(extra))}")
-        found[key] = Builtin(key, spec["name"], spec["start"], (spec.get("ingest") or "").strip(), bool(spec.get("fallback")), tabs)
+        md = (folder / spec["md"]).read_text() if spec.get("md") else ""
+        try:
+            graph = build(spec["blocks"], md, spec["start"] == "sub", outputs)
+        except ValueError as e:
+            raise ValueError(f"{key}.yml: {e}") from None
+        names = {n["name"] for n in graph["nodes"] if n["type"] == "agent"}
+        if extra := set(SECTION_RE.split(md)[1::2]) - names:
+            raise ValueError(f"{spec['md']}: sections without an agent block: {', '.join(sorted(extra))}")
+        found[key] = Builtin(key, spec["name"], spec["start"], (spec.get("ingest") or "").strip(), bool(spec.get("fallback")), graph)
     return found
 
 
@@ -192,8 +179,8 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
             raise ValueError(f"unknown block {value!r}")
         return {"type": value, "_id": settings.get("id", value)}, wires
     if kind == "use":
-        return {"type": "container", "workflow": value, "tab": settings.get("tab", "auto"),
-                **({"name": settings["name"]} if "name" in settings else {}), "_id": settings.get("id", value)}, wires  # fmt: skip
+        return {"type": "container", "workflow": value, **({"name": settings["name"]} if "name" in settings else {}),
+                "_id": settings.get("id", value)}, wires  # fmt: skip
     if kind == "condition":
         join = "any" if "any" in settings else "all"
         rows = [{"of": of, "name": name, "op": op, "value": v} for of, name, op, v in settings.get(join) or []]
@@ -209,34 +196,24 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
 
 
 def resolver(found: dict[str, Builtin]) -> engine.Resolver:
-    """Opens containers from the built-ins: a container's tab, or with `auto` the job's mode's
-    tab if the sub-workflow has one, else its default."""
+    """Opens containers from the built-ins."""
 
     def resolve(key: str, tab: str, mode: str) -> engine.Sub:
         if key not in found:
             raise engine.GraphError(f"no workflow called {key}")
-        wf = found[key]
-        want = mode if tab in ("auto", "") else ("" if tab == "default" else tab)
-        have = want if want in wf.tabs else ""
-        return engine.Sub(key, wf.name, have, wf.tabs[have])
+        return engine.Sub(key, found[key].name, "", found[key].graph)
 
     return resolve
 
 
 def top(found: dict[str, Builtin], key: str, mode: str) -> engine.Sub:
-    """A workflow at the top of a job: its tab for the mode, else its default."""
-    wf = found[key]
-    tab = mode if mode in wf.tabs else ""
-    return engine.Sub(key, wf.name, tab, wf.tabs[tab])
+    """A workflow at the top of a job."""
+    return engine.Sub(key, found[key].name, "", found[key].graph)
 
 
 def catalog(found: dict[str, Builtin], modes: tuple[str, ...] = ()):
-    """What validation needs of the built-ins: each sub-workflow's Outputs and tabs."""
-    subs = {
-        key: validate.SubInfo(wf.name, tuple(engine.outputs_of(wf.tabs[""])), tuple(t for t in wf.tabs if t))
-        for key, wf in found.items()
-        if wf.start == "sub"
-    }
+    """What validation needs of the built-ins: each sub-workflow's Outputs."""
+    subs = {key: validate.SubInfo(wf.name, tuple(engine.outputs_of(wf.graph)), ()) for key, wf in found.items() if wf.start == "sub"}
     return validate.Catalog(subs, resolver(found), modes)
 
 
@@ -251,7 +228,7 @@ FALLBACK = "fallback_"  # kv: the workflow (by key) each start type uses when no
 
 
 def digest(b: Builtin) -> str:
-    return engine.digest({"name": b.name, "start": b.start, "ingest": b.ingest, "tabs": b.tabs})
+    return engine.digest({"name": b.name, "start": b.start, "ingest": b.ingest, "graph": b.graph})
 
 
 class Library:
@@ -319,10 +296,9 @@ class Library:
 
     def _write(self, wf: Workflow, b: Builtin) -> None:
         for mode in self.store.tabs(wf.id):
-            if mode and mode not in b.tabs:
+            if mode:
                 self.store.drop_tab(wf.id, mode)
-        for mode, graph in b.tabs.items():
-            self.store.put_tab(wf.id, mode, graph, graph, [], self.sign(graph))
+        self.store.put_tab(wf.id, "", b.graph, b.graph, [], self.sign(b.graph))
         self.store.update_workflow(wf.id, name=b.name, start=b.start, ingest=b.ingest, edited=False, seeded=digest(b), upstream="")
 
     # --- opening workflows -------------------------------------------------------

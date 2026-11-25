@@ -208,7 +208,7 @@ STAGED = [
     {"stage": "review", "does": "reports", "fail": "fix"},  # passes: on to the test
     {"do": "test", "fail": "fix"},
     {"stage": "docs", "message": "changed"},
-    {"use": "ship", "tab": "default"},
+    {"use": "ship"},
     "end",
     {"stage": "fix", "id": "fix"},
     {"stage": "review", "name": "recheck", "care": "thorough", "extra": "Check the leaderboard twice.", "done": "test"},
@@ -292,7 +292,7 @@ def test_a_job_of_stages_tells_each_step_its_stages_text_and_what_its_about(gole
 def test_a_test_block_without_bin_test_fails_with_what_to_add(golem):
     async def go():
         await idle_project(golem)
-        add_workflow(golem, "tested", ["setup", {"do": "test", "fail": "mend"}, {"use": "ship", "tab": "default"}, "end",
+        add_workflow(golem, "tested", ["setup", {"do": "test", "fail": "mend"}, {"use": "ship"}, "end",
                                        {"stage": "fix", "id": "mend", "done": "test"}])  # fmt: skip
         job = change_job(golem, "tested")
         golem.harness.script = by_label({"fix": [verdict("done", "Added bin/test.")]})

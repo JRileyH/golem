@@ -25,25 +25,23 @@ FOLDER = REPO / "golem" / "tests" / "golden" / "composed"
 
 
 def composed(folder: Path = REPO / "workflows") -> dict[str, str]:
-    """Every built-in workflow's tabs: `<key>.<tab>._intro.md` (what every block gets) and
-    `<key>.<tab>.<block>.md` for each of its own agent blocks (a container's are its workflow's)."""
+    """Every built-in workflow: `<key>._intro.md` (what every block gets) and `<key>.<block>.md`
+    for each of its own agent blocks (a container's are its workflow's)."""
     found = workflows.load_all(folder)
     stages.use(folder / "stages")
     out = {}
     for key, wf in sorted(found.items()):
-        for tab in sorted(wf.tabs):
-            sub = wf.start == "sub"
-            root = engine.Sub(key, wf.name, tab, wf.tabs[tab]) if sub else workflows.top(found, key, tab)
-            snap = engine.flatten(root, "change" if sub else wf.start, tab, workflows.resolver(found), outputs_ok=sub)
-            name = f"{key}.{tab or 'default'}"
-            out[f"{name}._intro.md"] = (snap["intros"].get("") or "").strip() + "\n"
-            path = engine.happy_path(snap)
-            order = path + [n for n in snap["nodes"] if n not in path]
-            for nid in order:
-                node = snap["nodes"][nid]
-                if node.get("type") != "agent" or node.get("path"):
-                    continue
-                out[f"{name}.{nid}.md"] = told(snap, path, nid).strip() + "\n"
+        sub = wf.start == "sub"
+        root = engine.Sub(key, wf.name, "", wf.graph) if sub else workflows.top(found, key, "")
+        snap = engine.flatten(root, "change" if sub else wf.start, "", workflows.resolver(found), outputs_ok=sub)
+        out[f"{key}._intro.md"] = (snap["intros"].get("") or "").strip() + "\n"
+        path = engine.happy_path(snap)
+        order = path + [n for n in snap["nodes"] if n not in path]
+        for nid in order:
+            node = snap["nodes"][nid]
+            if node.get("type") != "agent" or node.get("path"):
+                continue
+            out[f"{key}.{nid}.md"] = told(snap, path, nid).strip() + "\n"
     return out
 
 

@@ -1,11 +1,12 @@
-A change to an existing, live project that Riggy wants to choose before it's
-built: first a few options for him to pick from, then the one he picks, built
-properly. His words are the request. Read `AGENTS.md`, `README.md` and `docs/`
-before touching anything: they say how this project is built and tested.
+A new project: a spec, a skeleton deployed to prove hosting, an MVP
+that Riggy tries, a design pass he picks the look in, the rest of the spec, a
+review with fresh eyes, and docs.
 
-Decide anything the request leaves open, record it in `docs/decisions.md`, and
-carry on. Use `blocked` only if the request is ambiguous in a way that changes
-what gets built, or would destroy something irreversible (deleting data).
+Riggy is the product manager, not a reviewer of details. Decide names,
+libraries, layouts and similar yourself and record the choice in
+`docs/decisions.md` (one line each: decision, why). The look is his to pick: until
+the design pass after the MVP, keep it simple and tidy; from then on, anything
+visible follows `docs/design.md`.
 
 # Quality bar
 

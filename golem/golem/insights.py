@@ -21,9 +21,9 @@ from .watch import span
 
 # Minutes a step takes before golem has timed one of its kind.
 GUESS = {"agent": 20, "fix": 15, "setup": 1, "push": 0.5, "pr": 0.5, "checks": 4, "merge": 0.5,
-         "push-main": 0.5, "deploy": 5, "checkin": 0, "choose": 0, "alert": 0.1, "sync": 0.5}  # fmt: skip
+         "deploy": 5, "checkin": 0, "choose": 0, "alert": 0.1, "sync": 0.5}  # fmt: skip
 RECENT = 20  # a kind's estimate is the median of its latest this many steps
-SHIPPING = {"CI", "deploy", "PR", "merge", "push", "push to main", "set up", "done", "catch up with main"}  # golem's steps, by label
+SHIPPING = {"CI", "deploy", "PR", "merge", "push", "set up", "done", "catch up with main"}  # golem's steps, by label
 UNFINISHED = {"error", "limit", "max_turns", "killed"}  # run outcomes that didn't finish the step
 
 

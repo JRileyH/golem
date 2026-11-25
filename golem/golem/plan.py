@@ -20,7 +20,6 @@ LABELS = {
     "pr": "PR",
     "checks": "CI",
     "merge": "merge",
-    "push-main": "push to main",
     "deploy": "deploy",
     "checkin": "your check-in",
     "choose": "your pick",
@@ -45,7 +44,7 @@ CLASSES = {
     "guide": "build", "apply": "build",
     "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
     "checkin": "wait", "choose": "wait",
-    "push": "ship", "push-main": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
+    "push": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
     "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look", "triage": "look",
 }  # fmt: skip
 # Steps golem puts in where they're needed: each is part of the section it's in (the class of the
@@ -216,11 +215,9 @@ def _legacy(settings: Settings, store: Store, job: Job) -> list[Step]:
 # needs it (review); sonnet does the steps that follow a recipe or check a narrow diff.
 SUGGESTED = {
     "spec": ("opus", "xhigh"),
-    "spec-review": ("opus", "high"),
     "scaffold": ("sonnet", "medium"),
     "mvp": ("opus", "xhigh"),
     "buildout": ("opus", "high"),
-    "build": ("opus", "high"),
     "change": ("opus", "high"),
     "options": ("opus", "high"),
     "design": ("opus", "high"),  # a design round: taste, and a doc with real screens in it
@@ -229,7 +226,6 @@ SUGGESTED = {
     "fix": ("opus", "high"),
     "resolve": ("opus", "high"),  # merging main into a change: both intents have to survive
     "review": ("opus", "xhigh"),
-    "second-pass": ("sonnet", "high"),
     "docs": ("sonnet", "medium"),
     "examine": ("sonnet", "high"),  # a question: a quick look and an answer
     "propose": ("opus", "high"),  # finding what's worth doing, unprompted, takes judgment

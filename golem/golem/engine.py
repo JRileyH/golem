@@ -28,12 +28,12 @@ from .store import LOOKS, Step
 
 # Golem's own blocks, by type, and their outputs.
 CODE = {
-    "setup": ("next",), "vet": ("next",), "refresh": ("next",), "push": ("next",), "push-main": ("next",),
+    "setup": ("next",), "vet": ("next",), "refresh": ("next",), "push": ("next",),
     "pr": ("next",), "checks": ("pass", "fail"), "merge": ("next",), "deploy": ("pass", "fail"),
     "answer": ("next",), "proposals": ("next",), "test": ("pass", "fail"),
 }  # fmt: skip
 # Golem's own blocks that ship: one change at a time per project goes from push to deploy (turns.py).
-SHIPS = ("push", "push-main", "pr", "checks", "merge", "deploy")
+SHIPS = ("push", "pr", "checks", "merge", "deploy")
 # Blocks golem passes through on the way, leaving a row each, already done.
 CONTROL = ("counter", "condition")
 NEXT = "next"  # the one output of a block that doesn't choose

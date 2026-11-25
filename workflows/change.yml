@@ -8,31 +8,11 @@ ingest: >-
   ahead ("just build it", "you pick"). Golem makes it straight away and tells him
   when it's live. If he's both asking and requesting ("why is it slow? speed it
   up"), it's this.
-tabs:
-  default:
-    md: change.md
-    blocks:
-      - setup
-      - {stage: build, name: change, turns: 400}
-      - {stage: review, turns: 150, optional: true, turn: none}
-      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
-  rigorous:
-    md: change.md
-    blocks:
-      - setup
-      - {stage: build, name: change, care: thorough, turns: 400}
-      - {stage: review, care: thorough, turns: 150, optional: true, turn: none}
-      - {stage: review, name: second-pass, care: thorough, turns: 150, optional: true, turn: none}
-      - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
-  reckless:
-    md: change.md
-    blocks:
-      - setup
-      - {stage: build, name: change, care: quick, turns: 400}
-      - {stage: docs, message: changed, care: quick, turns: 60, optional: true, turn: none}
-      - {use: ship, tab: default}
-      - end
+md: change.md
+blocks:
+  - setup
+  - {stage: build, name: change, turns: 400}
+  - {stage: review, turns: 150, optional: true, turn: none}
+  - {stage: docs, message: changed, turns: 60, optional: true, turn: none}
+  - {use: ship}
+  - end

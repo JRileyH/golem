@@ -39,7 +39,6 @@ DOES = {
     "pr": "Opens a pull request for the work since the last merge.",
     "checks": "Waits for CI to pass on the pull request. If it fails, a fix step goes in and the shipping steps run again.",
     "merge": "Squash-merges the pull request into main.",
-    "push-main": "Pushes the work straight to main (reckless mode: no pull request).",
     "deploy": "Waits for CI on main, then deploys it. Done only once the site answers; if the deployer refuses it, a fix step goes in.",
     "checkin": "Shows you the live site and waits for your reply. Skipping it means “looks good, carry on”.",
     "choose": "Shows you the options the step before made, in its conversation, and waits for your pick. "
@@ -831,7 +830,7 @@ def _doing(lane: LaneData, s: Step, now: datetime) -> str:
         about = f" (usually {span(timedelta(seconds=usual))})" if plan.label(s) in lane.known else ""
         return f"{s.name}, {span(so_far)} in{about}"
     return {"checks": "waiting for CI", "deploy": "deploying", "merge": "merging", "pr": "opening a PR",
-            "push": "pushing", "push-main": "pushing to main", "setup": "setting up",
+            "push": "pushing", "setup": "setting up",
             "checkin": "waiting for you to try it", "choose": "waiting for your pick"}.get(s.kind, plan.label(s))  # fmt: skip
 
 

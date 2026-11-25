@@ -1046,7 +1046,8 @@ def test_git_steps_branch_commit_push_and_land(checkout):
         assert sha == git(ws, "rev-parse", "origin/golem/job-1")
         await ws.start_branch("trees", "golem/job-1")  # already on it: stays
 
-        assert await ws.push_main("trees", "golem/job-1") == sha  # reckless: straight to main
+        git(ws, "push", "--quiet", "origin", "HEAD:main")  # as merging its PR would
+        await ws.back_to_main("trees", "golem/job-1")
         assert git(ws, "branch", "--show-current") == "main" and await ws.main_sha("trees") == sha
         assert "golem/job-1" not in git(ws, "branch")  # gone locally, ready for the next work
 
@@ -1086,7 +1087,8 @@ def test_each_job_works_in_a_tree_of_its_own(checkout):
 
         sha = await ws.push_branch("trees", "golem/job-1", job=1)
         assert sha == git(ws, "rev-parse", "origin/golem/job-1")
-        assert await ws.push_main("trees", "golem/job-1", job=1) == sha
+        in_tree(one, "push", "--quiet", "origin", "HEAD:main")  # as merging its PR would
+        await ws.back_to_main("trees", "golem/job-1", job=1)
         assert in_tree(one, "branch", "--show-current") == "" and in_tree(one, "rev-parse", "HEAD") == sha  # landed on main, detached
         assert await ws.current_branch("trees", job=1) == "main"
         assert "golem/job-1" not in git(ws, "branch") and git(ws, "branch", "--show-current") == "main"

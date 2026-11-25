@@ -97,8 +97,8 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
-USES_TREE = ("agent", "script", "push", "push-main", "merge", "deploy", "alert", "sync")
-TREE_STEPS = ("setup", "vet", "agent", "script", "sync", "push", "push-main", "merge")  # steps after which the branch's commit is kept
+USES_TREE = ("agent", "script", "push", "merge", "deploy", "alert", "sync")
+TREE_STEPS = ("setup", "vet", "agent", "script", "sync", "push", "merge")  # steps after which the branch's commit is kept
 
 
 @dataclass
@@ -1139,13 +1139,6 @@ class Scheduler:
             return Outcome("skipped", "Nothing new to push.")
         return Outcome("done", f"Pushed {sha[:7]} to {branch}.", {"branch": f"{self.settings.repo_url(project.slug)}/tree/{branch}"})
 
-    async def do_push_main(self, job: Job, project: Project, step: Step) -> Outcome:
-        await self.workspace.commit_all(project.slug, "Work left uncommitted", job=self.tree(job))
-        sha = await self.workspace.push_main(project.slug, self.branch(job), job=self.tree(job))
-        if sha is None:
-            return Outcome("skipped", "Nothing new to push.")
-        return Outcome("done", f"Pushed {sha[:7]} to main.", {"commit": self.commit_url(project, sha)})
-
     async def do_pr(self, job: Job, project: Project, step: Step) -> Outcome:
         """The job's PR, opened if need be. Shipping others' changes with its own (shipments.py),
         it's all of theirs: each one's issue closed by it, and what each did."""
@@ -1375,7 +1368,7 @@ class Scheduler:
         live = any(s.kind == "deploy" and s.state == "done" for s in steps) or self.store.card(project.slug) is not None
         message = plan.last_said(steps) or (f"{project.name} is live." if live else f"{plan.title(job)} is done.")
         link = url if live else (f"{self.settings.repo_url(project.slug)}/issues/{job.issue}" if job.issue else "")
-        if job.issue and not any(s.kind == "pr" and s.state == "done" and s.links.get("pr") for s in steps):  # no PR closed it (reckless, nothing to merge)
+        if job.issue and not any(s.kind == "pr" and s.state == "done" and s.links.get("pr") for s in steps):  # no PR closed it
             await self.workspace.close_issue(project.slug, job.issue, _join(f"Done: {message}", f"\n{url}" if live else ""))
         await self.say(project, _join(f"Done: {message}", link))
         await self.status(f"Finished job {job.id} on {project.name}" + (f": {url}" if live else "."), notice=True)
@@ -1418,7 +1411,7 @@ class Scheduler:
         for x in shipments.run_from(self.store.steps(s.carrier), s.jobs[s.carrier]):
             if x.state == "done":
                 theirs[x.kind] = x
-        links = {k: v for kind in ("pr", "merge", "push-main", "deploy") if kind in theirs for k, v in theirs[kind].links.items()}
+        links = {k: v for kind in ("pr", "merge", "deploy") if kind in theirs for k, v in theirs[kind].links.items()}
         for rid in s.riders:
             rider = self.store.job(rid)
             if rider is None or rider.state not in ACTIVE:

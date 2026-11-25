@@ -1,4 +1,4 @@
-Standard mode, new project: a spec, a skeleton deployed to prove hosting, an MVP
+A new project: a spec, a skeleton deployed to prove hosting, an MVP
 that Riggy tries, a design pass he picks the look in, the rest of the spec, a
 review with fresh eyes, and docs.
 

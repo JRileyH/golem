@@ -106,7 +106,6 @@ class Workspace(Protocol):
     async def discard(self, slug: str, *, job: int | None = None) -> None: ...
     async def commit_all(self, slug: str, message: str, *, job: int | None = None) -> bool: ...
     async def push_branch(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
-    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None: ...
     async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]: ...
     async def merge_branch(self, slug: str, branch: str, *, job: int | None = None) -> tuple[int, list[str]]: ...
     async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
@@ -410,15 +409,6 @@ class GitHubWorkspace:
         await self.git(slug, "push", "--quiet", "--force", "origin", f"HEAD:refs/heads/{branch}", job=job)
         return await self.git(slug, "rev-parse", "HEAD", job=job)
 
-    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
-        """Put the work straight on main (reckless mode). None if there's nothing new."""
-        if not await self.ahead(slug, job=job):
-            return None
-        await self.git(slug, "push", "--quiet", "origin", "HEAD:main", job=job)
-        sha = await self.git(slug, "rev-parse", "HEAD", job=job)
-        await self.back_to_main(slug, branch, job=job)
-        return sha
-
     async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None:
         """After a merge: the checkout on the latest main, the job's branch gone, ready for the next.
         A job's tree lands detached there: main itself stays the project's checkout's."""
@@ -706,13 +696,6 @@ class LocalWorkspace:
         self.pushed[(slug, branch)] = self._sha()
         return self.pushed[(slug, branch)]
 
-    async def push_main(self, slug: str, branch: str, *, job: int | None = None) -> str | None:
-        if not self.has_work:
-            return None
-        self.actions.append("push main")
-        self.main[slug] = self._sha()
-        self.branches.pop(job, None)
-        return self.main[slug]
 
     async def sync_branch(self, slug: str, *, job: int | None = None) -> tuple[int, list[str]]:
         found = self.syncs.pop(0) if self.syncs else (0, [])

@@ -1,11 +1,9 @@
 key: design_round
 name: Design round
 start: sub
-tabs:
-  default:
-    md: design_round.md
-    blocks:
-      - {stage: design, makes: directions, turns: 400, turn: none, skip_to: nothing, nothing: out-nothing}
-      - {choose: choose, optional: true, more: design}
-      - {output: picked}
-      - {output: nothing}
+md: design_round.md
+blocks:
+  - {stage: design, makes: directions, turns: 400, turn: none, skip_to: nothing, nothing: out-nothing}
+  - {choose: choose, optional: true, more: design}
+  - {output: picked}
+  - {output: nothing}

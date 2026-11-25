@@ -9,11 +9,9 @@ ingest: >-
   into it (the code, the site, its logs) and answers in a few minutes. Requests
   phrased as questions are not questions: "can you add a quiz mode?", "could you
   make it bigger?" are changes.
-tabs:
-  default:
-    md: question.md
-    blocks:
-      - refresh
-      - {stage: look, name: examine, does: answer, turns: 60, turn: none}
-      - answer
-      - end
+md: question.md
+blocks:
+  - refresh
+  - {stage: look, name: examine, does: answer, turns: 60, turn: none}
+  - answer
+  - end

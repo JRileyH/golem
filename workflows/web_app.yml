@@ -5,90 +5,33 @@ fallback: true
 ingest: >-
   Something to build and host as a web project: an app, a game, a tool or a site
   with pages people open in a browser.
-tabs:
-  default:
-    md: web_app.md
-    blocks:
-      - setup
-      - {stage: plan, name: spec, writes: spec, turns: 80, turn: none}
-      - {stage: build, name: scaffold, builds: skeleton, turns: 200}
-      - {use: ship}
-      - {stage: build, name: mvp, builds: first-version, turns: 400}
-      - {use: ship}
-      - {checkin: checkin, optional: true, reply_to: buildout}
-      - stage: design
-        name: design
-        makes: directions
-        turns: 400
-        optional: true
-        turn: none
-        skip_to: nothing
-        nothing: ship-3
-        extra: |-
-          Riggy has tried the MVP; next, the project gets a look of its own. His reply
-          to the check-in is for the buildout step, not this one: don't act on it here,
-          but design for the project it describes.
-      - {choose: choose, optional: true, more: design}
-      - {stage: design, name: guide, makes: guide, turns: 200}
-      - {stage: design, name: apply, makes: restyle, turns: 400}
-      - {use: ship}
-      - {stage: build, name: buildout, builds: rest, turns: 400}
-      - {stage: review, turns: 150, optional: true, turn: none}
-      - {stage: docs, message: now, turns: 80, optional: true, turn: none}
-      - {use: ship}
-      - end
-  rigorous:
-    md: web_app.rigorous.md
-    blocks:
-      - setup
-      - {stage: plan, name: spec, writes: spec, care: thorough, turns: 120, turn: none}
-      - {stage: review, name: spec-review, turns: 80, optional: true, turn: none}
-      - {stage: build, name: scaffold, builds: skeleton, care: thorough, turns: 200}
-      - {use: ship}
-      - {stage: build, name: mvp, builds: first-version, care: thorough, turns: 500}
-      - {use: ship}
-      - {checkin: checkin, optional: true, reply_to: buildout}
-      - stage: design
-        name: design
-        makes: directions
-        turns: 400
-        optional: true
-        turn: none
-        skip_to: nothing
-        nothing: ship-3
-        extra: |-
-          Riggy has tried the MVP; next, the project gets a look of its own. His reply
-          to the check-in is for the buildout step, not this one: don't act on it here,
-          but design for the project it describes.
-      - {choose: choose, optional: true, more: design}
-      - {stage: design, name: guide, makes: guide, turns: 200}
-      - {stage: design, name: apply, makes: restyle, turns: 400}
-      - {use: ship}
-      - stage: build
-        name: buildout
-        builds: rest
-        care: thorough
-        turns: 500
-        extra: |-
-          Build out the whole "after the MVP" list. In the polish, check keyboard and
-          touch use and accessibility basics too.
-      - {stage: review, care: thorough, turns: 200, optional: true, turn: none}
-      - stage: review
-        name: second-pass
-        care: thorough
-        turns: 150
-        optional: true
-        turn: none
-        extra: |-
-          This is a new project, so use the whole app once more, as a first-time
-          visitor would.
-      - {stage: docs, message: now, care: thorough, turns: 100, optional: true, turn: none}
-      - {use: ship}
-      - end
-  reckless:
-    md: web_app.reckless.md
-    blocks:
-      - setup
-      - {stage: build, name: build, builds: everything, care: quick, turns: 400}
-      - {use: ship}
-      - end
+md: web_app.md
+blocks:
+  - setup
+  - {stage: plan, name: spec, writes: spec, turns: 80, turn: none}
+  - {stage: build, name: scaffold, builds: skeleton, turns: 200}
+  - {use: ship}
+  - {stage: build, name: mvp, builds: first-version, turns: 400}
+  - {use: ship}
+  - {checkin: checkin, optional: true, reply_to: buildout}
+  - stage: design
+    name: design
+    makes: directions
+    turns: 400
+    optional: true
+    turn: none
+    skip_to: nothing
+    nothing: ship-3
+    extra: |-
+      Riggy has tried the MVP; next, the project gets a look of its own. His reply
+      to the check-in is for the buildout step, not this one: don't act on it here,
+      but design for the project it describes.
+  - {choose: choose, optional: true, more: design}
+  - {stage: design, name: guide, makes: guide, turns: 200}
+  - {stage: design, name: apply, makes: restyle, turns: 400}
+  - {use: ship}
+  - {stage: build, name: buildout, builds: rest, turns: 400}
+  - {stage: review, turns: 150, optional: true, turn: none}
+  - {stage: docs, message: now, turns: 80, optional: true, turn: none}
+  - {use: ship}
+  - end

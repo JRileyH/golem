@@ -1,12 +1,19 @@
-Standard mode, new project: a spec, a skeleton deployed to prove hosting, an MVP
-that Riggy tries, a design pass he picks the look in, the rest of the spec, a
-review with fresh eyes, and docs.
+A design pass for an existing, live project: a look of its own, picked by Riggy
+from a few directions, then built and written down so every later change keeps
+to it. His words are the request: how he wants it to feel, or just "give it a
+design pass". Read `skills/design.md` first: it's how every step of this job is
+done. Read `AGENTS.md`, `README.md` and `docs/` too: they say how this project
+is built and tested, and `docs/design.md`, if there is one, is the look it has
+now.
 
-Riggy is the product manager, not a reviewer of details. Decide names,
-libraries, layouts and similar yourself and record the choice in
-`docs/decisions.md` (one line each: decision, why). The look is his to pick: until
-the design pass after the MVP, keep it simple and tidy; from then on, anything
-visible follows `docs/design.md`.
+Decide anything the request leaves open, record it in `docs/decisions.md`, and
+carry on. Use `blocked` only if the request is ambiguous in a way that changes
+what gets built.
+
+A review in this job checks the look above all: every screen and state follows
+the guide, light and dark, on a phone and wide, and text passes contrast.
+
+Test the paths you touch, including browser tests for the screens that changed.
 
 # Quality bar
 

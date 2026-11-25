@@ -40,18 +40,18 @@ def main() -> None:
                    "Try it and reply here: say it looks good, or what to change.")  # fmt: skip
 
     leaf = walk.project("leaf-peeper", "Leaf Peeper", "Guess the tree from one leaf, against the clock.", tag="Game")
-    job = walk.job(leaf, "new", "web_app", "rigorous", "make a game called Leaf Peeper, be thorough", "Leaf Guessing Game")
+    job = walk.job(leaf, "new", "web_app", "", "make a game called Leaf Peeper", "Leaf Guessing Game")
     walk.to(job, "mvp")
     walk.run(job, "The board and pieces render on a phone; starting on scoring.")
 
     birds = walk.project("birds", "Birdsong", "Learn birds by their songs.")
-    old = walk.job(birds, "new", "web_app", "reckless", "learn birds by their songs", "Bird Song Trainer")
+    old = walk.job(birds, "new", "web_app", "", "learn birds by their songs", "Bird Song Trainer")
     walk.finish(old)
     walk.job(birds, "change", "change", "", "add a streak counter", "Streak Counter")
     walk.job(birds, "look", "question", "", "why is the first song so quiet?", "Why the First Song Is Quiet")
 
     tips = walk.project("tip-calc", "Tip Calc", "Split a bill and the tip, fast.")
-    old = walk.job(tips, "new", "web_app", "reckless", "a tiny tip calculator", "Tip Calculator")
+    old = walk.job(tips, "new", "web_app", "", "a tiny tip calculator", "Tip Calculator")
     walk.finish(old)
     job = walk.job(tips, "change", "change", "", "round the tip to the nearest dollar", "Round the Tip")
     walk.to(job, "CI")
@@ -70,7 +70,7 @@ def main() -> None:
     store.add_proposals("recipes", looked.id, "features",
                         [("Unit memory", "Remember grams or cups per recipe."), ("Share links", "A link that opens the scaled recipe.")])  # fmt: skip
     moss = walk.project("moss-map", "Moss Map", "Log the mosses on your walks, on a map.")
-    old = walk.job(moss, "new", "web_app", "reckless", "a map of mosses I find on walks", "Moss Map")
+    old = walk.job(moss, "new", "web_app", "", "a map of mosses I find on walks", "Moss Map")
     walk.finish(old)
     job = walk.job(moss, "change", "options", "", "a new look for the map pins", "Map Pin Styles")
     walk.to(job, "options")

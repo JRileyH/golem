@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from . import plan
 from .store import OPEN, Step
 
-SHIP = {"push", "pr", "checks", "merge", "push-main", "deploy"}
+SHIP = {"push", "pr", "checks", "merge", "deploy"}
 NAMES = {
     "spec": "Plan it",
     "spec-review": "Check the plan",
@@ -43,7 +43,7 @@ NAMES = {
     "examine": "Look into it",
     "answer": "Answer you",
 }
-SHIPPING = {"push": "pushing", "push-main": "pushing", "pr": "opening a PR", "checks": "waiting for CI",
+SHIPPING = {"push": "pushing", "pr": "opening a PR", "checks": "waiting for CI",
             "merge": "merging", "deploy": "deploying"}  # fmt: skip
 
 

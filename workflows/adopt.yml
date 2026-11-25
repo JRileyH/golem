@@ -3,13 +3,11 @@ name: Adopt
 start: adopt
 fallback: true
 ingest: Taking on a repo golem didn't make, from the New project page.
-tabs:
-  default:
-    md: adopt.md
-    blocks:
-      - vet
-      - setup
-      - {condition: gaps, all: [[counter, gaps, ">", 0]], "true": adopt, "false": ship}
-      - {stage: fix, name: adopt, fixes: gaps, turns: 300}
-      - {use: ship, tab: default}
-      - end
+md: adopt.md
+blocks:
+  - vet
+  - setup
+  - {condition: gaps, all: [[counter, gaps, ">", 0]], "true": adopt, "false": ship}
+  - {stage: fix, name: adopt, fixes: gaps, turns: 300}
+  - {use: ship}
+  - end

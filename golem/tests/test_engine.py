@@ -63,7 +63,6 @@ def _said(trace: list[Step]) -> list[str]:
 
 
 SHIP = graph(["push", {"do": "deploy", "fail": "fix"}, {"output": "shipped"}, {"agent": "fix", "turns": 9, "done": "push"}], agents("fix"), sub=True)
-SHIP_FAST = graph(["push-main", {"do": "deploy", "fail": "out-shipped"}, {"output": "shipped"}], sub=True)
 
 
 def test_containers_open_in_place_with_their_ids_under_the_container():
@@ -74,15 +73,6 @@ def test_containers_open_in_place_with_their_ids_under_the_container():
     assert snap["edges"]["ship/fix"] == {"done": "ship/push"}
     assert {k: v for k, v in snap["levels"]["ship-2"].items() if k != "graph"} == {"key": "ship", "name": "Ship", "tab": ""}
     assert snap["nodes"]["ship/fix"]["path"] == "ship" and snap["nodes"]["ship/fix"]["ref"] == "fix"
-
-
-def test_a_container_opens_the_tab_for_the_jobs_mode_unless_it_says_which():
-    subs = {"ship": {"": SHIP, "reckless": SHIP_FAST}}
-    auto = graph(["setup", {"use": "ship"}, "end"], outputs={"ship": ["shipped"]})
-    pinned = graph(["setup", {"use": "ship", "tab": "default"}, "end"], outputs={"ship": ["shipped"]})
-    assert "ship/push-main" in flat(auto, mode="reckless", subs=subs)["nodes"]
-    assert "ship/push" in flat(auto, mode="rigorous", subs=subs)["nodes"]  # no rigorous tab: the default
-    assert "ship/push" in flat(pinned, mode="reckless", subs=subs)["nodes"]
 
 
 def test_containers_nest_and_their_outputs_lead_out_through_every_level():
@@ -250,17 +240,9 @@ def test_a_choose_needs_options_before_it_and_a_reply_an_agent_after():
     assert "The reply goes to an agent block after this one, and build doesn't come after it" in problems(g)
 
 
-def test_containers_must_open_a_sub_workflow_tab_that_exists():
-    g = graph(["setup", {"use": "ship", "tab": "fancy"}, "end"], outputs={"ship": ["shipped"]})
-    assert "Ship has no fancy tab" in problems(g, subs={"ship": {"": SHIP}})
+def test_containers_must_open_a_sub_workflow_that_exists():
     gone = graph(["setup", {"use": "gone"}, "end"], outputs={"gone": ["x"]})
     assert "This container's sub-workflow isn't there any more" in problems(gone)
-
-
-def test_every_tab_of_a_sub_workflow_has_the_same_outputs():
-    other = graph(["push", {"output": "elsewhere"}], sub=True)
-    assert validate.check_tabs({"": SHIP, "reckless": SHIP_FAST}, "sub").ok
-    assert not validate.check_tabs({"": SHIP, "reckless": other}, "sub").ok
 
 
 def test_sub_workflows_use_input_and_output():
