@@ -33,7 +33,7 @@ ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "fai
 TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("workflows", "/workflows", "Workflows"), ("settings", "/settings", "Settings"))
 SIGNED_IN_TABS = ("workflows",)  # what's what agents are told: Riggy's alone
 # Which tab a page is under: any other (a project's, a job's, a new project) is under Projects.
-TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "workflows": "workflows"}
+TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "reports": "settings", "workflows": "workflows"}
 # What golem's own steps do, for their sheets.
 DOES = {
     "setup": "Makes sure the repo, the checkout and the job's issue exist.",
@@ -1437,6 +1437,12 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .tile span { display:block; color:var(--muted); font-size:.8rem; } .tile b { font:700 1.5rem/1.2 var(--display); }
 .findings { background:var(--card); border-radius:var(--radius); padding:.75rem 1rem .75rem 2rem; margin:0 0 1rem; box-shadow:0 2px 0 var(--edge); }
 .findings li { margin:.2rem 0; }
+.reports-page .windows { flex-wrap:wrap; }
+.reports { list-style:none; padding:0; margin:0; }
+.report-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .5rem; }
+.report-summary { margin:.35rem 0 0; font-weight:600; }
+.report details { margin-top:.35rem; } .report summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
+.report pre.log { white-space:pre-wrap; overflow-wrap:anywhere; }
 .bars { background:var(--card); border-radius:var(--radius); padding:.8rem 1rem; margin-bottom:1rem; box-shadow:0 2px 0 var(--edge); }
 .bars h2, .defaults h2 { font-size:.75rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin-bottom:.4rem; }
 .bars h3 { font:700 1rem/1.3 var(--display); margin-bottom:.3rem; }

@@ -45,6 +45,7 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
     more = (
         "<section class=card><ul class=links-list>"
         + "<li><a href=/insights>Insights</a><span class=sub>Where the time and Claude usage go, by kind of step, project and model.</span></li>"
+        "<li><a href=/reports>Reports</a><span class=sub>What got in the way of golem's workers, about golem itself.</span></li>"
         "<li><a href=/projects>Public projects page ↗</a><span class=sub>A card for each live project, for anyone.</span></li>"
         "</ul></section>"
     )

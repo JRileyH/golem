@@ -875,11 +875,35 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert golem.store.project("leaf-cards") is None and app.get("/p/leaf-cards").status_code == 404
 
 
+def test_reports_about_golem_are_for_riggy_alone(golem, page):
+    job = page.job
+    golem.store.add_report("instructions", "costly", "skills/deploy.md says port 80; <compose> says 8080",
+                           f"lost 20 turns ({SECRET[:4]}...)", job_id=job.id, slug="trees", label="scaffold", model="opus/high")  # fmt: skip
+    for n in range(3):
+        golem.store.file_incident("f1", "environment", "blocked" if n == 2 else "minor", "merge failed: GraphQL: Something went wrong",
+                                  "the whole output", job_id=job.id, slug="trees", label="merge", version="abc1234def")  # fmt: skip
+    html = page.get("/reports").text
+    assert "Sign in" in html and "skills/deploy.md" not in html  # they quote runs and errors
+
+    sign_in(page)
+    html = page.get("/reports").text  # the new ones, both sources
+    assert "skills/deploy.md says port 80; &lt;compose&gt; says 8080" in html and "merge failed: GraphQL" in html
+    assert "<span class='badge trouble'>blocked</span><b>environment</b>" in html and "3 times since" in html
+    assert f"<a href='/p/trees/jobs/{job.id}'>job #{job.id}</a>" in html and "golem abc1234" in html and "opus/high" in html
+    assert "<pre class=log>the whole output</pre>" in html
+    html = page.get("/reports?source=agent").text
+    assert "skills/deploy.md" in html and "merge failed" not in html
+    golem.store.db.execute("UPDATE reports SET state = 'dismissed' WHERE fingerprint = 'f1'")
+    assert "merge failed" not in page.get("/reports").text and "merge failed" in page.get("/reports?state=dismissed").text
+    assert "No reports here." in page.get("/reports?state=accepted").text
+    assert "href=/reports>Reports</a>" in page.get("/settings").text
+
+
 def test_every_page_is_a_click_from_anywhere(golem, page):
     golem.store.add_project("birds", "Birds", "")
     golem.store.update_job(page.job.id, state="waiting")
     sign_in(page)
-    for path in ("/", "/p", "/settings", "/insights", "/new", "/p/trees", "/p/trees/jobs", "/p/trees/settings", f"/jobs/{page.job.id}"):
+    for path in ("/", "/p", "/settings", "/insights", "/reports", "/new", "/p/trees", "/p/trees/jobs", "/p/trees/settings", f"/jobs/{page.job.id}"):
         html = page.get(path).text
         assert "<nav class=tabs" in html and "<nav class=side" in html, path  # the tab bar, and the sidebar on a wide screen
         assert "href='/p/birds/settings'" in html and "href='/settings'" in html, path  # another project's settings, golem's

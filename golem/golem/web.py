@@ -39,7 +39,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
-from . import about, jobhistory, newproject, projectpage, stages
+from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -359,6 +359,20 @@ def create_app(
         report = insights.report(store, since)
         body = pages.insights(report, insights.findings(report), days)
         return respond(request, "Insights", body, signed, here="insights", up=("/settings", "Settings"))
+
+    async def reports_page(request: Request) -> Response:
+        """Reports about golem itself, from its workers and its own incidents (reportspage.py)."""
+        signed = signed_in(request)
+        if not signed:
+            body = pages.signin_card("/reports")
+        else:
+            state = request.query_params.get("state", "new")
+            state = state if state in reports.STATES else ""
+            source = request.query_params.get("source", "")
+            source = source if source in reports.SOURCES else ""
+            rows = store.reports((state,) if state else None, source, limit=reportspage.SHOWN)
+            body = reportspage.page(rows, state, source, datetime.now(UTC))
+        return respond(request, "Reports", body, signed, here="reports", up=("/settings", "Settings"))
 
     async def projects_page(request: Request) -> Response:
         """Every live project as a card, for anyone (gallery.py)."""
@@ -950,6 +964,7 @@ def create_app(
             Route("/jobs/{job_id:int}/options/{name}", option_image),
             Route("/steps/{step_id:int}", step_page),
             Route("/insights", insights_page),
+            Route("/reports", reports_page),
             Route("/static/{name}", static),
             Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
             Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),
