@@ -229,7 +229,7 @@ Stop job, on the job's pane (or on its project's Settings tab), stops the job.
 ## Adopting a repo golem didn't make
 
 Golem can take on a repo you made yourself: "Adopt a repo golem didn't make" on
-the New project page (the repo, what it is, and its name, mode and tag). From
+the New project page (the repo, what it is, and its name and tag). From
 then on it's a project like any other, and workers own its code.
 
 - **Where it lives:** in `GITHUB_ORG`, named as its slug (lowercase letters,
@@ -277,7 +277,7 @@ The rest stay in the org as they are until you do.
 
 What comes back with an adopted project: its code, and its past jobs from its
 issues and PRs. What doesn't: activity, notes, run history and cost, proposals,
-its settings (a new project's: you pick its mode and tag when you adopt it),
+its settings (a new project's: you pick its tag when you adopt it),
 lessons, and any data it kept in its volumes.
 
 ## Starting over
