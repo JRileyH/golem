@@ -1,9 +1,9 @@
 """The web app at golem.<base domain>, and the health check.
 
-Four tabs: Now, every job and what needs Riggy (now.py); Projects, a card each, each opening
-its page of jobs beside the one being looked at (projectpage.py); Workflows (flows.py); and
-Settings (home.py). Anyone can look at what's under way: each project's jobs, each job's
-route, graph and steps, each step's details (with the pictures of any options Riggy is
+Three tabs: Now, every job and what needs Riggy (now.py); Projects, a card each, each opening
+its page of jobs beside the one being looked at (projectpage.py); and Settings (home.py), with
+the stage blocks' text (blockspage.py). Anyone can look at what's under way: each project's
+jobs, each job's route and steps, each step's details (with the pictures of any options Riggy is
 picking from), and where the time and usage go (insights.py).
 
 Signed in with GOLEM_WEB_PASSWORD, it's how Riggy works with golem: asking for something on a
@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
+from . import blockspage, brand, config, conversation, gallery, home, insights, intake, options, pages, plan, pwa, turns
 from . import now as now_page
 from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
 from .cards import fallback
@@ -47,7 +47,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, TRIAGE, Job, Project, Said, Step, Store, Workflow
+from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, TRIAGE, Job, Project, Said, Step, Store
 from .talk import STATUS
 
 if TYPE_CHECKING:
@@ -244,7 +244,7 @@ def create_app(
         return out
 
     def respond(request: Request, title: str, body: str, signed: bool, bottom: str = "", here: str = "",
-                up: tuple[str, str] | None = None, subnav: str = "", stage: str = "", parts: dict[str, str] | None = None) -> Response:  # fmt: skip
+                up: tuple[str, str] | None = None, subnav: str = "", parts: dict[str, str] | None = None) -> Response:  # fmt: skip
         """A page; or, for its script's refresh, the parts it asks for (a page in regions: pages.region)
         or the whole of its main part."""
         if parts is not None and "parts" in request.query_params:
@@ -255,7 +255,7 @@ def create_app(
         flash = request.query_params.get("msg", "")[:300]
         behind = signed and scheduler.upgrades.behind() > 0
         html = pages.page(title, body, signed, scheduler.paused, flash, bottom=bottom, here=here, up=up, subnav=subnav,
-                          nav=nav(), behind=behind, stage=stage)  # fmt: skip
+                          nav=nav(), behind=behind)  # fmt: skip
         return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
     def tabs(project: Project, here: str, signed: bool) -> str:
@@ -661,109 +661,30 @@ def create_app(
             return Response("No such font.", 404)
         return FileResponse(pages.FONTS / name, media_type="font/woff2", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
-    async def static(request: Request) -> Response:
-        """The graph's scripts (flows.py): by name only, cached for a year (their URLs carry a hash)."""
-        name = request.path_params["name"]
-        if name not in pages.STATIC or not (pages.STATIC_DIR / name).is_file():
-            return Response("No such file.", 404)
-        return FileResponse(pages.STATIC_DIR / name, media_type="text/javascript",
-                            headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})  # fmt: skip
-
-    async def workflows_list(request: Request) -> Response:
-        signed = signed_in(request)
-        if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
-        return respond(request, "Workflows", flows.workflows_page(store, signed), signed, here="workflows", subnav=flows.tabs("workflows"))
-
     async def blocks_page(request: Request) -> Response:
-        """Workflows → Blocks: golem's stage blocks and the text of each of their parts."""
+        """Settings → Blocks: golem's stage blocks and the text of each of their parts."""
         signed = signed_in(request)
         if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
-        return respond(request, "Blocks", flows.blocks_page(scheduler.library.blocks), signed, here="workflows", subnav=flows.tabs("blocks"))
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20blocks.", 303)
+        return respond(request, "Blocks", blockspage.blocks_page(scheduler.library.blocks), signed, here="settings", up=("/settings", "Settings"))
 
     async def stage_page(request: Request) -> Response:
         signed = signed_in(request)
         if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20blocks.", 303)
         key = request.path_params["stage"]
         if key not in stages.catalog():
             return HTMLResponse("No such stage.", 404)
         title = f"{stages.catalog()[key].label} blocks"
-        return respond(request, title, flows.stage_page(scheduler.library.blocks, key), signed, here="workflows",
-                       up=("/workflows/blocks", "Blocks"), subnav=flows.tabs("blocks"))  # fmt: skip
-
-    async def workflow_told(request: Request) -> Response:
-        """What a block of a workflow tells its agent, as saved: the editor's "What it's told"."""
-        signed = signed_in(request)
-        if not signed:
-            return HTMLResponse("Sign in first.", 403)
-        wf, mode = one_workflow(request)
-        if wf is None:
-            return HTMLResponse("No such workflow.", 404)
-        body = flows.told(store, scheduler.library.blocks, wf, mode, request.query_params.get("node", ""))
-        if request.query_params.get("part") == "sheet":
-            return HTMLResponse(body, headers={"Cache-Control": "no-store"})
-        return respond(request, wf.name, f"<article class=card>{body}</article>", signed, here="workflows", up=(f"/workflows/{wf.id}", wf.name))
+        return respond(request, title, blockspage.stage_page(scheduler.library.blocks, key), signed, here="settings",
+                       up=("/settings/blocks", "Blocks"))  # fmt: skip
 
     async def modes_page(request: Request) -> Response:
         """The modes requests can ask for, what each is for, and golem's default."""
         signed = signed_in(request)
         if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
-        return respond(request, "Modes", flows.modes_card(store), signed, here="workflows", subnav=flows.tabs("modes"))
-
-    def one_workflow(request: Request) -> tuple[Workflow | None, str]:
-        wf = store.workflow(request.path_params["workflow_id"])
-        mode = request.query_params.get("mode", "")
-        return wf, mode if wf and store.tab(wf.id, mode) else ""
-
-    async def workflow_page(request: Request) -> Response:
-        signed = signed_in(request)
-        if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20workflows.", 303)
-        wf, mode = one_workflow(request)
-        if wf is None:
-            return HTMLResponse("No such workflow.", 404)
-        src = f"/workflows/{wf.id}.json?edit=1" + (f"&mode={quote(mode)}" if mode else "")
-        return respond(request, wf.name, flows.workflow_page(store, wf, mode), signed, here="workflows", up=("/workflows", "Workflows"),
-                       stage=flows.stage(src, "edit"))  # fmt: skip
-
-    async def workflow_json(request: Request) -> Response:
-        if not signed_in(request):
-            return JSONResponse({"error": "Sign in first."}, 403)
-        wf, mode = one_workflow(request)
-        if wf is None:
-            return JSONResponse({"error": "No such workflow."}, 404)
-        found = flows.editor_data(store, wf, mode) if request.query_params.get("edit") else flows.workflow_view(store, wf, mode)
-        return JSONResponse(found, headers={"Cache-Control": "no-store"})
-
-    async def workflow_save(request: Request) -> Response:
-        """The editor's Save: the tab as Riggy left it, with what's wrong with it (it saves anyway;
-        new jobs keep its last working state until it's fixed)."""
-        if not signed_in(request) or not _same_site(request):
-            return JSONResponse({"error": "Sign in first."}, 403)
-        wf = store.workflow(request.path_params["workflow_id"])
-        if wf is None:
-            return JSONResponse({"error": "No such workflow."}, 404)
-        body = await _json(request)
-        if body is None:
-            return JSONResponse({"error": "That's too big, or not JSON."}, 400)
-        mode = str(body.get("mode") or "")
-        tab = store.tab(wf.id, mode)
-        if tab is None:
-            return JSONResponse({"error": f"{wf.name} has no {mode or 'default'} tab."}, 404)
-        if body.get("base") and body["base"] != engine.digest(tab.graph):
-            return JSONResponse({"error": "It was saved somewhere else since you opened it: reload to see that, then make your change again.", "stale": True}, 409)
-        try:
-            graph = workflows.clean(body.get("graph"))
-        except ValueError as e:
-            return JSONResponse({"error": str(e)}, 400)
-        report = scheduler.library.save(wf, mode, graph)
-        saved = store.tab(wf.id, mode)
-        return JSONResponse({"ok": report.ok, "problems": [p.as_dict() for p in report.errors],
-                             "warnings": [p.as_dict() for p in report.warnings], "base": engine.digest(saved.graph),
-                             "graph": saved.graph, "hints": about.hints(plan.blocks_in_order(saved.graph))})  # fmt: skip
+            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20modes.", 303)
+        return respond(request, "Modes", home.modes_card(store), signed, here="settings", up=("/settings", "Settings"))
 
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
@@ -873,24 +794,6 @@ def create_app(
                     message = control.delete_mode(form.get("name", ""))
                 case "fallback-mode":
                     message = control.fallback_mode(value)
-                case "fallback-workflow":
-                    message = control.fallback_workflow(form.get("start", ""), value)
-                case "workflow-new":
-                    wf = control.new_workflow(value, form.get("start", ""))
-                    return RedirectResponse(f"/workflows/{wf.id}?msg=" + quote(f"Made {wf.name}: wire its blocks from Start to End."), 303)
-                case "workflow-settings":
-                    message = control.workflow_settings(_int(form.get("workflow")), form.get("name", ""), form.get("handle", ""), form.get("ingest", ""))
-                case "workflow-archive":
-                    message = control.archive_workflow(_int(form.get("workflow")), value == "on")
-                case "workflow-reset":
-                    message = control.reset_workflow(_int(form.get("workflow")))
-                case "tab-add":
-                    message = control.add_tab(_int(form.get("workflow")), value, form.get("from", ""))
-                    wf = store.workflow(_int(form.get("workflow")))
-                    if wf and store.tab(wf.id, value):
-                        return RedirectResponse(f"/workflows/{wf.id}?mode={quote(value)}&msg=" + quote(message), 303)
-                case "tab-delete":
-                    message = control.drop_tab(_int(form.get("workflow")), value)
                 case "note":
                     message = await control.note(job, value, step, position)
                 case "rename":
@@ -979,12 +882,7 @@ def create_app(
             Route("/insights", insights_page),
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
-            Route("/static/{name}", static),
-            Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),
-            Route("/workflows/blocks", blocks_page), Route("/workflows/blocks/{stage}", stage_page),
-            Route("/workflows/{workflow_id:int}/told", workflow_told),
-            Route("/workflows/{workflow_id:int}.json", workflow_json),
-            Route("/workflows/{workflow_id:int}/save", workflow_save, methods=["POST"]),
+            Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page), Route("/settings/modes", modes_page),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),
             Route("/act", act, methods=["POST"]),
@@ -997,18 +895,6 @@ def _dt_seconds(at: str | None) -> float:
         return datetime.fromisoformat(at).timestamp() if at else 0.0
     except ValueError:
         return 0.0
-
-
-async def _json(request: Request, cap: int = 600_000) -> dict | None:
-    """A JSON body, if it is one and isn't too big."""
-    raw = await request.body()
-    if len(raw) > cap:
-        return None
-    try:
-        found = json.loads(raw)
-    except ValueError:
-        return None
-    return found if isinstance(found, dict) else None
 
 
 async def _form(request: Request, cap: int = 20_000) -> dict[str, str]:

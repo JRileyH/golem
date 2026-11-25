@@ -173,8 +173,6 @@ def test_an_unedited_builtin_takes_golems_new_version_and_an_edited_one_is_told(
     assert library.seed() == []
     change = store.workflow(key="change")
     assert change.name == "Mine" and change.upstream  # golem has a newer version for him
-    change = library.reset(change)
-    assert (change.name, change.edited, change.upstream) == ("Change it", False, "")
 
 
 def test_a_builtin_that_loses_a_tab_loses_it_when_unedited(library):

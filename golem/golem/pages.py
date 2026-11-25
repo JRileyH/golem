@@ -14,7 +14,6 @@ button each), or answer. The insights page shows where the time and Claude usage
 
 from __future__ import annotations
 
-import hashlib
 
 import json
 from dataclasses import dataclass, field
@@ -30,10 +29,9 @@ from .store import ACTIVE, EFFORTS, LOOKS, MODELS, OPEN, Job, Project, Step
 from .watch import span
 
 ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "failed": "✗", "pending": ""}
-TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("workflows", "/workflows", "Workflows"), ("settings", "/settings", "Settings"))
-SIGNED_IN_TABS = ("workflows",)  # what's what agents are told: Riggy's alone
+TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("settings", "/settings", "Settings"))
 # Which tab a page is under: any other (a project's, a job's, a new project) is under Projects.
-TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "reports": "settings", "workflows": "workflows"}
+TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "reports": "settings"}
 # What golem's own steps do, for their sheets.
 DOES = {
     "setup": "Makes sure the repo, the checkout and the job's issue exist.",
@@ -107,22 +105,19 @@ class SheetData:
 
 
 def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", bottom: str = "", here: str = "",
-         up: tuple[str, str] | None = None, subnav: str = "", nav: list[NavProject] = (), behind: bool = False,
-         stage: str = "") -> str:  # fmt: skip
+         up: tuple[str, str] | None = None, subnav: str = "", nav: list[NavProject] = (), behind: bool = False) -> str:  # fmt: skip
     """The page around `body` (the part the script refreshes). `here` is where it is: "home",
     "projects", "settings", "insights", "inbox" or a project's slug; the tab bar and sidebar
     light it up. A page below the top level also has the way back (`up`: where, and its name);
     `subnav` is a row of tabs under the header (a project's: project_tabs). `bottom` sticks to the
     bottom of the screen, outside the refreshed part, so what's being written there is never
-    lost. `behind` marks Settings: a new version of golem is on GitHub. `stage` comes after the
-    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date."""
+    lost. `behind` marks Settings: a new version of golem is on GitHub."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
     marks = {"now": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
     tabs = "<nav class=tabs aria-label=Sections>" + "".join(
         f"<a href='{href}'{' class=on aria-current=page' if key == tab else ''}>{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
         for key, href, label in TABS
-        if signed_in or key not in SIGNED_IN_TABS
     ) + "</nav>"
     new = "<a class=new-project href=/new aria-label='New project'><b>+</b><span> New project</span></a>" if signed_in else ""
     banner = "<div class='banner paused'>Work is paused. Nothing new starts until it's resumed (Settings).</div>" if paused else ""
@@ -137,10 +132,10 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <link rel=manifest href=/manifest.webmanifest>{pwa.touch_icon()}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
 <div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1>{new}</header>{subnav}</div>
-{banner}{flash_html}<main id=lanes>{body}</main>{stage}<div class=dock>{latest}{bottom}{tabs}</div>
+{banner}{flash_html}<main id=lanes>{body}</main><div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
-<script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}{static_scripts(stage)}</html>"""
+<script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}</html>"""
 
 
 
@@ -151,24 +146,6 @@ def region(name: str, html: str) -> str:
     return f"<div data-part={name}>{html}</div>"
 
 
-STATIC = ("flow.js", "editor.js")  # served from golem/static/, by name only
-STATIC_DIR = Path(__file__).parent / "static"
-
-
-def static_version(name: str) -> str:
-    """A short hash of a static file, so its URL changes when it does (cached for a year)."""
-    path = STATIC_DIR / name
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:10] if path.is_file() else "0"
-
-
-def static_scripts(stage: str) -> str:
-    """The graph's scripts, on pages that draw one; the editor's too where it edits."""
-    if not stage:
-        return ""
-    names = ["flow.js", *(["editor.js"] if "data-mode=edit" in stage else [])]
-    return "".join(f"<script src='/static/{n}?v={static_version(n)}' defer></script>" for n in names)
-
-
 def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, str]) -> str:
     """The way around on a wide screen: the top level, a new project, then every project, each with
     a way straight to its settings. After `main` in the page, so the page's own content comes first
@@ -177,7 +154,6 @@ def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, 
         f"<a href='{href}' class='item{' on' if key == TAB_OF.get(here, 'projects' if here else '') else ''}'"
         f"{' aria-current=page' if key == TAB_OF.get(here, '') else ''}>{ICONS_SVG[key]}<span>{label}</span>{marks.get(key, '')}</a>"
         for key, href, label in TABS
-        if signed_in or key not in SIGNED_IN_TABS
     )
     new = f"<a href=/new class='item new{' on' if here == 'new' else ''}'><b class=plus>+</b><span>New project</span></a>" if signed_in else ""
     rows = []
@@ -220,9 +196,8 @@ def _count_mark(n: int) -> str:
 ICONS_SVG = {
     "insights": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 20V11h3.5v9zm6.25 0V4h3.5v16zM16.5 20v-6H20v6z'/></svg>",
     "home": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/></svg>",
-    # Now: a pulse, what's happening; Workflows: three blocks wired together.
+    # Now: a pulse, what's happening.
     "now": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M2 13h4.2l2.3-6 4 12 3-9 1.6 3H22v2h-5.9l-.6-1.2-3.1 9.3-4-12.1L7.6 15H2z'/></svg>",
-    "workflows": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M3 3h8v6H8v3h5v-2h8v6h-8v-2H8v3h3v6H3v-6h3V9H3zm2 2v2h4V5zm10 7v2h4v-2zM5 17v2h4v-2z'/></svg>",
     "projects": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M4 4h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'/>"
     "<path d='M19 8h1a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-1v3l-4-3h-4a2 2 0 0 1-2-2v-.5h6a3 3 0 0 0 3-3z'/></svg>",
     "settings": "<svg viewBox='0 0 24 24' aria-hidden=true><path d='M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zm8.4 2.1-1.7-.3a7 7 0 0 0-.7-1.7l1-1.4"
@@ -1287,7 +1262,7 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .new-more > summary { cursor:pointer; color:var(--muted); font-size:.9rem; } .new-more .new-row { margin-top:.6rem; }
 .new-form .error { color:var(--critical); font-weight:600; margin:0; font-size:.85rem; }
 .card.adopt > summary { cursor:pointer; font-weight:700; } .card.adopt .new-form { margin-top:.75rem; }
-/* Stage blocks (stages.py): what one is told, and Workflows → Blocks */
+/* Stage blocks (stages.py): what one is told, and Settings → Blocks */
 pre.told { white-space:pre-wrap; word-break:break-word; font:.84rem/1.5 var(--mono); background:var(--bg);
   padding:.75rem .85rem; border-radius:var(--radius); margin:.5rem 0; max-height:70vh; overflow:auto; }
 .block-part h3 { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .5rem; font-size:.95rem; margin:0 0 .5rem; }
@@ -1460,92 +1435,12 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .picks select { min-height:32px; font-size:.82rem; }
 .picks > span { color:var(--ink); font-size:.88rem; } .picks > span + span::before { content:"· "; color:var(--muted); }
 @media (max-width:640px) { .bars li { grid-template-columns:minmax(3.5rem, 6rem) 1fr auto; } }
-/* Workflows, drawn (flows.py, static/flow.js) */
-.flow { position:relative; margin:0 auto 1rem; width:min(100%, 72rem); padding:0 max(.9rem, env(safe-area-inset-left)); box-sizing:border-box; }
-.flow-canvas { display:block; width:100%; height:min(74vh, 52rem); background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge);
-  touch-action:none; user-select:none; -webkit-user-select:none; cursor:grab; }
-.flow-canvas:active { cursor:grabbing; }
-.flow-tools { position:absolute; z-index:2; top:.5rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); display:flex; gap:.3rem; }
-.flow-tools button { min-width:36px; min-height:36px; padding:0 .6rem; }
-.flow-crumbs { display:flex; flex-wrap:wrap; gap:.2rem; font:600 .9rem/1.4 var(--display); margin:.2rem 0 .5rem; color:var(--muted); }
-.flow-crumbs:empty { display:none; }
-.flow-note { margin:.2rem 0 .5rem; padding:.45rem .7rem; border-radius:var(--radius); background:var(--wait-bg); color:var(--wait-fg); font-size:.88rem; }
-.flow-lead { margin-bottom:.4rem; } .flow-link { margin:.6rem 0; }
-.flow-box { fill:var(--bg); stroke:var(--line); stroke-width:1.5; }
-.flow-inner { fill:none; stroke:var(--line); stroke-dasharray:3 3; }
-.flow-title { font:700 15px var(--display); fill:var(--ink); }
-.flow-sub { font:12px var(--body); fill:var(--muted); }
-.flow-port { fill:var(--card); stroke:var(--muted); stroke-width:1.5; }
-.flow-in { fill:var(--muted); }
-.flow-port-name { font:600 11px var(--body); fill:var(--muted); }
-.flow-wire { fill:none; stroke:var(--muted); stroke-width:1.6; opacity:.55; }
-.flow-wire.lit { stroke:var(--s-fin); opacity:.9; stroke-width:2.2; }
-.flow-arrowhead { fill:var(--muted); }
-.t-start .flow-box, .t-end .flow-box, .t-input .flow-box, .t-output .flow-box { fill:var(--stone, var(--card)); }
-.t-agent .flow-box { stroke:var(--accent); }
-.t-counter .flow-box, .t-condition .flow-box { stroke-dasharray:4 3; }
-.flow-node.done .flow-box { fill:var(--fin-bg); stroke:var(--s-fin); }
-.flow-node.skipped .flow-box { stroke-dasharray:2 3; opacity:.7; }
-.flow-node.failed .flow-box { fill:var(--bad-bg); stroke:var(--s-bad); }
-.flow-node.waiting .flow-box { fill:var(--wait-bg); stroke:var(--s-wait); stroke-width:3; }
-.flow-node.now .flow-box, .flow-node.next .flow-box { fill:var(--run-bg); stroke:var(--s-run); stroke-width:3; }
-.flow-node.now .flow-box { animation:flow-glow 1.6s ease-in-out infinite; }
-.flow-node.todo .flow-box { stroke:var(--s-q); }
-.flow-node.bad .flow-box { stroke:var(--s-bad); stroke-width:2.5; }
-.flow-warn { font:800 16px var(--display); fill:var(--s-bad); }
-.flow-visits { fill:var(--s-run); } .flow-visits-text { font:700 11px var(--body); fill:var(--s-run-on); }
-.flow-node:focus-visible .flow-box, a:focus-visible .flow-box { stroke:var(--accent); stroke-width:3; }
-@keyframes flow-glow { 50% { stroke-opacity:.35; } }
-@media (prefers-reduced-motion: reduce) { .flow-node.now .flow-box { animation:none; } }
-.flow-info { position:absolute; z-index:3; top:3.2rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); width:min(24rem, calc(100% - 2.8rem));
-  max-height:calc(100% - 4rem); overflow:auto; padding:.8rem 1rem; background:var(--card); border-radius:var(--radius); box-shadow:0 6px 24px rgba(0,0,0,.18); }
-.flow-info h3 { font:700 1.05rem/1.3 var(--display); margin:0 2rem .2rem 0; } .flow-info .close { position:absolute; top:.4rem; right:.4rem; }
-.flow-info dl { display:grid; grid-template-columns:auto 1fr; gap:.25rem .8rem; margin:.6rem 0 0; font-size:.86rem; }
-.flow-info dt { color:var(--muted); } .flow-info dd { margin:0; overflow-wrap:anywhere; }
-.flow-info .flow-text { grid-column:1 / 3; white-space:pre-wrap; font:12.5px/1.45 var(--mono); max-height:20rem; overflow:auto; background:var(--bg); padding:.5rem; border-radius:var(--radius); }
-.flow-problem { color:var(--bad-fg); background:var(--bad-bg); padding:.35rem .55rem; border-radius:var(--radius); font-size:.86rem; }
-.flow-tabs { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.4rem; }
-.flow-tabs a { padding:.3rem .7rem; border-radius:var(--radius); background:var(--bg); color:var(--ink); text-decoration:none; font-weight:600; }
-.flow-tabs a.on { background:var(--rust, var(--accent)); color:#fff; }
+/* Lists of settings (Blocks, Modes), and the way an old job went */
 .workflows { list-style:none; padding:0; margin:0; } .workflows li { padding:.6rem 0; border-top:1px solid var(--line); }
 .workflows li:first-child { border-top:0; } .workflows p { margin:.2rem 0 0; }
 .trail { list-style:none; padding:0; margin:.6rem 0 0; display:flex; flex-wrap:wrap; gap:.35rem; }
-/* The workflow editor (static/editor.js) */
-.editor-bar { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; margin:0 0 .5rem; }
-.editor-bar button { min-height:36px; }
-.editor-status { color:var(--muted); font-size:.88rem; margin-left:.3rem; } .editor-status.bad { color:var(--bad-fg); }
-.editor-palette { position:relative; } .editor-palette > summary { list-style:none; cursor:pointer; padding:.45rem .8rem; border-radius:var(--radius);
-  background:var(--rust, var(--accent)); color:#fff; font-weight:600; } .editor-palette > summary::-webkit-details-marker { display:none; }
-.editor-kinds { position:absolute; z-index:5; top:calc(100% + .3rem); left:0; display:grid; grid-template-columns:repeat(3, minmax(9rem, 1fr)); gap:.6rem 1rem;
-  padding:.8rem; background:var(--card); border-radius:var(--radius); box-shadow:0 6px 24px rgba(0,0,0,.22); width:max-content; max-width:min(40rem, 90vw); }
-.editor-kinds h4 { margin:0 0 .3rem; font:700 .78rem/1.2 var(--display); color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-.editor-kinds button { display:block; width:100%; text-align:left; margin:0 0 .25rem; }
-.editor-kinds > div:has(> h4 + button + button + button + button + button) { grid-column:span 2; columns:2; column-gap:.6rem; }
-.editor-kinds > div:has(> h4 + button + button + button + button + button) h4 { column-span:all; }
-.editor-problems { margin:0 0 .5rem; padding:.4rem .8rem .4rem 1.6rem; background:var(--bad-bg); color:var(--bad-fg); border-radius:var(--radius); font-size:.88rem; }
-.editor-inspector { position:absolute; z-index:3; top:3.4rem; right:calc(max(.9rem, env(safe-area-inset-left)) + .5rem); width:min(23rem, 42%);
-  max-height:calc(100% - 4.5rem); overflow:auto; padding:.8rem 1rem; background:var(--card); border-radius:var(--radius);
-  box-shadow:0 6px 24px rgba(0,0,0,.18); }
-.editor-inspector h3 { font:700 1.05rem/1.3 var(--display); margin:0 0 .2rem; }
-.editor-inspector .editor-id { font:12px var(--mono); margin:.1rem 0 .6rem; }
-.editor-inspector > label { display:flex; flex-direction:column; gap:.3rem; font-weight:600; font-size:.86rem; }
-.editor-inspector > label textarea { width:100%; box-sizing:border-box; font:12.5px/1.45 var(--mono); }
-.editor-field { display:flex; flex-direction:column; gap:.2rem; margin:.55rem 0; font-size:.86rem; font-weight:600; border:0; padding:0; }
-.editor-field legend { font-weight:600; padding:0; margin-bottom:.2rem; }
-.editor-field.check { flex-direction:row-reverse; justify-content:flex-end; align-items:center; gap:.5rem; }
-.editor-field input, .editor-field textarea, .editor-field select { font:inherit; font-weight:400; width:100%; box-sizing:border-box; }
-.editor-field.check input { width:auto; }
-.editor-field textarea { font:12.5px/1.45 var(--mono); }
-.editor-field small { font-weight:400; }
-.editor-row { display:flex; gap:.3rem; align-items:center; margin:.2rem 0; } .editor-row input, .editor-row select { min-width:0; }
-.flow-node.selected .flow-box { stroke:var(--accent); stroke-width:3.5; }
-.flow[data-mode=edit] .flow-node { cursor:move; } .flow[data-mode=edit] .flow-port { cursor:crosshair; r:6; }
-.flow[data-mode=edit] .flow-port:hover { fill:var(--accent); }
-.editor-wiring { stroke:var(--accent); stroke-dasharray:6 4; opacity:1; }
-.workflow-settings { margin-top:.6rem; } .workflow-settings summary { cursor:pointer; font-weight:600; }
 .stack { display:flex; flex-direction:column; gap:.5rem; margin:.6rem 0; } .stack label { display:flex; flex-direction:column; gap:.2rem; font-weight:600; font-size:.88rem; }
 .stack input, .stack textarea { font:inherit; font-weight:400; }
-.flow-bad { color:var(--s-bad); font-weight:800; }
 """
 
 # Refresh the page's main part every 10 seconds without losing what's open, scrolled or being typed; show

@@ -5,7 +5,7 @@ Golem triages when it has nothing else to do (the rule proposals follow), triage
 `triage`: off until Riggy turns it on, on the Reports page), none has run for MIN_GAP, fewer than
 MAX_OPEN of its proposals await him, and enough reports are new (BATCH) or the oldest has waited
 WAIT. The job belongs to golem's own project (store.INTERNAL) and is one agent block, `triage`,
-built here rather than in the workflow editor, so nothing that touches a repo can ever be wired
+built here rather than from a workflow file, so nothing that touches a repo can ever be wired
 into it. It works in a scratch directory, reads the new reports (up to SHOWN, oldest first; their
 detail in reports.json there), golem's installed source and process files, and the job logs the
 reports point to. It returns up to MAX_PER_RUN proposals, each citing the reports it answers, and

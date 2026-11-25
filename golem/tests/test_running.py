@@ -305,9 +305,6 @@ def test_modes_are_made_renamed_and_deleted_in_settings(golem):
     assert plan.mode_for(golem.store, None) == "cautious"
     control.delete_mode("cautious")
     assert golem.store.mode("cautious") is None and plan.mode_for(golem.store, None) == ""
-    assert "Options is the fallback" in control.fallback_workflow("change", "options")
-    with pytest.raises(ControlError):
-        control.fallback_workflow("change", "web_app")  # not a workflow for changes
 
 
 # --- each job's own activity, and one change at a time ------------------------------------

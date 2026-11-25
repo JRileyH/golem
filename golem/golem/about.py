@@ -18,7 +18,6 @@ out from where the job has been, by rules a person would use.
 - A block can say which earlier block it's about (`about`), and then it's that block's work.
 
 Pure: from the job's copy of its workflow (blocks by flattened id), its steps, and the step.
-`hints` says the same of a workflow's blocks in a word or two, for the editor.
 """
 
 from __future__ import annotations
@@ -31,7 +30,6 @@ from .store import Step
 SHIPPED = ("push", "push-main")  # the work up to here went out
 LOOK_PAST = ("review", "docs")  # what a Build looks past for what it's building from: a plan's review, say
 REPLIED = "Riggy tried it, and his reply is under \"Riggy's feedback\": what he asked for comes first."
-SHIP_TYPES = (*SHIPPED, "pr", "checks", "merge", "deploy")
 
 
 @dataclass
@@ -185,63 +183,3 @@ def _sibling(node_id: str, other: str) -> str:
 def _line(text: str, limit: int = 240) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-# --- for the editor -----------------------------------------------------------------------
-
-
-def hints(order: list[dict]) -> dict[str, str]:
-    """What each stage block of a workflow is about, in a few words, from the order a job meets its
-    blocks (plan.blocks_in_order): "the work since review", "Riggy's pick"."""
-    found: dict[str, str] = {}
-    by_id = {n["id"]: n for n in order}
-    for i, node in enumerate(order):
-        stage = node.get("stage")
-        if node.get("type") != "agent" or not stage:
-            continue
-        before = order[:i]
-        if node.get("about") and node["about"] in by_id:
-            found[node["id"]] = f"{by_id[node['about']].get('name') or node['about']}'s work"
-        elif stage in ("review", "docs"):
-            work = [n for n in before if n.get("type") == "agent"]
-            same = [n for n in work if n.get("stage") == stage]
-            if stage == "review" and work and work[-1].get("stage") == "review":
-                found[node["id"]] = f"{work[-1].get('name')}'s fixes"
-            elif same:
-                found[node["id"]] = f"the work since {same[-1].get('name')}"
-            elif any(_ships(n) for n in before):
-                found[node["id"]] = "the work since it last shipped"
-            else:
-                found[node["id"]] = "everything the job did"
-            since = work[work.index(same[-1]) + 1 :] if same else work
-            if stage == "review" and since and all(n.get("stage") == "plan" for n in since):
-                found[node["id"]] = "the plan"
-        elif stage == "build" or (stage == "design" and node.get("makes") == "guide"):
-            found[node["id"]] = _built_hint(node, before)
-        elif stage == "fix":
-            found[node["id"]] = "what failed"
-    return found
-
-
-def _built_hint(node: dict, before: list[dict]) -> str:
-    """What a Build (or the design guide) is about, in the editor: as _built_from says."""
-    if any(n.get("type") == "checkin" and n.get("reply_to") and _sibling(n["id"], n["reply_to"]) == node["id"] for n in before):
-        return "his reply, first"
-    built = False
-    for n in reversed(before):
-        if n.get("type") == "choose" and not built:
-            return "Riggy's pick"
-        if n.get("type") == "checkin" and not built and not n.get("reply_to"):
-            return "his reply, first"
-        if n.get("type") != "agent" or n.get("stage") in LOOK_PAST:
-            continue
-        if n.get("stage") == "plan":
-            return "the plan"
-        if n.get("stage") != "build":
-            break
-        built = True
-    return "Riggy's request"
-
-
-def _ships(node: dict) -> bool:
-    return node.get("type") in SHIP_TYPES or (node.get("type") == "container" and node.get("workflow") == "ship")

@@ -46,7 +46,9 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
         "<section class=card><ul class=links-list>"
         + "<li><a href=/insights>Insights</a><span class=sub>Where the time and Claude usage go, by kind of step, project and model.</span></li>"
         "<li><a href=/reports>Reports</a><span class=sub>What got in the way of golem's workers, about golem itself.</span></li>"
-        "<li><a href=/projects>Public projects page ↗</a><span class=sub>A card for each live project, for anyone.</span></li>"
+        + ("<li><a href=/settings/blocks>Blocks</a><span class=sub>What golem's stage blocks tell their agents, to change.</span></li>"
+           "<li><a href=/settings/modes>Modes</a><span class=sub>Ways of working a request can ask for.</span></li>" if signed_in else "")
+        + "<li><a href=/projects>Public projects page ↗</a><span class=sub>A card for each live project, for anyone.</span></li>"
         "</ul></section>"
     )
     return account + more + tags_card(tags, counts, signed_in) + defaults_table(kinds, defaults, fallback, report, signed_in)
@@ -156,4 +158,40 @@ def tags_card(tags: list[Tag], counts: dict[str, int], signed_in: bool) -> str:
         + (f"<div class='tag-list{'' if signed_in else ' readonly'}'>{''.join(rows)}</div>" if rows else "<p class=empty>No tags.</p>")
         + add
         + "</section>"
+    )
+
+
+# --- modes --------------------------------------------------------------------------------
+
+
+def modes_card(store) -> str:
+    """Modes: ways of working a request can ask for. Each says what to look for in a request, and
+    a workflow with a tab for it runs that tab; one without runs its default."""
+    back = "/settings/modes"
+    hidden = lambda **f: "".join(f"<input type=hidden name={k} value='{escape(str(v))}'>" for k, v in {**f, "back": back}.items())  # noqa: E731
+    rows = []
+    for m in store.modes():
+        rows.append(
+            f"<li><div class=row-form><b>{escape(m.name)}</b>"
+            f"<form method=post action=/act class=rename>{hidden(action='mode-rename', name=m.name)}"
+            f"<input name=value value='{escape(m.name)}' required maxlength=20 pattern='[a-z][a-z0-9-]*' aria-label='New name for {escape(m.name)}'><button>Rename</button></form>"
+            f"<form method=post action=/act onsubmit='return confirm({escape(json.dumps(f'Delete {m.name}, and every tab workflows have for it?'))})'>"
+            f"{hidden(action='mode-delete', name=m.name)}<button class=danger>Delete</button></form></div>"
+            f"<form method=post action=/act class=reply>{hidden(action='mode-ingest', name=m.name)}"
+            f"<textarea name=value rows=2 maxlength=1000 aria-label='What {escape(m.name)} is for'>{escape(m.ingest)}</textarea><button>Save</button></form></li>"
+        )
+    current = store.get("fallback_mode") or ""
+    picks = "".join(f"<option value='{escape(v)}'{' selected' if current == v else ''}>{escape(label)}</option>"
+                    for v, label in [("", "each workflow's default tab"), *((m.name, m.name) for m in store.modes())])  # fmt: skip
+    return (
+        "<section class='card settings' id=modes><h2>Modes</h2><p class=sub>Ways of working a request can ask for (“be thorough”). "
+        "Golem reads each request for one of these, by what each is for; a workflow with a tab for that mode runs it, any other its "
+        "default tab. A project's settings can give it a default mode, and a request can pick one in its Mode.</p>"
+        + (f"<ul class=workflows>{''.join(rows)}</ul>" if rows else "<p class=empty>No modes yet.</p>")
+        + f"<form method=post action=/act class=reply>{hidden(action='mode-add')}<input name=value placeholder='A new mode, like careful' required maxlength=20 "
+        "pattern='[a-z][a-z0-9-]*' aria-label='New mode'><textarea name=ingest rows=2 maxlength=1000 placeholder='What to look for in a request: “he wants extra care taken”' "
+        "aria-label='What it is for'></textarea><button>Add mode</button></form>"
+        f"<div class=row-form><span>When a request doesn't say, and its project has no default:</span><form method=post action=/act class=inline>"
+        f"{hidden(action='fallback-mode')}<select name=value onchange='this.form.submit()' aria-label='Fallback mode'>{picks}</select></form></div>"
+        "</section>"
     )

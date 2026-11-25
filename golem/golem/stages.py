@@ -16,7 +16,7 @@ reports`), `care`, `extra` (instructions of its own, added after golem's) and `a
 earlier block it's about, if not the one golem works out: about.py). `derive` writes the
 outputs or contract its settings give it, so the engine walks it like any agent block.
 
-Riggy can change any part's text (Workflows → Blocks): `Blocks` keeps golem's text and his,
+Riggy can change any part's text (Settings → Blocks): `Blocks` keeps golem's text and his,
 signed like workflows are, and tells him when golem's has changed since. When a job starts, each
 of its stage blocks takes the parts it uses with it (`parts_for`), so changing a text never
 touches work under way; when its step runs, `compose` puts them together with what the step is
@@ -208,7 +208,7 @@ def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: st
     return "\n\n".join(p.strip() for p in pieces if p and p.strip())
 
 
-# --- golem's texts and Riggy's (Workflows → Blocks) ----------------------------------------
+# --- golem's texts and Riggy's (Settings → Blocks) ----------------------------------------
 
 
 @dataclass

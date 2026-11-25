@@ -191,23 +191,11 @@ def test_a_build_is_about_the_reply_sent_to_it_and_past_another_build_the_plan()
     # A pick before another Build was that one's.
     picked = steps(("setup", "setup", "a" * 40, ""), ("choose", "choose", "", "You picked B."), ("build", "agent", "c" * 40, "Built B."))
     assert about.about(WEB, picked, Step(9, 1, 9, "agent", "mvp", node_id="mvp")) == about.About("Riggy's request (above).")
-    order = [{"id": "start", "type": "start"}, WEB["spec"], WEB["build"], WEB["mvp"], WEB["checkin"], WEB["choose"], WEB["guide"], WEB["out"]]
-    assert about.hints(order) == {"build": "the plan", "mvp": "the plan", "guide": "Riggy's pick", "out": "his reply, first"}
 
 
 def test_what_its_message_says_ends_golems_text():
     told = stages.compose({"type": "agent", "stage": "review", "care": "thorough", "extra": "Twice."}, stages.golems_text()["review"], "The work.")
     assert told.index("Be demanding") < told.index("Message: the most important thing you fixed.") < told.index("Also, for this step:")
-
-
-def test_the_editor_says_what_each_stage_block_is_about():
-    order = [{"id": "start", "type": "start"}, {"id": "setup", "type": "setup"}, NODES["spec"], NODES["check"], NODES["build"],
-             {"id": "ship", "type": "container", "workflow": "ship"}, {"id": "pick", "type": "choose"}, {**NODES["build"], "id": "b2", "name": "b2"},
-             NODES["review"], NODES["again"], NODES["docs"]]  # fmt: skip
-    assert about.hints(order) == {
-        "check": "the plan", "build": "the plan", "b2": "Riggy's pick", "review": "the work since check",  # the last review, then
-        "again": "review's fixes", "docs": "the work since it last shipped",
-    }
 
 
 # --- in workflows ---------------------------------------------------------------------------

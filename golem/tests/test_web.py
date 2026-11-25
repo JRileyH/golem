@@ -982,7 +982,7 @@ def test_every_page_is_a_click_from_anywhere(golem, page):
     assert ("<a href='/p/trees'>Jobs</a><a href='/p/trees/jobs'>All jobs</a>"
             "<a href='/p/trees/settings' class=on aria-current=page>Settings</a></nav>") in html  # fmt: skip
     assert "<li class='c1 on'><a href='/p/trees'>" in html  # lit up in the sidebar
-    assert "href='/workflows'" in html and "href=/new" in html  # Workflows, and a new project, for Riggy
+    assert "href=/new" in html and "href='/workflows'" not in html  # a new project, for Riggy; no Workflows tab
     assert "class=gear href='/p/birds/settings'" in page.get("/p").text  # straight to its settings from the list
     page.post("/logout", follow_redirects=False)
     html = page.get("/p/trees").text
@@ -1140,13 +1140,6 @@ def test_devices_turn_notifications_on_and_get_what_wants_riggy(golem, app):
 # --- workflows, drawn ---------------------------------------------------------------
 
 
-def test_the_graph_script_is_served_by_name_and_cached_by_its_hash(page):
-    r = page.get("/static/flow.js")
-    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
-    assert "immutable" in r.headers["cache-control"] and r.headers["x-content-type-options"] == "nosniff"
-    assert page.get("/static/../web.py").status_code == 404 and page.get("/static/nope.js").status_code == 404
-
-
 def test_a_job_page_lists_its_steps_and_one_from_before_workflows_shows_the_way_it_went(golem, page):
     job = page.job
     start(golem, job, "mvp")
@@ -1158,119 +1151,15 @@ def test_a_job_page_lists_its_steps_and_one_from_before_workflows_shows_the_way_
     assert "The way it went" in html and "class=trail" in html
 
 
-def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
-    assert page.get("/workflows", follow_redirects=False).status_code == 303
-    assert page.get("/workflows/1.json").status_code == 403
+def test_there_is_no_workflow_editor_and_modes_are_in_settings(golem, page):
     sign_in(page)
-    html = page.get("/workflows").text
-    assert "Starts a new project" in html and "Web app" in html and "!with" not in html
-    assert "fallback</span>" in html and "Starts a sub-workflow" in html
-    assert "When golem can&#x27;t tell which" not in html.split("Starts a new project")[1].split("Starts a change")[0]
-    assert "<a href='/workflows/modes'>Modes</a>" in html and "id=modes" not in html  # the modes have a tab of their own
-    modes = page.get("/workflows/modes").text
-    assert "id=modes" in modes and "He wants extra care taken" in modes and "class=on aria-current=page>Modes</a>" in modes
-    assert "<a href='/workflows' class='item on'" in modes  # under Workflows in the sidebar
-    assert "When golem can't tell which" in html  # changes have several workflows to fall back between
-    web = golem.store.workflow(key="web_app")
-    html = page.get(f"/workflows/{web.id}?mode=rigorous").text
-    assert "class=on aria-current=page>rigorous</a>" in html and "data-mode=edit" in html and "/static/editor.js?v=" in html
-    view = page.get(f"/workflows/{web.id}.json?mode=rigorous").json()
-    names = [n["label"] for n in view["nodes"]]
-    assert "spec-review" in names and view["problems"] == [] and view["poll"] == 0
-    ship = next(n for n in view["nodes"] if n["type"] == "container")
-    assert ship["open"] == f"/workflows/{golem.store.workflow(key='ship').id}" and ship["ports"] == ["shipped"]
-    assert page.get("/workflows/999").status_code == 404
-
-
-# --- the editor ------------------------------------------------------------------------
-
-
-def save(page, wf_id: int, graph: dict, mode: str = "", base: str = "", origin: str = "https://golem.unlaunched.dev"):
-    return page.post(f"/workflows/{wf_id}/save", json={"mode": mode, "graph": graph, "base": base}, headers={"origin": origin})
-
-
-def test_a_new_workflow_is_made_edited_and_saved_with_its_problems(golem, page):
-    sign_in(page)
-    r = page.post("/act", data={"action": "workflow-new", "value": "API flow", "start": "change", "back": "/workflows"}, follow_redirects=False)
-    wf = golem.store.workflow(handle="api_flow")
-    assert r.headers["location"].startswith(f"/workflows/{wf.id}?msg=") and wf.start == "change"
-    data = page.get(f"/workflows/{wf.id}.json?edit=1").json()
-    assert [n["type"] for n in data["graph"]["nodes"]] == ["start", "end"] and data["problems"] == []
-    assert {k["type"] for k in data["catalog"]} >= {"agent", "script", "condition", "container", "checkin", "end"} and "ship" in data["subs"]
-    blank = golem.store.tab(wf.id, "").working
-
-    # Saved with something wrong: kept as he left it, marked, and new jobs keep the last working state.
-    broken = {"nodes": [*data["graph"]["nodes"], {"id": "build", "type": "agent", "name": "build", "turns": 50, "x": 0, "y": 100, "junk": "dropped"}],
-              "edges": data["graph"]["edges"]}  # fmt: skip
-    answer = save(page, wf.id, broken, base=data["base"]).json()
-    assert answer["ok"] is False and {p["node"] for p in answer["problems"]} >= {"build"}
-    tab = golem.store.tab(wf.id, "")
-    assert "junk" not in tab.graph["nodes"][-1] and tab.working == blank and tab.problems
-    assert golem.store.workflow(wf.id).edited
-
-    # Fixed: it's what new jobs copy now.
-    good = {"nodes": [{"id": "start", "type": "start", "x": 0, "y": 0}, {"id": "setup", "type": "setup", "x": 0, "y": 110},
-                      {"id": "build", "type": "agent", "name": "build", "instructions": "Build the API.", "turns": 50, "x": 0, "y": 220},
-                      {"id": "end", "type": "end", "x": 0, "y": 330}],
-            "edges": [{"from": "start", "port": "next", "to": "setup"}, {"from": "setup", "port": "next", "to": "build"},
-                      {"from": "build", "port": "done", "to": "end"}]}  # fmt: skip
-    answer = save(page, wf.id, good, base=answer["base"]).json()
-    assert answer["ok"] and answer["problems"] == [] and golem.store.tab(wf.id, "").working["nodes"][2]["instructions"] == "Build the API."
-    # A save from a page opened before that one is turned away, not lost.
-    r = save(page, wf.id, good, base=data["base"])
-    assert r.status_code == 409 and r.json()["stale"]
-
-
-def test_the_editor_needs_riggy_and_this_site(golem, page):
-    web = golem.store.workflow(key="web_app")
-    graph = golem.store.tab(web.id, "").graph
-    assert save(page, web.id, graph).status_code == 403
-    sign_in(page)
-    assert save(page, web.id, graph, origin="https://evil.example").status_code == 403
-    assert save(page, web.id, {"nodes": "nope"}).status_code == 400
-    assert save(page, web.id, graph, mode="fancy").status_code == 404
-    assert page.post(f"/workflows/{web.id}/save", content=b"x" * 700_000, headers={"origin": "https://golem.unlaunched.dev"}).status_code == 400
-
-
-def test_changing_a_sub_workflows_outputs_flags_the_workflows_that_use_it(golem, page):
-    sign_in(page)
-    ship = golem.store.workflow(key="ship")
-    renamed = {}
-    for mode in ("reckless", ""):
-        graph = json.loads(json.dumps(golem.store.tab(ship.id, mode).graph))
-        for n in graph["nodes"]:
-            if n["type"] == "output":
-                n["name"] = "live"
-        renamed[mode] = save(page, ship.id, graph, mode=mode).json()["ok"]
-    assert renamed == {"reckless": False, "": True}  # one at a time, its tabs' Outputs differed; then they match
-    assert golem.store.tab(ship.id, "reckless").problems == []  # checked again once the default matched
-    web = golem.store.workflow(key="web_app")
-    problems = golem.store.tab(web.id, "").problems
-    assert problems and any("shipped" in p["message"] for p in problems)
-    view = page.get("/workflows").text
-    assert "has problems" in view
-    # Golem's version, back with a button; the workflows using it are fine again.
-    assert "golem%27s%20version" in act(page, action="workflow-reset", workflow=ship.id)
-    assert golem.store.tab(web.id, "").problems == [] and not golem.store.workflow(ship.id).edited
-
-
-def test_tabs_settings_and_archiving(golem, page):
-    sign_in(page)
-    change = golem.store.workflow(key="change")
-    golem.store.add_mode("careful", "He says to take care.")
-    r = page.post("/act", data={"action": "tab-add", "workflow": change.id, "value": "careful", "from": "rigorous", "back": "/"}, follow_redirects=False)
-    assert r.headers["location"].startswith(f"/workflows/{change.id}?mode=careful")
-    assert golem.store.tab(change.id, "careful").graph == golem.store.tab(change.id, "rigorous").graph
-    assert "already%20has" in act(page, action="tab-add", workflow=change.id, value="careful")
-    assert "Deleted" in act(page, action="tab-delete", workflow=change.id, value="careful")
-    assert golem.store.tab(change.id, "careful") is None
-    assert "Saved%20Make%20a%20change" in act(page, action="workflow-settings", workflow=change.id, name="Make a change", handle="fix", ingest="Changes.")
-    assert golem.store.workflow(change.id).handle == "fix"
-    assert "already" in act(page, action="workflow-settings", workflow=change.id, name="x", handle="options", ingest="")
-    assert "fallback" in act(page, action="workflow-archive", workflow=change.id, value="on")  # the fallback can't go
-    options = golem.store.workflow(key="options")
-    assert "Archived" in act(page, action="workflow-archive", workflow=options.id, value="on")
-    assert "options" not in [k.key for k in golem.bot.kinds()] if hasattr(golem, "bot") else True
+    for path in ("/workflows", "/workflows/1", "/workflows/1.json", "/static/flow.js", "/static/editor.js"):
+        assert page.get(path).status_code == 404, path
+    assert page.post("/workflows/1/save", json={}).status_code in (404, 405)
+    html = page.get("/settings").text
+    assert "href=/settings/blocks>Blocks</a>" in html and "href=/settings/modes>Modes</a>" in html and "href='/workflows'" not in html
+    modes = page.get("/settings/modes").text
+    assert "id=modes" in modes and "He wants extra care taken" in modes and "<a href='/settings' class='item on'" in modes
 
 
 def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_latest_change(golem, page):
@@ -1343,40 +1232,18 @@ def test_a_project_page_lists_its_latest_jobs_and_all_of_them_are_a_search_away(
 
 
 def test_blocks_are_golems_stage_texts_to_read_and_change(golem, page):
-    assert page.get("/workflows/blocks", follow_redirects=False).status_code == 303
+    assert page.get("/settings/blocks", follow_redirects=False).status_code == 303
     sign_in(page)
-    html = page.get("/workflows/blocks").text
-    assert "<a href='/workflows/blocks/review'><b>Review</b></a>" in html and "what it does: fixes, reports" in html
-    assert "class=on aria-current=page>Blocks</a>" in html and page.get("/workflows/blocks/dance").status_code == 404
-    html = page.get("/workflows/blocks/docs").text
+    html = page.get("/settings/blocks").text
+    assert "<a href='/settings/blocks/review'><b>Review</b></a>" in html and "what it does: fixes, reports" in html
+    assert "<a href='/settings' class='item on'" in html and page.get("/settings/blocks/dance").status_code == 404
+    html = page.get("/settings/blocks/docs").text
     assert "<code>message.changed</code>" in html and "Tells Riggy: what changed" in html and "Use golem" not in html
-    location = act(page, action="block-text", stage="docs", part="message.changed", value="Message: what changed.", back="/workflows/blocks/docs#message.changed")
-    assert location.startswith("/workflows/blocks/docs?msg=Saved%20Docs") and location.endswith("#message.changed")
-    html = page.get("/workflows/blocks/docs").text
+    location = act(page, action="block-text", stage="docs", part="message.changed", value="Message: what changed.", back="/settings/blocks/docs#message.changed")
+    assert location.startswith("/settings/blocks/docs?msg=Saved%20Docs") and location.endswith("#message.changed")
+    html = page.get("/settings/blocks/docs").text
     assert "Message: what changed.</textarea>" in html and "<span class=badge>changed</span>" in html and "Use golem's</button>" in html
-    assert "1 changed" in page.get("/workflows/blocks").text
+    assert "1 changed" in page.get("/settings/blocks").text
     assert "golem%27s%20again" in act(page, action="block-reset", stage="docs", part="message.changed")
     assert "Write%20something" in act(page, action="block-text", stage="docs", part="message.changed", value=" ")
     assert "no%20part" in act(page, action="block-text", stage="docs", part="nope", value="x")
-
-
-def test_the_editor_offers_stage_blocks_and_says_what_each_is_told(golem, page):
-    sign_in(page)
-    wf = golem.scheduler.library.create("Staged", "change")
-    data = page.get(f"/workflows/{wf.id}.json?edit=1").json()
-    review = next(k for k in data["catalog"] if k.get("stage") == "review")
-    assert review["group"] == "Stages" and review["ports"] == {"does.fixes": ["done"], "does.reports": ["pass", "fail"]}
-    assert review["defaults"] == {"turns": 150, "optional": True, "does": "fixes", "care": "usual"}
-    assert [f["kind"] for f in review["fields"]][:4] == ["text", "choice", "choice", "about"]
-    assert any(k["type"] == "test" and k["group"] == "Stages" for k in data["catalog"])
-    graph = data["graph"]
-    graph["nodes"] += [{"id": "build", "type": "agent", "stage": "build", "name": "build", "x": 0, "y": 100},
-                       {"id": "check", "type": "agent", "stage": "review", "name": "check", "does": "reports", "x": 0, "y": 200}]  # fmt: skip
-    saved = page.post(f"/workflows/{wf.id}/save", json={"mode": "", "graph": graph, "base": data["base"]}).json()
-    nodes = {n["id"]: n for n in saved["graph"]["nodes"]}
-    assert [o["name"] for o in nodes["check"]["outputs"]] == ["pass", "fail"] and nodes["build"]["turn"] == "build"  # as golem keeps them
-    assert "instructions" not in nodes["build"] and not any("needs instructions" in p["message"] for p in saved["problems"])
-    html = page.get(f"/workflows/{wf.id}/told?node=check&part=sheet").text
-    assert "What check is told" in html and "Don&#x27;t fix anything: say what&#x27;s wrong." in html
-    assert "Review it with skills/review.md against" in html  # its lines joined up, to read in a narrow box
-    assert page.get(f"/workflows/{wf.id}/told?node=nope&part=sheet").text.startswith("<p class=empty>")
