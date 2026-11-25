@@ -1198,6 +1198,31 @@ def test_a_failed_github_call_keeps_its_exit_code_and_all_it_said(checkout, monk
     assert caught.value.detail == said[-workspace.DETAIL_CHARS :] and len(caught.value.detail) == workspace.DETAIL_CHARS
 
 
+def test_a_merge_github_carried_out_despite_an_error_counts(checkout, monkeypatch):
+    from golem import workspace
+    from golem.workspace import PullRequest
+
+    state = {"state": "MERGED", "mergeCommit": {"oid": "abc1234"}}
+    calls = []
+
+    async def flaky(*args, cwd=None):
+        calls.append(args)
+        if args[:3] == ("gh", "pr", "merge"):
+            return 1, "GraphQL: Something went wrong while executing your query"
+        if args[:3] == ("gh", "pr", "view"):
+            return 0, json.dumps(state)
+        return 0, ""
+
+    monkeypatch.setattr(workspace, "run", flaky)
+    pr = PullRequest(53, "https://github.com/unlaunched/trees/pull/53", "f00")
+    assert asyncio.run(checkout.merge("trees", pr, "golem/job-7")) == "abc1234"
+    assert ("git", "push", "--quiet", "origin", "--delete", "golem/job-7") in calls  # finished like any merge
+
+    state.update(state="OPEN", mergeCommit=None)  # it really didn't merge
+    with pytest.raises(workspace.WorkspaceError, match=r"merging PR #53 on trees \(exit 1\): GraphQL"):
+        asyncio.run(checkout.merge("trees", pr, "golem/job-7"))
+
+
 def test_a_token_without_actions_access_says_how_to_fix_it(checkout, monkeypatch):
     from golem import workspace
 

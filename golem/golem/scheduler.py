@@ -1092,7 +1092,14 @@ class Scheduler:
     async def do_merge(self, job: Job, project: Project, step: Step) -> Outcome:
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
         if pr is None:
-            return Outcome("skipped", "Nothing to merge.")
+            # An earlier try GitHub carried out though it answered with an error: finish it.
+            number = _unmerged_pr(self.store.steps(job.id), step)
+            sha = number and await self.workspace.merged(project.slug, number)
+            if not sha:
+                return Outcome("skipped", "Nothing to merge.")
+            await self.workspace.after_merge(project.slug, self.branch(job), job=self.tree(job))
+            url = f"{self.settings.repo_url(project.slug)}/pull/{number}"
+            return Outcome("done", f"PR #{number} was merged already, as {sha[:7]}.", {"pr": url, "commit": self.commit_url(project, sha)})
         sha = await self.workspace.merge(project.slug, pr, self.branch(job), job=self.tree(job))
         return Outcome("done", f"Merged PR #{pr.number} as {sha[:7]}.", {"pr": pr.url, "commit": self.commit_url(project, sha)})
 
@@ -1491,6 +1498,21 @@ def _since_last(steps: list[Step], step: Step, kind: str) -> list[Step]:
         elif s.kind == "agent" and s.state == "done":
             work.append(s)
     return work
+
+
+def _unmerged_pr(steps: list[Step], step: Step) -> int | None:
+    """The PR the job's last PR step before `step` opened, unless a merge was done since: the one
+    a merge step is merging."""
+    number = None
+    for s in steps:
+        if s.position >= step.position:
+            break
+        if s.kind == "pr" and s.state == "done" and s.links.get("pr"):
+            tail = s.links["pr"].rstrip("/").rsplit("/", 1)[-1]
+            number = int(tail) if tail.isdigit() else None
+        elif s.kind == "merge" and s.state == "done":
+            number = None
+    return number
 
 
 def _first_line(text: str, limit: int = 80) -> str:

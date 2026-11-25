@@ -1228,6 +1228,26 @@ def test_all_that_a_failed_command_printed_is_kept_in_the_steps_log(golem):
     run(go())
 
 
+def test_a_merge_github_carried_out_despite_an_error_finishes_as_merged(golem):
+    async def go():
+        job = a_change(golem, "trees")
+        await golem.until("merge")
+        golem.workspace.merge_lands = True
+        golem.workspace.merge_errors = ["merging PR #1 on trees (exit 1): GraphQL: Something went wrong"]
+        await golem.step()
+        assert golem.store.job(job.id).state == "parked"
+        await golem.step()  # no open PR now: it was merged
+        merge = next(s for s in golem.store.steps(job.id) if s.kind == "merge")
+        merged = golem.workspace.merged_prs[("trees", 1)]
+        assert (merge.state, merge.summary) == ("done", f"PR #1 was merged already, as {merged[:7]}.")
+        assert merge.links == {"pr": "https://github.com/unlaunched/trees/pull/1", "commit": f"https://github.com/unlaunched/trees/commit/{merged}"}
+        assert golem.workspace.actions[-2:] == [f"delete golem/job-{job.id}", f"back to main: job {job.id}"]
+        await golem.finish()
+        assert golem.deployer.deploys == [("trees", merged)] and golem.store.job(job.id).state == "done"
+
+    run(go())
+
+
 def test_a_step_waiting_to_try_again_gives_its_worker_to_another_job(golem):
     async def go():
         trees, birds = a_change(golem, "trees"), a_change(golem, "birds")

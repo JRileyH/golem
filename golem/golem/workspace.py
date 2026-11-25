@@ -113,6 +113,8 @@ class Workspace(Protocol):
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None: ...
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
+    async def merged(self, slug: str, number: int) -> str | None: ...
+    async def after_merge(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
     async def main_sha(self, slug: str) -> str: ...
     async def head(self, slug: str, *, job: int | None = None) -> str: ...
     async def ci(self, slug: str, sha: str) -> CI: ...
@@ -492,13 +494,31 @@ class GitHubWorkspace:
             "gh", "pr", "merge", str(pr.number), "--repo", repo, "--squash", "--match-head-commit", pr.sha
         )  # fmt: skip
         if code != 0:
-            raise _failed(f"merging PR #{pr.number} on {slug}", code, out)
-        code, sha = await run("gh", "pr", "view", str(pr.number), "--repo", repo, "--json", "mergeCommit", "-q", ".mergeCommit.oid")
-        if code != 0 or not sha:
-            raise _failed(f"reading PR #{pr.number}'s merge commit on {slug}", code, sha)
+            sha = await self.merged(slug, pr.number)  # GitHub can merge and still answer with an error
+            if not sha:
+                raise _failed(f"merging PR #{pr.number} on {slug}", code, out)
+        else:
+            code, sha = await run("gh", "pr", "view", str(pr.number), "--repo", repo, "--json", "mergeCommit", "-q", ".mergeCommit.oid")
+            if code != 0 or not sha:
+                raise _failed(f"reading PR #{pr.number}'s merge commit on {slug}", code, sha)
+        await self.after_merge(slug, branch, job=job)
+        return sha
+
+    async def merged(self, slug: str, number: int) -> str | None:
+        """PR `number`'s merge commit, if it's merged; None if it isn't, or GitHub can't say."""
+        code, out = await run("gh", "pr", "view", str(number), "--repo", f"{self.org}/{slug}", "--json", "state,mergeCommit")
+        try:
+            info = json.loads(out) if code == 0 else {}
+        except ValueError:
+            return None
+        if info.get("state") != "MERGED":
+            return None
+        return (info.get("mergeCommit") or {}).get("oid") or None
+
+    async def after_merge(self, slug: str, branch: str, *, job: int | None = None) -> None:
+        """The merged branch deleted on GitHub (best effort), and the checkout back on main."""
         await run("git", "push", "--quiet", "origin", "--delete", branch, cwd=self.path(slug))
         await self.back_to_main(slug, branch, job=job)
-        return sha
 
     async def main_sha(self, slug: str) -> str:
         await self.git(slug, "fetch", "--quiet", "origin")
@@ -558,6 +578,8 @@ class LocalWorkspace:
         self.syncs: list[tuple[int, list[str]]] = []  # what catching up with main finds, in turn; then nothing new
         self.merges: list[tuple[int, list[str]]] = []  # what merging another job's branch in finds, in turn; then a commit
         self.merge_errors: list[str | WorkspaceError] = []  # why the next merges of a PR fail, in turn; then they work
+        self.merge_lands = False  # whether a merge that fails merged the PR anyway
+        self.merged_prs: dict[tuple[str, int], str] = {}  # (slug, PR): its merge commit
         self.branch: str | None = None  # the last branch started, in any checkout
         self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
         self.trees: set[int] = set()  # jobs with a tree
@@ -719,14 +741,24 @@ class LocalWorkspace:
         return await self.pull_request(slug, branch)
 
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
-        if self.merge_errors:
+        if self.merge_errors and not self.merge_lands:
             why = self.merge_errors.pop(0)
             raise why if isinstance(why, WorkspaceError) else WorkspaceError(why)
         self.actions.append(f"merge PR #{pr.number}")
         del self.prs[(slug, branch)], self.pushed[(slug, branch)]
-        self.main[slug] = self._sha()
+        self.main[slug] = self.merged_prs[(slug, pr.number)] = self._sha()
+        if self.merge_errors:  # merged all the same, as GitHub sometimes does
+            why = self.merge_errors.pop(0)
+            raise why if isinstance(why, WorkspaceError) else WorkspaceError(why)
         self.branches.pop(job, None)
         return self.main[slug]
+
+    async def merged(self, slug: str, number: int) -> str | None:
+        return self.merged_prs.get((slug, number))
+
+    async def after_merge(self, slug: str, branch: str, *, job: int | None = None) -> None:
+        self.actions.append(f"delete {branch}")
+        await self.back_to_main(slug, branch, job=job)
 
     async def main_sha(self, slug: str) -> str:
         return self.main.setdefault(slug, self._sha())
