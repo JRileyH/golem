@@ -131,6 +131,7 @@ class Outcome:
     counters: dict[str, int] = field(default_factory=dict)  # counters it sets, at its level (vet's gaps)
     context: str | None = None  # what it found for the next agent block, if anything
     said: str = ""  # what golem tells Riggy about it, where that isn't the usual
+    detail: str = ""  # for an error: all a failed command printed, for the step's log
 
 
 class Scheduler:
@@ -433,7 +434,7 @@ class Scheduler:
                 await self.workspace.ensure_tree(project.slug, job.id)
             outcome = await getattr(self, "do_" + step.kind.replace("-", "_"))(job, project, step)
         except (WorkspaceError, DeployerError) as e:
-            outcome = Outcome("error", problem=str(e))
+            outcome = Outcome("error", problem=str(e), detail=getattr(e, "detail", ""))
         if self.store.job(job.id).state == "killed":
             return
         if outcome.state in ("done", "skipped", "failed") and job.worktree and step.kind in TREE_STEPS:
@@ -496,6 +497,9 @@ class Scheduler:
                 return
             case "error":
                 self.store.update_step(step.id, state="pending", error=outcome.problem, started_at=None)
+                if outcome.detail:  # the whole of what failed, each try, kept where its runs' logs are
+                    with self.error_log(job, step).open("a") as out:
+                        out.write(f"--- {now()}: {outcome.problem}\n{outcome.detail}\n\n")
                 await self.retry_or_ask(job, outcome.problem)
             case "refused":  # nothing was written to the repo: golem forgets it was ever asked
                 await self.status(outcome.problem)  # golem's news, on Now: the project's page goes with it
@@ -1409,6 +1413,12 @@ class Scheduler:
     @property
     def lessons_path(self) -> Path:
         return self.settings.state_dir / "lessons.md"
+
+    def error_log(self, job: Job, step: Step) -> Path:
+        """Where all that a step's failed commands printed is kept, each try after the last."""
+        path = self.settings.job_logs(job.id) / f"{step.position:03d}-{_safe(step.name)}-errors.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def progress_path(self, job: Job) -> Path:
         """Where the worker appends progress notes for Riggy, one line each (prompts/step.md)."""

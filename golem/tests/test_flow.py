@@ -1207,6 +1207,27 @@ def test_stuck_on_one_of_golems_own_steps_asks_only_to_try_again(golem):
     run(go())
 
 
+def test_all_that_a_failed_command_printed_is_kept_in_the_steps_log(golem):
+    async def go():
+        from golem.workspace import WorkspaceError
+
+        job = a_change(golem, "trees")
+        await golem.until("merge")
+        golem.workspace.merge_errors = [
+            WorkspaceError("merging PR #1 on trees (exit 1): GraphQL: Something went wrong", f"retrying\n{'.' * 900}\nattempt {n}")
+            for n in (1, 2)
+        ]
+        await golem.step()
+        await golem.step()
+        step = next(s for s in golem.store.steps(job.id) if s.kind == "merge")
+        assert step.error == "merging PR #1 on trees (exit 1): GraphQL: Something went wrong"  # short, for the page and chat
+        [log] = golem.settings.job_logs(job.id).glob("*-merge-errors.log")
+        text = log.read_text()
+        assert "attempt 1" in text and "attempt 2" in text and "." * 900 in text  # each try, whole
+
+    run(go())
+
+
 def test_a_step_waiting_to_try_again_gives_its_worker_to_another_job(golem):
     async def go():
         trees, birds = a_change(golem, "trees"), a_change(golem, "birds")

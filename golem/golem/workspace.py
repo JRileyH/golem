@@ -35,8 +35,22 @@ LEFTOVER = (
 )
 
 
+SAID_CHARS = 600  # of a failed command's output in its error's message: the end, where the reason usually is
+DETAIL_CHARS = 20_000  # of it kept whole (WorkspaceError.detail), for the step's log
+
+
 class WorkspaceError(Exception):
-    pass
+    """Why a checkout or GitHub call failed: a short message, and for a command that failed, all
+    it printed (`detail`), kept with the job's logs."""
+
+    def __init__(self, message: str, detail: str = ""):
+        super().__init__(message)
+        self.detail = detail
+
+
+def _failed(what: str, code: int | None, out: str) -> WorkspaceError:
+    """A command that exited `code` while doing `what`."""
+    return WorkspaceError(f"{what} (exit {code}): {out[-SAID_CHARS:]}", out[-DETAIL_CHARS:])
 
 
 @dataclass(frozen=True)
@@ -215,7 +229,7 @@ class GitHubWorkspace:
         url = f"repos/{self.org}/{slug}/issues?state=all&per_page=100"
         code, out = await run("gh", "api", "--paginate", url, "--jq", f".[] | {ITEM}")
         if code != 0:
-            raise WorkspaceError(f"reading {slug}'s issues: {out[-300:]}")
+            raise _failed(f"reading {slug}'s issues", code, out)
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     async def close_leftover_prs(self, slug: str) -> list[int]:
@@ -224,14 +238,14 @@ class GitHubWorkspace:
         repo = f"{self.org}/{slug}"
         code, out = await run("gh", "pr", "list", "--repo", repo, "--state", "open", "--json", "number,headRefName", "--limit", "200")
         if code != 0:
-            raise WorkspaceError(f"listing PRs on {slug}: {out[-300:]}")
+            raise _failed(f"listing PRs on {slug}", code, out)
         closed = []
         for pr in json.loads(out or "[]"):
             if not pr["headRefName"].startswith(JOB_BRANCHES):
                 continue
             code, said = await run("gh", "pr", "close", str(pr["number"]), "--repo", repo, "--comment", LEFTOVER)
             if code != 0:
-                raise WorkspaceError(f"closing PR #{pr['number']} on {slug}: {said[-300:]}")
+                raise _failed(f"closing PR #{pr['number']} on {slug}", code, said)
             closed.append(pr["number"])
         return closed
 
@@ -240,12 +254,12 @@ class GitHubWorkspace:
         if not await self.repo_exists(slug):
             code, out = await run("gh", "repo", "create", repo, "--private", "--description", description[:350])
             if code != 0:
-                raise WorkspaceError(f"creating {repo}: {out[-300:]}")
+                raise _failed(f"creating {repo}", code, out)
         path = self.path(slug)
         if not (path / ".git").is_dir():
             code, out = await run("gh", "repo", "clone", repo, str(path))
             if code != 0:
-                raise WorkspaceError(f"cloning {repo}: {out[-300:]}")
+                raise _failed(f"cloning {repo}", code, out)
         return path
 
     async def move_repo(self, old: str, new: str, description: str) -> Path:
@@ -254,17 +268,17 @@ class GitHubWorkspace:
         path = await self.ensure_repo(old, description)
         code, out = await run("git", "fetch", "--quiet", "--prune", "--tags", "origin", cwd=path)
         if code != 0:
-            raise WorkspaceError(f"fetching {old}: {out[-300:]}")
+            raise _failed(f"fetching {old}", code, out)
         await run("git", "remote", "set-head", "origin", "--delete", cwd=path)
         repo = f"{self.org}/{new}"
         code, out = await run("gh", "repo", "create", repo, "--private", "--description", description[:350])
         if code != 0:
-            raise WorkspaceError(f"creating {repo}: {out[-300:]}")
+            raise _failed(f"creating {repo}", code, out)
         url = f"https://github.com/{repo}.git"
         for refspec in ("refs/remotes/origin/*:refs/heads/*", "refs/tags/*:refs/tags/*"):
             code, out = await run("git", "push", "--quiet", url, refspec, cwd=path)
             if code != 0 and "src refspec" not in out:  # no tags is fine
-                raise WorkspaceError(f"pushing to {repo}: {out[-300:]}")
+                raise _failed(f"pushing to {repo}", code, out)
         await run("git", "remote", "set-url", "origin", url, cwd=path)
         await run("gh", "repo", "edit", repo, "--default-branch", "main")
         target = self.path(new)
@@ -327,7 +341,7 @@ class GitHubWorkspace:
         async with self.lock(slug):
             code, out = await run("git", *args, cwd=self.where(slug, job))
         if code != 0:
-            raise WorkspaceError(f"git {args[0]} in {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
+            raise _failed(f"git {args[0]} in {slug}{f' (job {job})' if job else ''}", code, out)
         return out
 
     async def has_main(self, slug: str) -> bool:
@@ -442,7 +456,7 @@ class GitHubWorkspace:
         async with self.lock(slug):
             await run("git", "merge", "--abort", cwd=self.where(slug, job))
         if not conflicts:
-            raise WorkspaceError(f"merging {ref} into {slug}{f' (job {job})' if job else ''}: {out[-300:]}")
+            raise _failed(f"merging {ref} into {slug}{f' (job {job})' if job else ''}", code, out)
         return behind, conflicts
 
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None:
@@ -451,7 +465,7 @@ class GitHubWorkspace:
             "--json", "number,url,headRefOid", "--limit", "1",
         )  # fmt: skip
         if code != 0:
-            raise WorkspaceError(f"listing PRs on {slug}: {out[-300:]}")
+            raise _failed(f"listing PRs on {slug}", code, out)
         prs = json.loads(out or "[]")
         return PullRequest(prs[0]["number"], prs[0]["url"], prs[0]["headRefOid"]) if prs else None
 
@@ -468,7 +482,7 @@ class GitHubWorkspace:
             "--title", title[:200], "--body", body,
         )  # fmt: skip
         if code != 0:
-            raise WorkspaceError(f"opening a PR on {slug}: {out[-300:]}")
+            raise _failed(f"opening a PR on {slug}", code, out)
         return await self.pull_request(slug, branch)
 
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
@@ -478,10 +492,10 @@ class GitHubWorkspace:
             "gh", "pr", "merge", str(pr.number), "--repo", repo, "--squash", "--match-head-commit", pr.sha
         )  # fmt: skip
         if code != 0:
-            raise WorkspaceError(f"merging PR #{pr.number} on {slug}: {out[-300:]}")
+            raise _failed(f"merging PR #{pr.number} on {slug}", code, out)
         code, sha = await run("gh", "pr", "view", str(pr.number), "--repo", repo, "--json", "mergeCommit", "-q", ".mergeCommit.oid")
         if code != 0 or not sha:
-            raise WorkspaceError(f"reading PR #{pr.number}'s merge commit on {slug}: {sha[-300:]}")
+            raise _failed(f"reading PR #{pr.number}'s merge commit on {slug}", code, sha)
         await run("git", "push", "--quiet", "origin", "--delete", branch, cwd=self.path(slug))
         await self.back_to_main(slug, branch, job=job)
         return sha
@@ -505,7 +519,7 @@ class GitHubWorkspace:
                 "on GitHub (Settings, Developer settings, its fine-grained token), then reply here"
             )
         if code != 0:
-            raise WorkspaceError(f"reading CI on {slug}: {out[-300:]}")
+            raise _failed(f"reading CI on {slug}", code, out)
         latest: dict[int, dict] = {}
         for r in json.loads(out)["workflow_runs"]:
             # A workflow started again for the same commit replaces its earlier run.
@@ -543,7 +557,7 @@ class LocalWorkspace:
         self.ci_results: list[CI] = []
         self.syncs: list[tuple[int, list[str]]] = []  # what catching up with main finds, in turn; then nothing new
         self.merges: list[tuple[int, list[str]]] = []  # what merging another job's branch in finds, in turn; then a commit
-        self.merge_errors: list[str] = []  # why the next merges of a PR fail, in turn; then they work
+        self.merge_errors: list[str | WorkspaceError] = []  # why the next merges of a PR fail, in turn; then they work
         self.branch: str | None = None  # the last branch started, in any checkout
         self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
         self.trees: set[int] = set()  # jobs with a tree
@@ -706,7 +720,8 @@ class LocalWorkspace:
 
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
         if self.merge_errors:
-            raise WorkspaceError(self.merge_errors.pop(0))
+            why = self.merge_errors.pop(0)
+            raise why if isinstance(why, WorkspaceError) else WorkspaceError(why)
         self.actions.append(f"merge PR #{pr.number}")
         del self.prs[(slug, branch)], self.pushed[(slug, branch)]
         self.main[slug] = self._sha()

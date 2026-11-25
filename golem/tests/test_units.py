@@ -1181,6 +1181,23 @@ def test_deployer_client_deploys_and_says_what_to_fix():
         asyncio.run(d.deploy("trees", "config"))
 
 
+def test_a_failed_github_call_keeps_its_exit_code_and_all_it_said(checkout, monkeypatch):
+    from golem import workspace
+
+    said = "warming up\n" * 3000 + "GraphQL: Something went wrong while executing your query (B7DC:1F1A)"
+
+    async def broken(*args, cwd=None):
+        return 1, said
+
+    monkeypatch.setattr(workspace, "run", broken)
+    with pytest.raises(workspace.WorkspaceError) as caught:
+        asyncio.run(checkout.pull_request("trees", "golem/job-1"))
+    message = str(caught.value)
+    assert message.startswith("listing PRs on trees (exit 1): ") and message.endswith("(B7DC:1F1A)")
+    assert len(message) < 700  # short enough for the step and Riggy's phone
+    assert caught.value.detail == said[-workspace.DETAIL_CHARS :] and len(caught.value.detail) == workspace.DETAIL_CHARS
+
+
 def test_a_token_without_actions_access_says_how_to_fix_it(checkout, monkeypatch):
     from golem import workspace
 
