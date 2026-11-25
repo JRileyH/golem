@@ -67,11 +67,14 @@ SCRIPT_TAIL = 4096  # bytes of a failed script's output the next agent block get
 SURVEY_TURNS = 100  # install, run the tests, read for what it needs
 # With HARNESS=fake there's no worker to survey a repo golem adopts: its own checks still run.
 FAKE_SURVEY = {"tests": {"result": "passed", "command": "", "detail": "not run (HARNESS=fake)"}, "missing": [], "needs": []}
-MAX_ATTEMPTS = 3  # failed attempts at one step before asking Riggy for help
+# How long a step that failed waits before each try again; after the last, golem asks Riggy. Waiting
+# frees its worker slot for other jobs, so a longer wait costs this job time, not the queue; it gives
+# a blip at GitHub, Anthropic or npm time to pass.
+ERROR_BACKOFF = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15))
+MAX_ATTEMPTS = len(ERROR_BACKOFF) + 1  # failed attempts at one step before asking Riggy for help
 RESOLVE_TURNS = 150
 MAX_RESOLVES = 3  # resolve steps in one job (conflicts with main) before asking Riggy for a hint
 LIMIT_RETRY = timedelta(minutes=30)
-ERROR_RETRY = timedelta(minutes=1)
 CI_POLL = timedelta(seconds=20)  # how often CI is checked while a step waits for it
 CI_START_TIMEOUT = timedelta(minutes=10)  # no workflow run on a commit by then: the repo has no CI
 CI_TIMEOUT = timedelta(minutes=60)  # CI started but still not finished: something's wrong at GitHub
@@ -571,7 +574,8 @@ class Scheduler:
         attempts = job.attempts + 1
         project = self.store.project(job.slug)
         if attempts < MAX_ATTEMPTS:
-            self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(ERROR_RETRY), resume_session=None)
+            wait = ERROR_BACKOFF[attempts - 1]
+            self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(wait), resume_session=None)
             log.warning("job %s attempt %s failed: %s", job.id, attempts, error)
             return
         if job.start == "propose":  # nobody asked for it: no reason to interrupt Riggy, just stop

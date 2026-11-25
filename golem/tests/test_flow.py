@@ -1168,19 +1168,36 @@ def test_usage_limit_parks_the_job_and_says_so_once(golem):
     run(go())
 
 
-def test_repeated_errors_ask_riggy_for_help(golem):
+def test_repeated_errors_wait_longer_each_time_then_ask_riggy_for_help(golem):
     async def go():
         room = await new_project(golem, [])
         await golem.until("spec")
-        golem.harness.script = [RunResult("error", error="npm exploded")] * 3
+        golem.harness.script = [RunResult("error", error="npm exploded")] * 4
         job = golem.store.active_job("tree-cards")
-        for attempt in (1, 2):
+        for attempt, minutes in ((1, 1), (2, 5), (3, 15)):
             await golem.scheduler.step(golem.store.job(job.id))
-            assert (golem.store.job(job.id).state, golem.store.job(job.id).attempts) == ("parked", attempt)
+            parked = golem.store.job(job.id)
+            assert (parked.state, parked.attempts) == ("parked", attempt)
+            wait = datetime.fromisoformat(parked.retry_at) - datetime.now(UTC)
+            assert timedelta(minutes=minutes) - timedelta(seconds=5) < wait <= timedelta(minutes=minutes)
         await golem.scheduler.step(golem.store.job(job.id))
         assert golem.store.job(job.id).state == "waiting"
-        assert golem.chat.texts(room)[-1].startswith("I'm stuck on spec after 3 tries: npm exploded")
+        assert golem.chat.texts(room)[-1].startswith("I'm stuck on spec after 4 tries: npm exploded")
         assert current(golem, job.id).error == "npm exploded"
+
+    run(go())
+
+
+def test_a_step_waiting_to_try_again_gives_its_worker_to_another_job(golem):
+    async def go():
+        trees, birds = a_change(golem, "trees"), a_change(golem, "birds")
+        await golem.until("change")  # trees is first in line: through its setup
+        golem.harness.script = lambda call: RunResult("error", error="npm exploded")
+        assert golem.scheduler.workers == 1 and golem.scheduler.fill()
+        await golem.scheduler.running[trees.id].task
+        assert golem.store.job(trees.id).state == "parked" and not golem.scheduler.running
+        assert golem.scheduler.fill() and golem.scheduler.running.keys() == {birds.id}  # the slot went on at once
+        await golem.scheduler.running[birds.id].task
 
     run(go())
 
