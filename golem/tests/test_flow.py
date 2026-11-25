@@ -1188,6 +1188,25 @@ def test_repeated_errors_wait_longer_each_time_then_ask_riggy_for_help(golem):
     run(go())
 
 
+def test_stuck_on_one_of_golems_own_steps_asks_only_to_try_again(golem):
+    async def go():
+        job = a_change(golem, "trees")
+        await golem.until("merge")
+        golem.workspace.merge_errors = ["merging PR #1 on trees: GraphQL: Something went wrong"] * 4
+        for _ in range(4):
+            await golem.step()
+        assert golem.store.job(job.id).state == "waiting"
+        assert golem.chat.texts("trees")[-1] == (
+            "I'm stuck on merge after 4 tries: merging PR #1 on trees: GraphQL: Something went wrong\n\n"
+            "Reply to try again, or stop the job."
+        )  # no hint: merging is golem's own code, which reads none
+        await golem.reply("trees", "try again")
+        await golem.step()
+        assert "merge PR #1" in golem.workspace.actions
+
+    run(go())
+
+
 def test_a_step_waiting_to_try_again_gives_its_worker_to_another_job(golem):
     async def go():
         trees, birds = a_change(golem, "trees"), a_change(golem, "birds")

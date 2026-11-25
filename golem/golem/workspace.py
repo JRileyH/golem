@@ -543,6 +543,7 @@ class LocalWorkspace:
         self.ci_results: list[CI] = []
         self.syncs: list[tuple[int, list[str]]] = []  # what catching up with main finds, in turn; then nothing new
         self.merges: list[tuple[int, list[str]]] = []  # what merging another job's branch in finds, in turn; then a commit
+        self.merge_errors: list[str] = []  # why the next merges of a PR fail, in turn; then they work
         self.branch: str | None = None  # the last branch started, in any checkout
         self.branches: dict[int | None, str] = {}  # by job (None: the project's own checkout)
         self.trees: set[int] = set()  # jobs with a tree
@@ -704,6 +705,8 @@ class LocalWorkspace:
         return await self.pull_request(slug, branch)
 
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
+        if self.merge_errors:
+            raise WorkspaceError(self.merge_errors.pop(0))
         self.actions.append(f"merge PR #{pr.number}")
         del self.prs[(slug, branch)], self.pushed[(slug, branch)]
         self.main[slug] = self._sha()

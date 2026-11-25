@@ -586,11 +586,9 @@ class Scheduler:
         self.store.update_job(job.id, state="waiting", attempts=0, resume_session=None)
         step = plan.current(self.store.steps(job.id))
         name = plan.label(step) if step else "the job"
-        await self.say(
-            project,
-            f"I'm stuck on {name} after {MAX_ATTEMPTS} tries: {error[:400]}\n\n"
-            "Reply with a hint and I'll try again, or stop the job.",
-        )
+        # Only a worker reads a hint; golem's own steps (merge, deploy...) just go again.
+        ask = "Reply with a hint and I'll try again" if step and step.kind == "agent" else "Reply to try again"
+        await self.say(project, f"I'm stuck on {name} after {MAX_ATTEMPTS} tries: {error[:400]}\n\n{ask}, or stop the job.")
 
     # --- agent steps ----------------------------------------------------------
 
