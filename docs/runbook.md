@@ -193,8 +193,13 @@ project's page (`/p/<slug>`) has its job as a card, with its pieces of work as a
 checklist, each opening a sheet that holds what it did with links to the PRs,
 commits, CI runs and site, its runs and transcript, or its live tail while it
 runs. `/jobs/<n>` shows one job with every step; `/insights` shows where the
-time and usage go; Settings sets the default model and effort for each kind of
-step. Signed in, it can skip optional steps, give a step its own model, effort
+time and usage go; `/reports` (signed in) lists what got in the workers' way
+about golem itself, with golem's triage of it and the fixes it proposes; Settings
+sets the default model and effort for each kind of step.
+
+When a step of golem's own fails (a merge, a push, a deploy call), all the
+failing command printed is in `/var/lib/golem/jobs/<job>/NNN-<step>-errors.log`,
+a section per try; the step's page and the chat show the end of it. Signed in, it can skip optional steps, give a step its own model, effort
 or context, reorder the queue, pause, stop, and write to golem. Anyone can see
 what's under way.
 
@@ -287,8 +292,9 @@ bin/nuke.sh
 It lists what will go and asks you to type `nuke`. Then it stops golem, deletes
 every project the way deleting one does (site, data, checkout, job history, run
 logs, activity), every other site the deployer has (`hello` too; redeploy it
-with `just deploy hello <sha>` if you want it back), and golem's lessons and
-proposals, and starts golem again. The stack, golem's news, and `.env` stay. GitHub repos stay too, until you delete them in your org's
+with `just deploy hello <sha>` if you want it back), and golem's lessons, and
+starts golem again. The stack, golem's news, the reports about golem and its
+proposals for itself, and `.env` stay. GitHub repos stay too, until you delete them in your org's
 repositories on GitHub (golem's token can't). Nothing brings them back on its
 own; adopting one brings it back, with its past jobs. If something can't be
 deleted it says so; running it again retries.

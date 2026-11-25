@@ -44,8 +44,8 @@ phone.
     Build, Review, Docs…), which you set up with a few settings instead of
     writing a prompt, to read and change; and the modes requests can ask for.
   - **Settings:** signing in and out, notifications, pausing all work, workers,
-    golem's version, links to Insights and the public projects page, the tags,
-    and the model and effort for each kind of step.
+    golem's version, links to Insights, Reports and the public projects page,
+    the tags, and the model and effort for each kind of step.
   - **Notifications:** in Settings, "Turn on for this device". You get what
     wants you: questions, check-ins, options to pick from, answers, "Done" and
     usage limits, each opening its job (and its block). On an iPhone, first add
@@ -163,6 +163,14 @@ phone.
   and Claude usage go by kind of step, project and model, and the slowest and
   costliest steps. Each agent step's sheet has its transcript, or its live tail
   while it runs ("Checking on a job" in `docs/runbook.md`).
+- **Reports about golem:** workers report what golem itself got in their way
+  with (`golem report`: a wrong skill, a missing tool, a step that cost far too
+  many turns), and golem files its own incidents (failed tries at a step, the
+  loop guard, runs out of turns). **Reports** (from Settings, signed in) lists
+  them. Turn **Triage** on there and golem, when it's idle, reads them with its
+  own source and the jobs' logs and proposes fixes to itself, on Now and
+  Reports: take one for a prompt to paste into a Claude Code session in golem's
+  repo, or turn it down saying why. Golem never changes itself.
 
 ## Local mode
 

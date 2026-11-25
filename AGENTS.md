@@ -13,7 +13,7 @@ changing anything structural.
 | --- | --- |
 | `compose.yml` | The whole stack for a server: golem, deployer, traefik (owns 80/443 and TLS) |
 | `compose.http.yml` | Override when `EDGE_PORT` is set (behind the box's own proxy, or local mode): plain HTTP on `EDGE_PORT` |
-| `golem/` | Python service, Dockerfile and tests: bot, SQLite queue, scheduler, web app. Also the worker image. |
+| `golem/` | Python service, Dockerfile and tests: bot, SQLite queue, scheduler, web app. Also the worker image, with the `golem` command workers run (`cli.py`: `golem report`, `golem deploy`). |
 | `deployer/` | Python service, Dockerfile and tests. The only container with the Docker socket. |
 | `traefik/` | Traefik static config: `server.yml`, and `http.yml` for `compose.http.yml` |
 | `workflows/`, `skills/`, `prompts/` | Process files baked read-only into the golem image: golem's built-in workflows (seeded into its database, where Riggy edits them and makes his own), the skills workers read, and the prompts golem fills in |

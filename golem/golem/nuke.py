@@ -6,7 +6,9 @@
 bin/nuke.sh runs this after asking. It deletes every project the way deleting one does,
 every other site the deployer still has (stopped ones and hello too) with its data,
 and whatever else golem keeps per project: checkouts and job trees, run logs, the triage log,
-lessons and proposals. It keeps the stack, golem's news and .env. GitHub repos stay for Riggy to delete: golem's token can't.
+lessons and proposals. It keeps the stack, golem's news, the reports about golem with its
+proposals for itself (on its own hidden project, store.INTERNAL), and .env. GitHub repos stay
+for Riggy to delete: golem's token can't.
 """
 
 from __future__ import annotations
