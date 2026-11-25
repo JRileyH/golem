@@ -1,8 +1,9 @@
 """A project's page: its jobs on one side, the one being looked at on the other.
 
 On the left, the way to ask for something (always a job of its own, with its workflow and mode
-picked or left to golem), golem's proposals for the project while there are some, and its jobs,
-newest first, each drawn by its route. On the right, the job: where it is and what it needs
+picked or left to golem), golem's proposals for the project while there are some, and its latest
+jobs and any still under way, newest first, each drawn by its route; the rest are on its All jobs
+page, to search (jobhistory.py). On the right, the job: where it is and what it needs
 from Riggy (answered right there), a note for its next step, its workflow drawn and lit
 (flows.stage), its steps as a list, its activity (what each block did, notes, questions and
 replies), and the request and its runs.
@@ -24,7 +25,7 @@ from .pages import (STAGE_HERE, LaneData, _hidden, action_form, ask_card, badge,
                     route_strip, trail, working)  # fmt: skip
 from .store import ACTIVE, LOOKS, Job, Project, Proposal, Said, Step
 
-JOBS_SHOWN = 30  # the latest jobs in the list; "Show all" for the rest
+JOBS_SHOWN = 12  # the latest jobs in the list (and any older one still under way); the rest are on the All jobs page
 
 
 @dataclass
@@ -118,7 +119,7 @@ def proposals_part(project: Project, waiting: list[Proposal], back: str) -> str:
 
 def jobs_part(lanes: list[LaneData], selected: int | None, flows: dict[str, str], now: datetime, total: int, everything: str) -> str:
     """The jobs, newest first: each its title, workflow, where it is and its route. `total`: how
-    many it has; `everything`: where to see them all, when they aren't."""
+    many it has; `everything`: where to search them all (jobhistory.py), when they aren't all here."""
     if not lanes:
         return "<p class=empty>No jobs yet.</p>"
     rows = []
@@ -132,14 +133,18 @@ def jobs_part(lanes: list[LaneData], selected: int | None, flows: dict[str, str]
             + route_strip(job, route.chips(job, x.steps), small=True, ahead=3)
             + "</li>"
         )
-    more = f"<p class=hint><a href='{escape(everything)}'>Show all {total} jobs</a></p>" if everything else ""
+    more = f"<p class=hint><a href='{escape(everything)}'>Search all {total} jobs ›</a></p>" if everything else ""
     return f"<h2 class=section-title>Jobs</h2><ol class=job-rows>{''.join(rows)}</ol>{more}"
 
 
 def what(lane: LaneData, flows: dict[str, str]) -> str:
-    """Its workflow and mode, in words."""
-    key, mode = plan.workflow_for(lane.job, lane.project)
-    return escape(flows.get(key) or plan.what(lane.job).capitalize()) + (f", {escape(mode)}" if mode else "")
+    return workflow_words(lane.job, lane.project, flows)
+
+
+def workflow_words(job: Job, project: Project | None, flows: dict[str, str]) -> str:
+    """The job's workflow and mode, in words."""
+    key, mode = plan.workflow_for(job, project)
+    return escape(flows.get(key) or plan.what(job).capitalize()) + (f", {escape(mode)}" if mode else "")
 
 
 # --- the right: the job ------------------------------------------------------------------------

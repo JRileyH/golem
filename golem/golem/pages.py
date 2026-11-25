@@ -201,10 +201,10 @@ def sidebar(nav: list[NavProject], here: str, signed_in: bool, marks: dict[str, 
 
 
 def project_tabs(project: Project, color: int, here: str, signed_in: bool, history: bool = False) -> str:
-    """A project's own row of tabs, on each of its pages: its jobs, its settings (signed in), and,
-    if anything was said before jobs had their own activity, that (signed in). `here`: "jobs",
-    "settings" or "history"."""
-    tabs = [("jobs", f"/p/{project.slug}", "Jobs")]
+    """A project's own row of tabs, on each of its pages: its jobs (the latest, then all of them to
+    search), its settings (signed in), and, if anything was said before jobs had their own
+    activity, that (signed in). `here`: "jobs", "all", "settings" or "history"."""
+    tabs = [("jobs", f"/p/{project.slug}", "Jobs"), ("all", f"/p/{project.slug}/jobs", "All jobs")]
     if signed_in:
         tabs.append(("settings", f"/p/{project.slug}/settings", "Settings"))
         if history:
@@ -1249,6 +1249,15 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .job-row.on { border-left-color:var(--accent); background:color-mix(in srgb, var(--card) 88%, var(--accent)); }
 .job-row .row-head { display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; }
 .job-row .muted { margin:.15rem 0 0; font-size:.82rem; }
+/* All of a project's jobs, to search (jobhistory.py) */
+.job-search { display:flex; flex-direction:column; gap:.45rem; }
+.job-search .search-row { display:flex; gap:.4rem; }
+.job-search input[type=search] { flex:1; font:inherit; font-size:16px; padding:.5rem .8rem; border-radius:var(--radius); border:1px solid var(--line);
+  background:var(--bg); color:var(--ink); min-width:0; }
+.job-search .clear { margin-left:auto; font-size:.85rem; }
+.job-rows.found + .pager, .found .excerpt { font-size:.85rem; }
+.found .excerpt { margin:.3rem 0 .1rem; color:var(--ink); overflow-wrap:anywhere; }
+.pager { display:flex; gap:1rem; margin:0 0 1rem; } .pager .older { margin-left:auto; }
 .job-head h2 { font:700 1.2rem/1.25 var(--display); margin:0; }
 .job-head .sub { margin:.2rem 0 0; }
 .job-head .answer { margin:.6rem 0 0; padding:.55rem .75rem; background:var(--bg); border-radius:var(--radius); white-space:pre-wrap; }

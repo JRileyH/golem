@@ -455,6 +455,10 @@ class Job:
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 
 
+# A job's columns but those only its own page needs (its graph and vars, which can be large): for listing many.
+LISTED = ", ".join(f.name for f in fields(Job) if f.name not in ("graph", "graph_hash", "vars"))
+
+
 @dataclass
 class Step:
     id: int  # 0 for steps a job will get but hasn't yet (see plan.planned)
@@ -804,6 +808,12 @@ class Store:
     def project_jobs(self, slug: str, limit: int = 1000) -> list[Job]:
         """A project's jobs, the latest first (by when they began, as `jobs`)."""
         rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? ORDER BY created_at DESC, id DESC LIMIT ?", (slug, limit))
+        return [Job(**r) for r in rows]
+
+    def job_list(self, slug: str) -> list[Job]:
+        """Every one of a project's jobs, the latest first (as `jobs`), without their graphs and
+        vars (LISTED): to list and search them all."""
+        rows = self.db.execute(f"SELECT {LISTED} FROM jobs WHERE slug = ? ORDER BY created_at DESC, id DESC", (slug,))
         return [Job(**r) for r in rows]
 
     def project_job_count(self, slug: str) -> int:

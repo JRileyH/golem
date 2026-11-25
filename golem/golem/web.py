@@ -39,7 +39,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
-from . import about, newproject, projectpage, stages
+from . import about, jobhistory, newproject, projectpage, stages
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -405,8 +405,10 @@ def create_app(
         signed = signed_in(request)
         now = datetime.now(UTC)
         ctx = context(now)
-        everything = request.query_params.get("all") == "1"
-        jobs = store.project_jobs(project.slug, limit=1000 if everything else projectpage.JOBS_SHOWN)
+        jobs = store.project_jobs(project.slug, limit=projectpage.JOBS_SHOWN)
+        listed = {j.id for j in jobs}
+        older = [j for j in store.jobs(ACTIVE, limit=1000) if j.slug == project.slug and j.id not in listed]  # still under way
+        jobs = sorted(jobs + older, key=lambda j: (j.created_at, j.id), reverse=True)
         focus = "job" if job else "list"
         job = job or projectpage.chosen(jobs)
         lanes_ = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in jobs]
@@ -414,7 +416,7 @@ def create_app(
         total = store.project_job_count(project.slug)
         flows_ = flow_names()
         back = projectpage.href(job) if job and focus == "job" else f"/p/{project.slug}"
-        more = f"/p/{project.slug}?all=1" if total > len(jobs) else ""
+        more = f"/p/{project.slug}/jobs" if total > len(jobs) else ""
         parts = {
             "jobs": projectpage.jobs_part(lanes_, job.id if job else None, flows_, now, total, more),
             "proposals": projectpage.proposals_part(project, store.proposals(project.slug, ("open",)), back) if signed else "",
@@ -449,6 +451,18 @@ def create_app(
         if project is None or job is None or job.slug != project.slug:
             return HTMLResponse("No such job.", 404)
         return project_view(request, project, job)
+
+    async def project_jobs_page(request: Request) -> Response:
+        """All of a project's jobs, to search (jobhistory.py): its page lists only the latest."""
+        project = store.project(request.path_params["slug"])
+        if project is None:
+            return HTMLResponse("No such project.", 404)
+        signed = signed_in(request)
+        jobs, search, flows_ = store.job_list(project.slug), jobhistory.Search.of(request.query_params), flow_names()
+        found = jobhistory.results(project, jobs, search, flows_, datetime.now(UTC))
+        body = jobhistory.form(project, jobs, search, flows_) + pages.region("found", found)
+        return respond(request, f"{project.name}: all jobs", body, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
+                       subnav=tabs(project, "all", signed), parts={"found": found})  # fmt: skip
 
     async def project_ask(request: Request) -> Response:
         """A request on a project's page: always a job of its own (bot.ask)."""
@@ -921,6 +935,7 @@ def create_app(
             Route("/p", projects_list),
             Route("/p/{slug}", project_page),
             Route("/p/{slug}/settings", project_settings),
+            Route("/p/{slug}/jobs", project_jobs_page),
             Route("/p/{slug}/jobs/{job_id:int}", project_job_page),
             Route("/p/{slug}/ask", project_ask, methods=["POST"]),
             Route("/p/{slug}/history", project_history),

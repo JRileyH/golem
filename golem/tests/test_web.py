@@ -879,13 +879,14 @@ def test_every_page_is_a_click_from_anywhere(golem, page):
     golem.store.add_project("birds", "Birds", "")
     golem.store.update_job(page.job.id, state="waiting")
     sign_in(page)
-    for path in ("/", "/p", "/settings", "/insights", "/new", "/p/trees", "/p/trees/settings", f"/jobs/{page.job.id}"):
+    for path in ("/", "/p", "/settings", "/insights", "/new", "/p/trees", "/p/trees/jobs", "/p/trees/settings", f"/jobs/{page.job.id}"):
         html = page.get(path).text
         assert "<nav class=tabs" in html and "<nav class=side" in html, path  # the tab bar, and the sidebar on a wide screen
         assert "href='/p/birds/settings'" in html and "href='/settings'" in html, path  # another project's settings, golem's
         assert "class=count aria-label='1 needs you'>1</b>" in html, path  # trees is waiting on him
-    html = page.get("/p/trees/settings").text  # a project's own tabs: its jobs and settings
-    assert "<a href='/p/trees'>Jobs</a><a href='/p/trees/settings' class=on aria-current=page>Settings</a></nav>" in html
+    html = page.get("/p/trees/settings").text  # a project's own tabs: its jobs, all of them, and settings
+    assert ("<a href='/p/trees'>Jobs</a><a href='/p/trees/jobs'>All jobs</a>"
+            "<a href='/p/trees/settings' class=on aria-current=page>Settings</a></nav>") in html  # fmt: skip
     assert "<li class='c1 on'><a href='/p/trees'>" in html  # lit up in the sidebar
     assert "href='/workflows'" in html and "href=/new" in html  # Workflows, and a new project, for Riggy
     assert "class=gear href='/p/birds/settings'" in page.get("/p").text  # straight to its settings from the list
@@ -1228,6 +1229,55 @@ def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_la
     golem.store.update_job(a.id, state="waiting")
     assert chosen(newest_first()).id == a.id  # what needs him first
     assert "/p/trees/history" not in page.get("/p/trees").text  # nothing said before jobs had their own activity
+
+
+def test_a_project_page_lists_its_latest_jobs_and_all_of_them_are_a_search_away(golem, page, monkeypatch):
+    from golem import jobhistory
+    from golem.projectpage import JOBS_SHOWN
+
+    trees = page.job  # the oldest, and still queued
+    made = [golem.store.add_job("trees", "change", f"change number {i}", "feature") for i in range(JOBS_SHOWN + 3)]
+    for j in made:
+        golem.store.update_job(j.id, state="done")
+    golem.store.update_job(made[3].id, title="Bigger Leaves")
+    golem.store.update_job(made[7].id, title="Night Mode", request="make it dark at night\nand use the owl palette")
+    golem.store.update_job(made[8].id, state="failed")
+
+    html = page.get("/p/trees").text  # the latest, and one still under way however old
+    assert html.count("class='job-row") == JOBS_SHOWN + 1 and f"/p/trees/jobs/{trees.id}'" in html
+    assert f"/p/trees/jobs/{made[0].id}'" not in html and "href='/p/trees/jobs'>Search all 16 jobs ›</a>" in html
+
+    def found(query: str = "") -> str:
+        r = page.get(f"/p/trees/jobs{query}")
+        assert r.status_code == 200
+        return r.text
+
+    html = found()  # anyone can look
+    assert html.count("class=job-row>") == 16 and "<p class=hint>16 jobs</p>" in html
+    assert "<a href='/p/trees/jobs' class=on aria-current=page>All jobs</a>" in html and "class=clear" not in html
+    html = found("?q=bigger+LEAVES")  # every word, in its title or request, any case
+    assert html.count("class=job-row>") == 1 and "Bigger Leaves" in html and "1 job of 16" in html and "class=clear" in html
+    html = found("?q=owl")  # in its request: where, shown
+    assert "Night Mode" in html and "<p class=excerpt>make it dark at night and use the owl palette</p>" in html
+    html = found(f"?q=%23{made[2].id}")  # its number
+    assert html.count("class=job-row>") == 1 and f"/p/trees/jobs/{made[2].id}'" in html
+    html = found("?state=active")
+    assert html.count("class=job-row>") == 1 and "<span class='badge queued'>Queued</span>" in html and "<option value='active' selected>" in html
+    assert found("?state=failed").count("class=job-row>") == 1 and "No jobs match." in found("?state=killed")
+    html = found("?workflow=web_app")  # the workflows its jobs ran, even from before workflows
+    assert html.count("class=job-row>") == 1 and f"/p/trees/jobs/{trees.id}'" in html and "<option value='change'>" in html
+    assert found("?state=nope").count("class=job-row>") == 16
+    assert "value='&lt;b&gt;'" in found("?q=<b>")
+
+    monkeypatch.setattr(jobhistory, "PER_PAGE", 5)  # a page at a time, keeping the search
+    html = found()
+    assert "1–5 of 16 jobs" in html and "href='/p/trees/jobs?page=2'>Older ›" in html and "Newer" not in html
+    html = found("?state=done&page=2")
+    assert "6–10 of 14 found" in html and "href='/p/trees/jobs?state=done'>‹ Newer" in html and "?state=done&amp;page=3'>Older" in html
+    assert "16–16 of 16" in found("?page=99") and "Older" not in found("?page=99")
+    parts = page.get("/p/trees/jobs?q=owl&parts=found,nope").json()  # what its refresh asks for: the search kept
+    assert set(parts) == {"found"} and "Night Mode" in parts["found"] and "Bigger Leaves" not in parts["found"]
+    assert page.get("/p/nope/jobs").status_code == 404
 
 
 def test_blocks_are_golems_stage_texts_to_read_and_change(golem, page):

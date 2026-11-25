@@ -26,7 +26,9 @@ phone.
   - **Projects:** a card for each project: its screenshot once it's live, what
     it is, its tag and site, and its latest job's route. A project's page has its
     jobs on the left: **Ask for…** (a change, or a question), golem's proposals
-    for it, and its jobs, newest first. On the right, the job you picked (the
+    for it, and its latest 12 jobs (and any still under way), newest first; its
+    **All jobs** tab has the rest, to search by words or number and filter by
+    how they went and their workflow. On the right, the job you picked (the
     one waiting on you, else the one running, else the latest): where it is and
     what it needs from you, a note for its next step, run it next or last or
     stop it; its workflow drawn and lit where the job is (containers open in
