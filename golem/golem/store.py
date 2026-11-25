@@ -1,5 +1,5 @@
 """SQLite: the project registry, the job queue and each job's steps, Riggy's notes to jobs,
-run records, and the conversation (talk.py).
+run records, the conversation (talk.py), and reports about golem itself (reports.py).
 
 One process owns the database and every call is short, so a single connection is enough.
 """
@@ -11,6 +11,8 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from .reports import worst
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv (
@@ -223,6 +225,33 @@ CREATE TABLE IF NOT EXISTS shipments (
     created_at TEXT NOT NULL,
     ended_at TEXT
 );
+-- Reports about golem itself (reports.py): workers' (`golem report`) and golem's own incidents,
+-- for golem's triage to turn into proposals for golem. No foreign keys: they outlive their projects.
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,              -- agent | golem
+    kind TEXT NOT NULL,                -- reports.KINDS
+    impact TEXT NOT NULL,              -- blocked | costly | minor: for an incident, the worst it's been
+    summary TEXT NOT NULL,             -- one line
+    detail TEXT NOT NULL DEFAULT '',
+    fingerprint TEXT NOT NULL DEFAULT '',  -- what makes golem's incidents the same one; '' for a worker's
+    count INTEGER NOT NULL DEFAULT 1,  -- how many times it's happened
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    job_id INTEGER,                    -- where it happened (the latest time): job, step and run
+    step_id INTEGER,
+    run_id INTEGER,
+    slug TEXT NOT NULL DEFAULT '',
+    label TEXT NOT NULL DEFAULT '',    -- the step, as Riggy sees it
+    model TEXT NOT NULL DEFAULT '',    -- the run's engine, for a worker's
+    version TEXT NOT NULL DEFAULT '',  -- golem's commit then
+    state TEXT NOT NULL DEFAULT 'new', -- new | triaged | accepted | dismissed (reports.STATES)
+    proposal_id INTEGER,               -- the proposal for golem that cites it
+    triage_job INTEGER,                -- the triage job that read it
+    note TEXT NOT NULL DEFAULT ''      -- triage's word on it, for one it didn't make a proposal of
+);
+CREATE INDEX IF NOT EXISTS reports_by_state ON reports (state, id);
+CREATE INDEX IF NOT EXISTS reports_by_fingerprint ON reports (fingerprint);
 """
 
 # Columns added after the first release, added to older databases on open.
@@ -374,6 +403,37 @@ class Proposal:
     created_at: str
     decided_at: str | None
     issue: int | None = None  # its GitHub issue, a record of it there: golem never reads it back
+
+
+@dataclass
+class Report:
+    """Something that got in the way of golem's work, about golem itself (reports.py)."""
+
+    id: int
+    source: str  # agent | golem
+    kind: str
+    impact: str
+    summary: str
+    detail: str
+    fingerprint: str
+    count: int
+    first_seen: str
+    last_seen: str
+    job_id: int | None
+    step_id: int | None
+    run_id: int | None
+    slug: str
+    label: str
+    model: str
+    version: str
+    state: str  # new | triaged | accepted | dismissed
+    proposal_id: int | None
+    triage_job: int | None
+    note: str
+
+
+# Where a report came from: what golem knows about a run or step, filled in by golem, never the worker.
+REPORT_PLACE = ("job_id", "step_id", "run_id", "slug", "label", "model", "version")
 
 
 @dataclass
@@ -1194,6 +1254,65 @@ class Store:
         """The project's proposals jobs, oldest first."""
         rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? AND start = 'propose' ORDER BY id", (slug,))
         return [Job(**r) for r in rows]
+
+    # --- reports about golem itself (reports.py) ---------------------------------
+
+    def _insert_report(self, source: str, kind: str, impact: str, summary: str, detail: str, fingerprint: str, place: dict) -> int:
+        at = now()
+        extra = {k: v for k, v in place.items() if k in REPORT_PLACE and v is not None}
+        columns = ["source", "kind", "impact", "summary", "detail", "fingerprint", "first_seen", "last_seen", *extra]
+        cur = self.db.execute(
+            f"INSERT INTO reports ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+            (source, kind, impact, summary, detail, fingerprint, at, at, *extra.values()),
+        )
+        return cur.lastrowid
+
+    def add_report(self, kind: str, impact: str, summary: str, detail: str = "", **place) -> Report:
+        """A worker's report. `place` is where it came from (REPORT_PLACE)."""
+        return self.report(self._insert_report("agent", kind, impact, summary, detail, "", place))
+
+    def file_incident(self, fingerprint: str, kind: str, impact: str, summary: str, detail: str = "", **place) -> Report:
+        """One of golem's own incidents: counted on its report if it's had one, the latest of where
+        and what it said kept, at its worst impact; a new report otherwise. Once Riggy took a fix
+        for one (accepted), it happening again is news: a new report."""
+        with self.db:
+            self.db.execute("BEGIN")
+            row = self.db.execute(
+                "SELECT * FROM reports WHERE fingerprint = ? AND state != 'accepted' ORDER BY id DESC LIMIT 1", (fingerprint,)
+            ).fetchone()
+            if row is None:
+                found = self._insert_report("golem", kind, impact, summary, detail, fingerprint, place)
+            else:
+                found = row["id"]
+                latest = {k: place.get(k) for k in REPORT_PLACE if k in place}
+                fields = {"count": row["count"] + 1, "last_seen": now(), "impact": worst(row["impact"], impact),
+                          "summary": summary, "detail": detail, **latest}  # fmt: skip
+                self.db.execute(
+                    f"UPDATE reports SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?", (*fields.values(), found)
+                )
+        return self.report(found)
+
+    def report(self, report_id: int) -> Report | None:
+        row = self.db.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        return Report(**row) if row else None
+
+    def reports(self, states: tuple[str, ...] | None = None, source: str = "", limit: int = 200) -> list[Report]:
+        """Reports, the latest to happen first; only those in `states`, and from `source`, if given."""
+        where, args = [], []
+        if states:
+            where.append(f"state IN ({', '.join('?' * len(states))})")
+            args += states
+        if source:
+            where.append("source = ?")
+            args.append(source)
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        rows = self.db.execute(f"SELECT * FROM reports{clause} ORDER BY last_seen DESC, id DESC LIMIT ?", (*args, limit))
+        return [Report(**r) for r in rows]
+
+    def new_reports(self, limit: int = 100) -> list[Report]:
+        """Reports triage hasn't read yet, oldest first."""
+        rows = self.db.execute("SELECT * FROM reports WHERE state = 'new' ORDER BY id LIMIT ?", (limit,))
+        return [Report(**r) for r in rows]
 
     # --- runs -----------------------------------------------------------------
 
