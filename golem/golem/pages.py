@@ -115,8 +115,7 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
     `subnav` is a row of tabs under the header (a project's: project_tabs). `bottom` sticks to the
     bottom of the screen, outside the refreshed part, so what's being written there is never
     lost. `behind` marks Settings: a new version of golem is on GitHub. `stage` comes after the
-    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date; or, where the
-    body has STAGE_HERE, there, between its refreshed regions (region)."""
+    refreshed part: a workflow's graph (flows.stage), which keeps itself up to date."""
     left = f"<a href='{escape(up[0])}' class=up>‹ {escape(up[1])}</a>" if up else ""
     tab, needs = TAB_OF.get(here, "projects"), sum(1 for p in nav if p.state == "waiting")
     marks = {"now": _count_mark(needs), "settings": "<i class=dot aria-label='new version'></i>" if behind else ""}
@@ -138,13 +137,12 @@ def page(title: str, body: str, signed_in: bool, paused: bool, flash: str = "", 
 <link rel=manifest href=/manifest.webmanifest>{pwa.touch_icon()}
 <meta name=apple-mobile-web-app-capable content=yes><meta name=apple-mobile-web-app-title content=Golem>
 <div class=bar><header class=top>{left}<h1>{brand.LOCKUP if title == "golem" else escape(title)}</h1>{new}</header>{subnav}</div>
-{banner}{flash_html}<main id=lanes>{body.replace(STAGE_HERE, stage) if STAGE_HERE in body else body}</main>{"" if STAGE_HERE in body else stage}<div class=dock>{latest}{bottom}{tabs}</div>
+{banner}{flash_html}<main id=lanes>{body}</main>{stage}<div class=dock>{latest}{bottom}{tabs}</div>
 {sidebar(nav, here, signed_in, marks)}
 <dialog id=sheet aria-label='Step'><button class='quiet close' aria-label=Close>✕</button><div class=sheet-body></div></dialog>
 <script>{SCRIPT}</script>{f"<script>{pwa.CLIENT}</script>" if signed_in else ""}{static_scripts(stage)}</html>"""
 
 
-STAGE_HERE = "<!--stage-->"  # where in a page's body its graph goes
 
 
 def region(name: str, html: str) -> str:
@@ -1226,11 +1224,9 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .jobs-pane, .job-pane { min-width:0; }
 @media (min-width:56rem) {
   .panes { grid-template-columns:minmax(19rem, 25rem) minmax(0, 1fr); }
-  .view-toggle { display:none !important; }
 }
 @media (max-width:55.99rem) {
   .panes[data-focus=list] .job-pane, .panes[data-focus=job] .jobs-pane { display:none; }
-  .job-pane[data-view=steps] .flow, .job-pane[data-view=graph] [data-part=steps] { display:none; }
 }
 .project-head { margin:0 0 .8rem; } .project-head p { margin:0 0 .3rem; color:var(--muted); font-size:.92rem; }
 .project-head .out { display:flex; gap:.8rem; font-size:.88rem; }
@@ -1263,12 +1259,6 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .job-head .answer { margin:.6rem 0 0; padding:.55rem .75rem; background:var(--bg); border-radius:var(--radius); white-space:pre-wrap; }
 .job-head .add-note { margin:.6rem 0 0; } .job-head .add-note summary { cursor:pointer; color:var(--muted); font-size:.88rem; }
 .job-controls { margin-top:.7rem; }
-.view-toggle { display:flex; gap:0; margin:0 0 .7rem; background:var(--card); border-radius:var(--radius); box-shadow:0 2px 0 var(--edge); padding:.2rem; }
-.view-toggle a { flex:1; text-align:center; padding:.4rem; border-radius:var(--radius); color:var(--muted); font-weight:600; font-size:.9rem; text-decoration:none; }
-.view-toggle a.on { background:var(--bg); color:var(--ink); }
-.job-pane .flow { width:100%; padding:0; margin:0 0 .85rem; }
-.job-pane .flow-tools { right:.5rem; }
-.job-pane .flow-canvas { height:min(62vh, 38rem); }
 .route-list { list-style:none; padding:0; margin:0; }
 .rl { padding:.45rem 0; border-top:1px solid var(--line); } .rl:first-child { border-top:0; }
 .rl .what { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; }
@@ -1690,16 +1680,6 @@ SCRIPT = """
   refresh = async () => { const stay = atBottom(); await oldRefresh(); dates(main); if (stay && latest) toBottom(); placeLatest(); };
   clocks(document.body); dates(main);
   if (location.hash === '#end') { if (latest) toBottom(); history.replaceState(null, '', location.pathname + location.search); }
-  // A job's pane on a phone: its steps or its graph, a tap apart (the graph fits once it's shown: flow.js).
-  document.querySelectorAll('.view-toggle a[data-view]').forEach(a => a.addEventListener('click', e => {
-    const pane = a.closest('[data-view]:not(a)');
-    if (!pane || e.metaKey || e.ctrlKey) return;
-    e.preventDefault();
-    pane.dataset.view = a.dataset.view;
-    a.parentElement.querySelectorAll('a').forEach(b => b.classList.toggle('on', b === a));
-    const q = new URLSearchParams(location.search); q.set('view', a.dataset.view); q.delete('msg');
-    history.replaceState(null, '', location.pathname + '?' + q + location.hash);
-  }));
   placeLatest();
   main.querySelectorAll('.log').forEach(l => l.scrollTop = l.scrollHeight);
   setInterval(() => refresh(), 10000);

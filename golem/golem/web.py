@@ -467,23 +467,17 @@ def create_app(
             "jobs": projectpage.jobs_part(lanes_, job.id if job else None, flows_, now, total, more),
             "proposals": projectpage.proposals_part(project, store.proposals(project.slug, ("open",)), back) if signed else "",
         }
-        graphed, stage, details = False, "", ""
+        details = ""
         if job:
-            path = request.query_params.get("path", "")
-            graphed = flows.job_view(settings, store, job) is not None
-            if graphed:
-                stage = flows.stage(f"/jobs/{job.id}/flow.json" + (f"?path={quote(path)}" if path else ""))
             parts["head"] = projectpage.head_part(open_, flows_, signed, now)
-            parts["steps"] = projectpage.steps_part(open_, signed, now, graphed, store.steps(job.id))
+            parts["steps"] = projectpage.steps_part(open_, signed, now, store.steps(job.id))
             parts["activity"] = projectpage.activity_part(store.job_messages(job.id) if signed else [], signed)
             details = projectpage.details(job, store.runs(job.id))
             live.forget({r["id"] for r in store.runs(job.id)[-1:]} if job.state in ACTIVE else set())
-        view = request.query_params.get("view", "")
         links = {"Site": settings.project_url(project.slug), "Repo": settings.repo_url(project.slug)}
-        body = projectpage.layout(project, parts, open_, signed, picks(), focus, view, graphed, details, links)
+        body = projectpage.layout(project, parts, open_, signed, picks(), focus, details, links)
         up = (f"/p/{project.slug}", project.name) if focus == "job" else ("/p", "Projects")
-        return respond(request, project.name, body, signed, here=project.slug, up=up, subnav=tabs(project, "jobs", signed),
-                       stage=stage, parts=parts)  # fmt: skip
+        return respond(request, project.name, body, signed, here=project.slug, up=up, subnav=tabs(project, "jobs", signed), parts=parts)
 
     async def project_page(request: Request) -> Response:
         project = visible_project(request.path_params["slug"])
@@ -674,24 +668,6 @@ def create_app(
             return Response("No such file.", 404)
         return FileResponse(pages.STATIC_DIR / name, media_type="text/javascript",
                             headers={"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"})  # fmt: skip
-
-    async def job_flow(request: Request) -> Response:
-        """Where a job's graph was: it's in its pane now."""
-        job = store.job(request.path_params["job_id"])
-        if job is None or store.project(job.slug) is None:
-            return HTMLResponse("No such job.", 404)
-        path = request.query_params.get("path", "")
-        return RedirectResponse(f"{projectpage.href(job)}?view=graph" + (f"&path={quote(path)}" if path else ""), 302)
-
-    async def job_flow_json(request: Request) -> Response:
-        job = store.job(request.path_params["job_id"])
-        found = flows.job_view(settings, store, job, request.query_params.get("path", "")) if job else None
-        if found is None:
-            return JSONResponse({"error": "No such job, or it's over."}, 404)
-        if not signed_in(request):  # what a block's told to do is for Riggy
-            for n in found["nodes"]:
-                n["info"] = [i for i in n["info"] if i[0] != "instructions"]
-        return JSONResponse(found, headers={"Cache-Control": "no-store"})
 
     async def workflows_list(request: Request) -> Response:
         signed = signed_in(request)
@@ -1004,7 +980,6 @@ def create_app(
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
             Route("/static/{name}", static),
-            Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
             Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),
             Route("/workflows/blocks", blocks_page), Route("/workflows/blocks/{stage}", stage_page),
             Route("/workflows/{workflow_id:int}/told", workflow_told),

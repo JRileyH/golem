@@ -21,7 +21,7 @@ from html import escape
 
 from . import plan, route
 from .conversation import proposals_card, thread
-from .pages import (STAGE_HERE, LaneData, _hidden, action_form, ask_card, badge, headline, region, request_card, route_list,
+from .pages import (LaneData, _hidden, action_form, ask_card, badge, headline, region, request_card, route_list,
                     route_strip, trail, working)  # fmt: skip
 from .store import ACTIVE, INTERNAL, LOOKS, Job, Project, Proposal, Said, Step
 
@@ -52,10 +52,9 @@ def chosen(jobs: list[Job]) -> Job | None:
 
 
 def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signed_in: bool, picks: Picks,
-           focus: str, view: str, graphed: bool, details: str, links: dict[str, str]) -> str:  # fmt: skip
-    """The page around its parts. `focus`: which side a phone shows, "list" or "job"; `view`: the
-    job's steps or its graph, on a phone; `graphed`: the job has a graph (STAGE_HERE marks where);
-    `links`: where it's live and its repo, by name."""
+           focus: str, details: str, links: dict[str, str]) -> str:  # fmt: skip
+    """The page around its parts. `focus`: which side a phone shows, "list" or "job"; `links`:
+    where it's live and its repo, by name."""
     out = "".join(f"<a href='{escape(url)}' target=_blank rel=noopener>{escape(name)} ↗</a>" for name, url in links.items())
     left = (
         "<section class=jobs-pane aria-label=Jobs>"
@@ -68,18 +67,9 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
     if lane is None or lane.job is None:
         right = "<section class=job-pane><p class=empty>No jobs yet." + (" Ask for something and it starts one." if signed_in else "") + "</p></section>"
     else:
-        job = lane.job
-        toggle = (
-            f"<nav class=view-toggle aria-label='Steps or graph'><a href='{href(job)}?view=steps' data-view=steps{' class=on' if view != 'graph' else ''}>Steps</a>"
-            f"<a href='{href(job)}?view=graph' data-view=graph{' class=on' if view == 'graph' else ''}>Graph</a></nav>"
-            if graphed
-            else ""
-        )
         right = (
-            f"<section class=job-pane aria-label='Job #{job.id}' data-view={'graph' if view == 'graph' and graphed else 'steps'}>"
+            f"<section class=job-pane aria-label='Job #{lane.job.id}'>"
             + region("head", parts["head"])
-            + toggle
-            + (STAGE_HERE if graphed else "")
             + region("steps", parts["steps"])
             + region("activity", parts.get("activity", ""))
             + details
@@ -186,10 +176,10 @@ def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datet
     )
 
 
-def steps_part(lane: LaneData, signed_in: bool, now: datetime, graphed: bool, trace: list[Step]) -> str:
-    """Its route stood up; for a job from before workflows, the way it went."""
-    if not graphed:
-        return f"<section class=card><h2>The way it went</h2><p class=muted>This job is from before workflows, so there's no graph of it.</p>{trail(trace, lane.job)}</section>"
+def steps_part(lane: LaneData, signed_in: bool, now: datetime, trace: list[Step]) -> str:
+    """Its route stood up; for a job from before workflows (it has no copy of one), the way it went."""
+    if not lane.job.graph and lane.job.state not in ACTIVE:
+        return f"<section class=card><h2>The way it went</h2><p class=muted>This job is from before workflows.</p>{trail(trace, lane.job)}</section>"
     return f"<section class='card steps-card'><h2>Steps</h2>{route_list(lane, route.chips(lane.job, lane.steps), signed_in, now)}</section>"
 
 

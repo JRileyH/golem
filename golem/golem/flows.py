@@ -1,10 +1,8 @@
-"""Workflows drawn: what the browser's graph (static/flow.js) is given to draw, for a workflow's
-tab or a job walking its copy of one, and the pages around it.
+"""Workflows drawn: what the browser's graph (static/flow.js) is given to draw for a workflow's
+tab, and the pages around it.
 
-The server says everything about a block (its label, its outputs, its state in a job, where
-tapping it goes); the script only draws and, in the editor, edits. A job's graph is drawn a level
-at a time: its workflow, or a container opened up (`path`), with each container lit by the blocks
-inside it.
+The server says everything about a block (its label, its outputs, where tapping it goes); the
+script only draws and, in the editor, edits.
 """
 
 from __future__ import annotations
@@ -12,11 +10,9 @@ from __future__ import annotations
 import json
 import re
 from html import escape
-from urllib.parse import quote
 
 from . import about, engine, layout, plan, stages
-from .config import Settings
-from .store import ACTIVE, OPEN, Job, Step, Store, Workflow
+from .store import Store, Workflow
 
 CODE_NOTES = {
     "setup": "repo, checkout and issue", "vet": "golem's checks of a repo", "refresh": "the checkout up to date",
@@ -125,114 +121,6 @@ def workflow_view(store: Store, wf: Workflow, mode: str) -> dict:
         if n["type"] == "container" and (sub := store.workflow(key=next(x for x in tab.graph["nodes"] if x["id"] == n["id"]).get("workflow", ""))):
             n["open"] = f"/workflows/{sub.id}"
     return {"nodes": nodes, "edges": edges, "problems": problems.get("", []), "poll": 0}
-
-
-# --- a job --------------------------------------------------------------------------
-
-STATE = {"running": "now", "waiting": "waiting", "done": "done", "failed": "failed", "skipped": "skipped", "pending": "next"}
-
-
-def job_view(settings: Settings, store: Store, job: Job, path: str = "") -> dict | None:
-    """A level of the job's copy of its workflow to draw, lit by where the job is (or how it
-    went): each block's state, how many times it's run, and its sheet. None for a job from
-    before workflows, which has no copy."""
-    snap = plan.snapshot(job) or (plan.preview(settings, store, job) if job.state in ACTIVE else None)
-    if snap is None:
-        return None
-    levels = snap.get("levels") or {}
-    level = levels.get(path) if path in levels else levels.get("")
-    if level is None:
-        return None
-    graph = level.get("graph") or _flat_graph(snap)
-    outputs = {}
-    for n in graph.get("nodes") or []:
-        if n["type"] == "container":
-            inner = levels.get(_join(path, n["id"]), {}).get("graph") or {}
-            outputs[n["id"]] = engine.outputs_of(inner)
-    subs = {k: v.get("name", "") for k, v in levels.items()}
-    nodes, edges = drawn(graph, outputs, {n.get("workflow", ""): subs.get(_join(path, n["id"]), "") for n in graph.get("nodes") or [] if n["type"] == "container"})
-    trace = store.steps(job.id)
-    ahead = {s.node_id: s for s in plan.planned(settings, store, job) if not s.id and s.node_id}
-    page, src = job_href(job), f"/jobs/{job.id}/flow.json"  # a level's page, and its data for opening it in place
-    frozen = snap.get("nodes") or {}  # a stage block's text, as the job took it (Library.freeze)
-    for n in nodes:
-        flat = _join(path, n["id"])
-        told = (frozen.get(flat) or {}).get("instructions")
-        if told and not any(k == "instructions" for k, _ in n["info"]):
-            n["info"].append(["instructions", told])
-        if n["type"] == "container":
-            inside = [s for s in trace if s.node_id.startswith(flat + "/")]
-            todo = any(k.startswith(flat + "/") for k in ahead)
-            n["state"], n["visits"] = _combined(inside, todo), 0
-            n["open"], n["src"] = f"{page}?view=graph&path={quote(flat)}", f"{src}?path={quote(flat)}"
-            continue
-        mine = [s for s in trace if s.node_id == flat]
-        if n["type"] in ("start", "input"):
-            n["state"] = "done" if trace else ""
-        elif mine:
-            last = mine[-1]
-            n["state"] = STATE.get(last.state, "")
-            n["visits"] = sum(1 for s in mine if s.state not in OPEN or s.started_at)
-            n["href"] = f"/steps/{last.id}"
-        elif flat in ahead:
-            n["state"] = "skipped" if ahead[flat].state == "skipped" else "todo"
-            n["href"] = f"/jobs/{job.id}/planned/{ahead[flat].position}"
-        elif n["type"] == "end" and job.state == "done":
-            n["state"] = "done"
-    crumbs = [{"label": levels.get("", {}).get("name") or "Workflow", "href": f"{page}?view=graph", "src": src}]
-    parts = [p for p in path.split("/") if p] if path in levels else []
-    for i in range(len(parts)):
-        sub = "/".join(parts[: i + 1])
-        crumbs.append({"label": levels.get(sub, {}).get("name") or parts[i], "href": f"{page}?view=graph&path={quote(sub)}",
-                       "src": f"{src}?path={quote(sub)}"})  # fmt: skip
-    note = ""
-    if job.graph and job.workflow:
-        changed = _current_digest(settings, store, job)
-        if changed and changed != job.graph_hash:
-            note = "Started before this workflow was last changed: it carries on as it was."
-    return {"nodes": nodes, "edges": edges, "crumbs": crumbs, "note": note, "poll": 10 if job.state in ACTIVE else 0}
-
-
-def job_href(job: Job) -> str:
-    """A job's own page: its project's, with it open."""
-    return f"/p/{job.slug}/jobs/{job.id}"
-
-
-def _join(path: str, nid: str) -> str:
-    return f"{path}/{nid}" if path else nid
-
-
-def _combined(inside: list[Step], todo: bool) -> str:
-    """A container's state, from the steps inside it."""
-    states = {s.state for s in inside}
-    for state, shown in (("running", "now"), ("waiting", "waiting"), ("pending", "next")):
-        if state in states:
-            return shown
-    if inside:
-        return "todo" if todo else ("failed" if inside[-1].state == "failed" else "done")
-    return "todo" if todo else ""
-
-
-def _flat_graph(snap: dict) -> dict:
-    """A job's copy from before workflows had levels: its flat blocks, laid out."""
-    nodes = [{"id": "start", "type": "start"}] + [{k: v for k, v in n.items() if k not in ("x", "y")} for n in snap["nodes"].values()]
-    edges = [{"from": "start", "port": engine.NEXT, "to": snap["start"]}]
-    edges += [{"from": nid, "port": p, "to": to} for nid, outs in snap["edges"].items() for p, to in outs.items()]
-    return layout.place({"nodes": nodes, "edges": edges})
-
-
-def _current_digest(settings: Settings, store: Store, job: Job) -> str:
-    """The digest a job's copy would have if it were made now: "" if it can't be."""
-    from .workflows import Library
-
-    wf = store.workflow(key=job.workflow)
-    if wf is None:
-        return ""
-    try:
-        snap = Library(store, settings.process_dir / "workflows", settings.web_password).pin(wf, job.start, job.mode)
-    except engine.GraphError:
-        return ""
-    return engine.digest(snap)
 
 
 # --- pages ----------------------------------------------------------------------------

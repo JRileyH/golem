@@ -1147,47 +1147,15 @@ def test_the_graph_script_is_served_by_name_and_cached_by_its_hash(page):
     assert page.get("/static/../web.py").status_code == 404 and page.get("/static/nope.js").status_code == 404
 
 
-def test_a_running_job_is_drawn_lit_where_it_is(golem, page):
+def test_a_job_page_lists_its_steps_and_one_from_before_workflows_shows_the_way_it_went(golem, page):
     job = page.job
     start(golem, job, "mvp")
-    assert page.get(f"/jobs/{job.id}/flow?path=ship", follow_redirects=False).headers["location"] == "/p/trees/jobs/1?view=graph&path=ship"
-    html = page.get(f"/jobs/{job.id}/flow").text  # in its pane now
-    assert "data-src='/jobs/1/flow.json'" in html and "/static/flow.js?v=" in html and "data-view=graph" in html
-    assert html.index("<div data-part=head>") < html.index("class=flow ") < html.index("<div data-part=steps>")  # between the parts that refresh
-    view = page.get(f"/jobs/{job.id}/flow.json").json()
-    nodes = {n["id"]: n for n in view["nodes"]}
-    assert (nodes["spec"]["state"], nodes["mvp"]["state"], nodes["buildout"]["state"]) == ("done", "next", "todo")
-    assert nodes["ship"]["type"] == "container" and nodes["ship"]["state"] == "done" and nodes["ship"]["open"] == "/p/trees/jobs/1?view=graph&path=ship"
-    assert nodes["ship"]["src"] == "/jobs/1/flow.json?path=ship"  # opened in place
-    assert nodes["ship-2"]["state"] == "todo" and nodes["mvp"]["href"].startswith("/steps/")
-    assert nodes["buildout"]["href"].startswith("/jobs/1/planned/")
-    assert {"from": "mvp", "port": "done", "to": "ship-2"} in view["edges"] and view["poll"] == 10
-    assert [c["label"] for c in view["crumbs"]] == ["Web app"]
-    assert not any(k == "instructions" for k, _ in nodes["spec"]["info"])  # signed out: not what agents are told
-    sign_in(page)
-    assert any(k == "instructions" for k, _ in {n["id"]: n for n in page.get(f"/jobs/{job.id}/flow.json").json()["nodes"]}["spec"]["info"])
-
-
-def test_a_container_opens_to_its_own_blocks(golem, page):
-    job = page.job
-    start(golem, job, "mvp")
-    view = page.get(f"/jobs/{job.id}/flow.json?path=ship").json()
-    nodes = {n["id"]: n for n in view["nodes"]}
-    assert nodes["push"]["state"] == "done" and nodes["fix"].get("state", "") == "" and nodes["out-shipped"]["type"] == "output"
-    assert [c["label"] for c in view["crumbs"]] == ["Web app", "Ship"]
-    assert nodes["checks"]["ports"] == ["pass", "fail"]
-
-
-def test_a_job_thats_over_is_still_drawn_and_one_from_before_workflows_shows_the_way_it_went(golem, page):
-    job = page.job
-    start(golem, job, "mvp")
-    golem.store.update_job(job.id, state="done")
-    view = page.get(f"/jobs/{job.id}/flow.json").json()
-    assert view["poll"] == 0 and {n["id"]: n.get("state") for n in view["nodes"]}["spec"] == "done"
-    golem.store.update_job(job.id, graph="")  # a job from before workflows has no copy
+    html = page.get(f"/p/trees/jobs/{job.id}").text
+    assert "steps-card" in html and "class=flow " not in html and "view-toggle" not in html and "/static/flow.js" not in html
     assert page.get(f"/jobs/{job.id}/flow.json").status_code == 404
-    html = page.get(f"/jobs/{job.id}/flow").text
-    assert "The way it went" in html and "class=trail" in html and "class=flow " not in html
+    golem.store.update_job(job.id, state="done", graph="")  # a job from before workflows has no copy
+    html = page.get(f"/p/trees/jobs/{job.id}").text
+    assert "The way it went" in html and "class=trail" in html
 
 
 def test_workflows_are_listed_and_drawn_for_riggy(golem, page):
