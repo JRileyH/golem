@@ -1180,10 +1180,14 @@ def test_repeated_errors_wait_longer_each_time_then_ask_riggy_for_help(golem):
             assert (parked.state, parked.attempts) == ("parked", attempt)
             wait = datetime.fromisoformat(parked.retry_at) - datetime.now(UTC)
             assert timedelta(minutes=minutes) - timedelta(seconds=5) < wait <= timedelta(minutes=minutes)
+            assert golem.store.reports()[0].impact == "minor"  # it may yet go
         await golem.scheduler.step(golem.store.job(job.id))
         assert golem.store.job(job.id).state == "waiting"
         assert golem.chat.texts(room)[-1].startswith("I'm stuck on spec after 4 tries: npm exploded")
         assert current(golem, job.id).error == "npm exploded"
+        [incident] = golem.store.reports()  # each try counted on one report about golem
+        assert (incident.source, incident.kind, incident.impact, incident.count) == ("golem", "friction", "blocked", 4)
+        assert (incident.summary, incident.label, incident.job_id) == ("spec failed: npm exploded", "spec", job.id)
 
     run(go())
 
@@ -1203,6 +1207,14 @@ def test_stuck_on_one_of_golems_own_steps_asks_only_to_try_again(golem):
         await golem.reply("trees", "try again")
         await golem.step()
         assert "merge PR #1" in golem.workspace.actions
+
+        # The same trouble on another project is the same report about golem, counted up.
+        birds = a_change(golem, "birds")
+        await golem.until("merge")
+        golem.workspace.merge_errors = ["merging PR #2 on birds: GraphQL: Something went wrong"]
+        await golem.step()
+        [incident] = golem.store.reports()
+        assert (incident.kind, incident.count, incident.impact, incident.slug, incident.job_id) == ("environment", 5, "blocked", "birds", birds.id)
 
     run(go())
 
@@ -1277,6 +1289,10 @@ def test_running_out_of_turns_gets_a_wrapup_in_the_same_session(golem):
         job = golem.store.active_job("tree-cards")
         step = current(golem, job.id)
         assert (step.name, step.error) == ("spec", "ran out of turns: The spec has no out-of-scope list yet.")
+        ran_out = next(r for r in golem.store.reports() if r.summary.startswith("spec ran out"))
+        assert (ran_out.kind, ran_out.impact) == ("friction", "costly")
+        assert ran_out.summary == f"spec ran out of its {golem.harness.calls[-2].max_turns} turns"
+        assert ran_out.detail == "What it said it had left: The spec has no out-of-scope list yet."
 
         # The next attempt is told, and carries on from the commits.
         golem.harness.script = [RunResult("max_turns", session_id="s-10"), {"finished": True, "message": "Spec written."}]
@@ -2329,6 +2345,10 @@ def test_merging_in_circles_asks_riggy_for_a_hint(golem):
         assert golem.store.job(job.id).state == "waiting"
         assert sum(s.name == "resolve" for s in golem.store.steps(job.id)) == 4
         assert golem.chat.texts("trees")[-1].startswith("I've tried to merge main into Change 1 3 times and it still conflicts")
+        [incident] = golem.store.reports()  # golem's own report about it, for its triage
+        assert (incident.source, incident.kind, incident.impact) == ("golem", "friction", "blocked")
+        assert incident.summary == "Merging main into a change still conflicted after 3 resolve steps"
+        assert "src/app.js" in incident.detail and incident.job_id == job.id
 
     run(go())
 

@@ -92,6 +92,10 @@ def test_a_job_that_goes_round_too_often_asks_before_going_on(golem):
             "Reply to let it carry on (with a hint, if you have one), or stop the job."
         )
         assert [c.label for c in golem.harness.calls].count("build") == 2  # it asked before the third
+        [incident] = golem.store.reports()  # golem's own report about it, for its triage
+        assert (incident.source, incident.kind, incident.impact, incident.label) == ("golem", "friction", "blocked", "build")
+        assert incident.summary == "The loop guard stopped a job at build: 3 visits, 4 agent runs"
+        assert "- judge (done)" in incident.detail
         await golem.reply(room, "try a different approach")
         await golem.step()
         build = [c for c in golem.harness.calls if c.label == "build"]

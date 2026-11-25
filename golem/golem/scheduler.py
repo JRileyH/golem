@@ -35,6 +35,7 @@ import logging
 import os
 import shutil
 import signal
+import traceback
 from contextvars import ContextVar
 from string import Template
 from dataclasses import asdict, dataclass, field, replace
@@ -293,7 +294,7 @@ class Scheduler:
             raise
         except Exception as e:
             log.error("job %s crashed", job.id, exc_info=e)
-            await self.retry_or_ask(job, f"golem error: {e!r}")
+            await self.retry_or_ask(job, f"golem error: {e!r}", traceback.format_exc())
         finally:
             self.running.pop(job.id, None)
             self.wake()
@@ -477,6 +478,10 @@ class Scheduler:
                     await self.say(project, said, notice=True)
                 else:
                     self.store.update_job(job.id, state="waiting", attempts=0)
+                    self.incident(
+                        job, step, ("resolve",), "friction", "blocked",
+                        f"Merging main into a change still conflicted after {tries} resolve steps", outcome.problem,
+                    )  # fmt: skip
                     await self.say(
                         project,
                         f"I've tried to merge main into {plan.title(job)} {tries} times and it still conflicts: "
@@ -500,7 +505,7 @@ class Scheduler:
                 if outcome.detail:  # the whole of what failed, each try, kept where its runs' logs are
                     with self.error_log(job, step).open("a") as out:
                         out.write(f"--- {now()}: {outcome.problem}\n{outcome.detail}\n\n")
-                await self.retry_or_ask(job, outcome.problem)
+                await self.retry_or_ask(job, outcome.problem, outcome.detail)
             case "refused":  # nothing was written to the repo: golem forgets it was ever asked
                 await self.status(outcome.problem)  # golem's news, on Now: the project's page goes with it
                 await teardown.forget_project(project, self.settings, self.store, self.workspace)
@@ -563,7 +568,14 @@ class Scheduler:
             return False
         vars["guard"] = {**guard, "asked": True}
         self.store.update_job(job.id, vars=vars, state="waiting", attempts=0)
-        runs = sum(1 for s in self.store.steps(job.id) if s.kind == "agent" and s.started_at and s.id != step.id)
+        steps = self.store.steps(job.id)
+        runs = sum(1 for s in steps if s.kind == "agent" and s.started_at and s.id != step.id)
+        lately = [f"- {plan.label(s)} ({s.state}): {s.error or s.summary or ''}"[:300] for s in steps if s.started_at][-8:]
+        self.incident(
+            job, step, ("guard", job.workflow, step.name), "friction", "blocked",
+            f"The loop guard stopped a job at {plan.label(step)}: {step.visit} visits, {runs} agent runs",
+            "The steps before it:\n" + "\n".join(lately),
+        )  # fmt: skip
         await self.say(
             project,
             f"{plan.title(job)} has come round to {plan.label(step)} {step.visit} times ({runs} agent runs so far), "
@@ -571,12 +583,22 @@ class Scheduler:
         )
         return True
 
-    async def retry_or_ask(self, job: Job, error: str) -> None:
+    async def retry_or_ask(self, job: Job, error: str, detail: str = "") -> None:
+        """A step that failed: tried again a while later, or after the last try, Riggy asked.
+        Each failure is one of golem's incidents (reports.py): `detail` is all that failed said."""
         job = self.store.job(job.id)
         if job is None or job.state == "killed":  # gone with its project, or stopped
             return
         attempts = job.attempts + 1
         project = self.store.project(job.slug)
+        step = plan.current(self.store.steps(job.id))
+        if step is not None:
+            kind = "bug" if error.startswith("golem error:") else "friction" if step.kind == "agent" else "environment"
+            self.incident(
+                job, step, ("retry", step.kind, step.name, reports.normalize(error, job.slug)), kind,
+                "minor" if attempts < MAX_ATTEMPTS else "blocked", f"{plan.label(step)} failed: {_first_line(error, 160)}",
+                f"{error}\n\n{detail}".strip(),
+            )  # fmt: skip
         if attempts < MAX_ATTEMPTS:
             wait = ERROR_BACKOFF[attempts - 1]
             self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(wait), resume_session=None)
@@ -588,7 +610,6 @@ class Scheduler:
             return
         # Stuck after retries is one of the few reasons to interrupt Riggy.
         self.store.update_job(job.id, state="waiting", attempts=0, resume_session=None)
-        step = plan.current(self.store.steps(job.id))
         name = plan.label(step) if step else "the job"
         # Only a worker reads a hint; golem's own steps (merge, deploy...) just go again.
         ask = "Reply with a hint and I'll try again" if step and step.kind == "agent" else "Reply to try again"
@@ -633,13 +654,18 @@ class Scheduler:
         schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
         if outputs:  # its verdict is the output it takes, or blocked
             schema = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": [*(o["name"] for o in outputs), "blocked"]}}}
-        result = await self.execute(job, project, step, step.name, step.max_turns or FIX_TURNS, prompt, resume, schema, block=block)
+        turns = step.max_turns or FIX_TURNS
+        result = await self.execute(job, project, step, step.name, turns, prompt, resume, schema, block=block)
         if result.outcome == "max_turns" and result.session_id:
             wrapped = wrapup_schema(schema)
             wrapup = await self.execute(
                 job, project, step, f"{step.name}-wrapup", WRAPUP_TURNS, self.prompts.wrapup(bool(schema)), result.session_id, wrapped
             )
             said = str((wrapup.verdict or {}).get("message", "")).strip()
+            self.incident(
+                job, step, ("max_turns", job.workflow, step.name), "friction", "costly",
+                f"{plan.label(step)} ran out of its {turns} turns", f"What it said it had left: {said or '(nothing)'}",
+            )  # fmt: skip
             if wrapup.outcome != "verdict":
                 result = wrapup
             elif wrapup.verdict.get("finished") is True:  # with what the step made, if it says
@@ -801,12 +827,25 @@ class Scheduler:
         made = [r for r in map(reports.parse, lines) if r]
         if len(made) < len(lines):
             log.warning("job %s run %s: %s line(s) in its reports file weren't reports", job.id, run_id, len(lines) - len(made))
-        version = (self.upgrades.version() or {}).get("running", "")
         for r in made[: reports.MAX_PER_RUN]:
             self.store.add_report(
                 r["kind"], r["impact"], reports.redact(r["summary"], os.environ), reports.redact(r["detail"], os.environ),
-                job_id=job.id, step_id=step.id, run_id=run_id, slug=project.slug, label=plan.label(step), model=model, version=version,
+                job_id=job.id, step_id=step.id, run_id=run_id, slug=project.slug, label=plan.label(step), model=model,
+                version=self.version(),
             )  # fmt: skip
+
+    def incident(self, job: Job, step: Step, same: tuple[str, ...], kind: str, impact: str, summary: str, detail: str = "") -> None:
+        """One of golem's own incidents, as a report about golem (reports.py): the same again (by
+        `same`, what makes two of them one) counts up on its report. Costs no tokens."""
+        detail = reports.redact(detail, os.environ)[-reports.INCIDENT_CHARS :]
+        self.store.file_incident(
+            reports.fingerprint(*same), kind, impact, reports.redact(summary, os.environ)[: reports.SUMMARY_CHARS], detail,
+            job_id=job.id, step_id=step.id or None, slug=job.slug, label=plan.label(step), version=self.version(),
+        )  # fmt: skip
+
+    def version(self) -> str:
+        """The commit of golem that's running, as the deployer last said ("" if it can't say)."""
+        return (self.upgrades.version() or {}).get("running", "")
 
     async def monitor(
         self, job: Job, project: Project, step: Step, label: str, log_path: Path, seen: int, run: asyncio.Task
