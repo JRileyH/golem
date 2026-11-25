@@ -1432,6 +1432,71 @@ def test_a_step_that_stops_doing_anything_is_restarted(golem, monkeypatch):
     run(go())
 
 
+def test_a_workers_reports_about_golem_are_read_in_after_its_run(golem, monkeypatch):
+    from golem import cli
+
+    monkeypatch.setenv("GOLEM_GITHUB_TOKEN", "ghs_notarealtokennotarealtoken12")
+
+    async def act(log_path, env):
+        gzip.open(log_path, "wt").close()
+        assert env["GOLEM_RUN"] == str(golem.store.runs()[-1]["id"])
+        cli.main(["report", "instructions", "costly", "skills/deploy.md says port 80; compose says 8080",
+                  "--detail", "I pasted ghs_notarealtokennotarealtoken12 into a command"], env)  # fmt: skip
+        cli.main(["report", "wish", "minor", "a way to see CI logs"], env)
+        with open(env["GOLEM_REPORTS"], "a") as f:  # past the command's checks
+            f.write("not a report\n" + json.dumps({"kind": "bug", "impact": "minor", "summary": "a third"}) + "\n")
+        return RunResult("verdict", verdict=verdict("done", "Spec written."))
+
+    async def go():
+        await new_project(golem, [])
+        await golem.until("spec")
+        golem.scheduler.harness = Worker(act)
+        job = golem.store.active_job("tree-cards")
+        spec = current(golem, job.id)
+        await golem.step()
+        ran = golem.store.runs(job.id)[-1]
+        filed = sorted(golem.store.reports(), key=lambda r: r.id)
+        assert [r.summary for r in filed] == ["skills/deploy.md says port 80; compose says 8080", "a way to see CI logs"]
+        first = filed[0]
+        assert (first.source, first.kind, first.impact, first.state) == ("agent", "instructions", "costly", "new")
+        assert (first.job_id, first.step_id, first.run_id, first.slug, first.label, first.model) == (
+            job.id, spec.id, ran["id"], "tree-cards", "spec", ran["model"],
+        )  # fmt: skip
+        assert first.detail == "I pasted [GOLEM_GITHUB_TOKEN] into a command"
+
+        golem.harness.script = [verdict("done")]
+        golem.scheduler.harness = golem.harness
+        await golem.step()  # the next run files nothing: nothing more is read in
+        assert len(golem.store.reports()) == 2
+
+    run(go())
+
+
+def test_a_stopped_runs_reports_are_still_read_in(golem):
+    from golem import cli
+
+    started = asyncio.Event()
+
+    async def act(log_path, env):
+        gzip.open(log_path, "wt").close()
+        cli.main(["report", "environment", "blocked", "npm can't reach the registry"], env)
+        started.set()
+        await asyncio.sleep(3600)
+
+    async def go():
+        await new_project(golem, [])
+        golem.scheduler.harness = Worker(act)
+        loop = asyncio.create_task(golem.scheduler.run_forever())
+        await asyncio.wait_for(started.wait(), 5)
+        job = golem.store.active_job("tree-cards")
+        await golem.control.kill(job.id)
+        await soon(lambda: not golem.scheduler.running)
+        assert [r.summary for r in golem.store.reports()] == ["npm can't reach the registry"]
+        loop.cancel()
+
+    run(go())
+
+
 # --- commands -----------------------------------------------------------------
 
 

@@ -41,7 +41,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, legacy, options, plan, proposals, shipments, stages, teardown, turns
+from . import about, adopt, engine, legacy, options, plan, proposals, reports, shipments, stages, teardown, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -758,6 +758,8 @@ class Scheduler:
         run_id = self.store.start_run(job.id, label, str(chosen), str(log_path), step.id)
         notes = self.progress_path(job)
         seen = notes.stat().st_size if notes.exists() else 0  # notes from earlier steps were passed on then
+        filed = self.reports_path(job)
+        filed_before = filed.stat().st_size if filed.exists() else 0  # earlier runs' reports were read then
         run = asyncio.create_task(
             self.harness.run(
                 cwd=self.checkout(project, job),
@@ -766,7 +768,7 @@ class Scheduler:
                 effort=chosen.effort,
                 max_turns=max_turns,
                 log_path=log_path,
-                env=self.worker_env(project, job),
+                env={**self.worker_env(project, job), "GOLEM_RUN": str(run_id)},
                 resume=resume,
                 schema=schema,
                 label=label,
@@ -779,6 +781,7 @@ class Scheduler:
             run.cancel()
             await asyncio.wait({run})
             self.store.finish_run(run_id, "killed")
+            self.take_reports(job, project, current, run_id, str(chosen), filed_before)
             raise
         finally:
             monitor.cancel()
@@ -787,7 +790,23 @@ class Scheduler:
         else:
             result = run.result()
         self.store.finish_run(run_id, result.outcome, session_id=result.session_id, **result.usage)
+        self.take_reports(job, project, current, run_id, str(chosen), filed_before)
         return result
+
+    def take_reports(self, job: Job, project: Project, step: Step, run_id: int, model: str, offset: int) -> None:
+        """The reports about golem a run filed (`golem report`, past byte `offset` of the job's
+        reports file), into the store with where they came from. At most reports.MAX_PER_RUN, and
+        no secrets: they're shown on golem's pages and pasted into prompts."""
+        lines, _ = _new_lines(self.reports_path(job), offset)
+        made = [r for r in map(reports.parse, lines) if r]
+        if len(made) < len(lines):
+            log.warning("job %s run %s: %s line(s) in its reports file weren't reports", job.id, run_id, len(lines) - len(made))
+        version = (self.upgrades.version() or {}).get("running", "")
+        for r in made[: reports.MAX_PER_RUN]:
+            self.store.add_report(
+                r["kind"], r["impact"], reports.redact(r["summary"], os.environ), reports.redact(r["detail"], os.environ),
+                job_id=job.id, step_id=step.id, run_id=run_id, slug=project.slug, label=plan.label(step), model=model, version=version,
+            )  # fmt: skip
 
     async def monitor(
         self, job: Job, project: Project, step: Step, label: str, log_path: Path, seen: int, run: asyncio.Task
@@ -1431,6 +1450,10 @@ class Scheduler:
         """Where the worker appends progress notes for Riggy, one line each (prompts/step.md)."""
         return self.settings.job_logs(job.id) / "progress.txt"
 
+    def reports_path(self, job: Job) -> Path:
+        """Where the worker's `golem report` appends its reports about golem, a JSON line each (cli.py)."""
+        return self.settings.job_logs(job.id) / "reports.jsonl"
+
     def worker_env(self, project: Project, job: Job) -> dict[str, str]:
         """What a worker is told. Workers on other projects may run beside it, so it gets ports
         and a TMPDIR of its own: its slot's GOLEM_PORT to GOLEM_PORT+9, and its job's directory."""
@@ -1441,6 +1464,7 @@ class Scheduler:
             GOLEM_SLUG=project.slug,
             GOLEM_JOB=str(job.id),
             GOLEM_PROGRESS=str(self.progress_path(job)),
+            GOLEM_REPORTS=str(self.reports_path(job)),
             GOLEM_URL=self.settings.project_url(project.slug),
             GITHUB_ORG=self.settings.org,
             GOLEM_PLATFORM=self.settings.platform,
