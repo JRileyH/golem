@@ -1328,20 +1328,6 @@ def test_interrupted_jobs_carry_on_from_their_step(golem):
     run(go())
 
 
-def test_jobs_from_before_steps_pick_up_where_they_were(golem):
-    async def go():
-        await new_project(golem, [])
-        job = golem.store.active_job("tree-cards")
-        # Phase 3 of the old standard playbook was buildout; it had run before.
-        golem.store.update_job(job.id, phase=3, state="queued")
-        golem.store.start_run(job.id, "buildout", "opus/high", "log")
-        steps = golem.scheduler.ensure_steps(golem.store.job(job.id))
-        assert [s.state for s in steps[:15]] == ["done"] * 15 and steps[0].summary == plan.LEGACY_DONE
-        assert plan.label(current(golem, job.id)) == "buildout"
-
-    run(go())
-
-
 def test_kill_stops_the_running_step(golem):
     started = asyncio.Event()
 

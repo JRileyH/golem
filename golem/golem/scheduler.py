@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, legacy, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
+from . import about, adopt, engine, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -347,19 +347,10 @@ class Scheduler:
             await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state == "rejected")
 
     def ensure_started(self, job: Job) -> list[Step]:
-        """The job's steps; the first time, its own copy of its workflow and its first step. A job
-        under way from before workflows gets a graph of its own made from its steps (legacy.py)."""
+        """The job's steps; the first time, its own copy of its workflow and its first step."""
         job = self.store.job(job.id) or job
         steps = self.store.steps(job.id)
-        if job.state not in ACTIVE:
-            return steps
-        if not steps and (job.phase or self.store.runs(job.id)):  # under way from before steps were tracked
-            self.store.add_steps(job.id, plan.planned(self.settings, self.store, job))
-            steps = self.store.steps(job.id)
-        if steps:
-            if not job.graph and not job.workflow:
-                legacy.convert(self.store, job)
-                steps = self.store.steps(job.id)
+        if job.state not in ACTIVE or steps:
             return steps
         job = self.pin(job)
         moved = engine.advance(plan.snapshot(job), plan.vars_of(job), [], None, None, job.id)
