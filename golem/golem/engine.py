@@ -39,11 +39,9 @@ CONTROL = ("counter", "condition")
 NEXT = "next"  # the one output of a block that doesn't choose
 # Agent blocks with a contract return more than a verdict, and some route by it.
 CONTRACTS = {"options": ("done",), "design": ("directions", "nothing"), "propose": ("done",)}
-TYPES = (
-    "start", "end", "input", "output", "agent", "script", "counter", "condition", "checkin", "choose", "container", *CODE,
-)  # fmt: skip
+TYPES = ("start", "end", "input", "output", "agent", "counter", "condition", "checkin", "choose", "container", *CODE)
 # Blocks Riggy may skip from the status page; they then leave by `skip_to` (their first output unless set).
-SKIPPABLE = ("agent", "checkin", "choose", "script")
+SKIPPABLE = ("agent", "checkin", "choose")
 OPERATORS = {">": operator.gt, ">=": operator.ge, "<": operator.lt, "<=": operator.le, "==": operator.eq, "!=": operator.ne}
 TURNS = ("build", "ship", "none")
 RESERVED = ("blocked",)  # an agent's verdict that isn't a way out: it asks Riggy and carries on
@@ -58,16 +56,15 @@ class GraphError(Exception):
 
 @dataclass(frozen=True)
 class Sub:
-    """A workflow at one level of a job: its graph for the tab it resolves to."""
+    """A workflow at one level of a job."""
 
     key: str  # what containers name it by
     name: str
-    tab: str  # "" for its default tab
     graph: dict = field(hash=False, compare=False)
 
 
-# Finds the sub-workflow a container names, for its tab setting and the job's mode.
-Resolver = Callable[[str, str, str], Sub]
+# Finds the sub-workflow a container names.
+Resolver = Callable[[str], Sub]
 
 
 # --- one graph ----------------------------------------------------------------
@@ -87,8 +84,6 @@ def ports(node: dict, outputs: dict[str, list[str]] | None = None) -> list[str]:
         return ["true", "false"]
     if t == "choose":
         return ["picked", "more"]
-    if t == "script":
-        return ["pass", "fail"]
     if t == "agent":
         if node.get("contract") in CONTRACTS:
             return list(CONTRACTS[node["contract"]])
@@ -133,12 +128,12 @@ def digest(value: object) -> str:
 # --- flattening -----------------------------------------------------------------
 
 
-def flatten(root: Sub, start: str, mode: str, resolve: Resolver, outputs_ok: bool = False) -> dict:
+def flatten(root: Sub, start: str, resolve: Resolver, outputs_ok: bool = False) -> dict:
     """The job's own copy of a workflow: one flat graph, every container opened in place.
 
     Block ids are their containers' ids and their own, joined by "/". `levels` says which
-    workflow and tab each level is (the top is ""), for the running view; `intros` holds each
-    level's intro. End blocks of jobs that only look are `silent`: their last block said it.
+    workflow each level is (the top is ""), for naming containers; `intros` holds each level's
+    intro. End blocks of jobs that only look are `silent`: their last block said it.
     `outputs_ok`: flattening a sub-workflow on its own, its Outputs stay, as blocks `out:<name>`."""
     nodes: dict[str, dict] = {}
     raw: dict[str, dict[str, tuple]] = {}  # flat id -> {port: symbolic target}
@@ -149,14 +144,14 @@ def flatten(root: Sub, start: str, mode: str, resolve: Resolver, outputs_ok: boo
 
     def open_up(sub: Sub, path: str, seen: tuple[str, ...]) -> None:
         g = sub.graph
-        levels[path] = {"key": sub.key, "name": sub.name, "tab": sub.tab, "graph": g}  # the graph as drawn, for the running view
+        levels[path] = {"key": sub.key, "name": sub.name}
         intros[path] = g.get("intro") or ""
         here, wired = by_id(g), wires(g)
         flat = (lambda i: f"{path}/{i}") if path else (lambda i: i)
         outs: dict[str, list[str]] = {}
         for n in g.get("nodes") or []:
             if n["type"] == "container":
-                inner = resolve(n["workflow"], n.get("tab") or "auto", mode)
+                inner = resolve(n["workflow"])
                 if inner.key in seen:
                     raise GraphError(f"{inner.name} contains itself")
                 outs[n["id"]] = outputs_of(inner.graph)
@@ -210,7 +205,7 @@ def flatten(root: Sub, start: str, mode: str, resolve: Resolver, outputs_ok: boo
 
     edges = {nid: {p: settle(sym) for p, sym in outs.items()} for nid, outs in raw.items()}
     return {
-        "v": 1, "start": settle(starts[""]), "kind": start, "mode": mode,
+        "v": 1, "start": settle(starts[""]), "kind": start,
         "nodes": nodes, "edges": edges, "levels": levels, "intros": intros,
     }  # fmt: skip
 
@@ -233,7 +228,7 @@ def kind_of(node: dict) -> tuple[str, str]:
         return "alert", "alert"
     if t == "counter":
         return "counter", node["counter"]
-    if t in ("script", "checkin", "choose", "condition"):
+    if t in ("checkin", "choose", "condition"):
         return t, node.get("name") or t
     return t, t
 
@@ -257,17 +252,13 @@ def visits(trace: list[Step], node_id: str) -> int:
     return sum(1 for s in trace if s.node_id == node_id)
 
 
-def evaluate(node: dict, counters: dict[str, int], trace: list[Step], mode: str, unknown: bool | None = None) -> bool:
+def evaluate(node: dict, counters: dict[str, int], trace: list[Step], unknown: bool | None = None) -> bool:
     """A condition block's answer: its rows, all or any of them. A counter nothing has set yet is
     0, unless `unknown` says what a row about one comes out as (a prediction shows the work a
     block like vet hasn't counted yet)."""
     results = []
     for row in node.get("rows") or []:
         of, name, op, value = row.get("of"), row.get("name", ""), row.get("op", "=="), row.get("value")
-        if of == "mode":
-            have, want = mode or "", str(value or "")
-            results.append(have == want if op in ("==", "is") else have != want)
-            continue
         if of == "visits":
             ref = f"{node['path']}/{name}" if node.get("path") else name
             have = visits(trace, ref)
@@ -337,7 +328,7 @@ def advance(snap: dict, vars: dict, trace: list[Step], node_id: str | None, port
                 vars["counters"][key] = vars["counters"].get(key, 0) + 1
                 out = NEXT
             else:
-                out = "true" if evaluate(node, vars["counters"], trace, snap.get("mode", "")) else "false"
+                out = "true" if evaluate(node, vars["counters"], trace) else "false"
             done = row(snap, to, trace, vars, job_id)
             done.problem, done.state, done.port = None, "done", out
             done.summary = f"{node['counter']}: {vars['counters'][counter_key(node, node['counter'])]}" if t == "counter" else out
@@ -392,7 +383,7 @@ def predict(snap: dict, vars: dict, trace: list[Step], node_id: str | None) -> l
             at = snap["edges"][at][NEXT]
             continue
         if node["type"] == "condition":
-            at = snap["edges"][at]["true" if evaluate(node, counters, trace, snap.get("mode", ""), unknown=True) else "false"]
+            at = snap["edges"][at]["true" if evaluate(node, counters, trace, unknown=True) else "false"]
             continue
         path.append(at)
         at = _first(snap, vars, at)

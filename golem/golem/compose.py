@@ -32,8 +32,8 @@ def composed(folder: Path = REPO / "workflows") -> dict[str, str]:
     out = {}
     for key, wf in sorted(found.items()):
         sub = wf.start == "sub"
-        root = engine.Sub(key, wf.name, "", wf.graph) if sub else workflows.top(found, key, "")
-        snap = engine.flatten(root, "change" if sub else wf.start, "", workflows.resolver(found), outputs_ok=sub)
+        root = workflows.top(found, key)
+        snap = engine.flatten(root, "change" if sub else wf.start, workflows.resolver(found), outputs_ok=sub)
         out[f"{key}._intro.md"] = (snap["intros"].get("") or "").strip() + "\n"
         path = engine.happy_path(snap)
         order = path + [n for n in snap["nodes"] if n not in path]

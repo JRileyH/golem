@@ -1,25 +1,17 @@
-"""Jobs walking workflows: blocks that choose their way on, script blocks, the loop guard, modes
-and choosing a workflow."""
+"""Jobs walking workflows: blocks that choose their way on, the loop guard, modes and choosing a
+workflow."""
 
 from __future__ import annotations
 
 import asyncio
 
+from conftest import add_workflow
 from test_flow import by_label, idle_project, new_project, verdict
 
 from golem import plan, workflows
 
 def run(coro):
     return asyncio.run(coro)
-
-
-def add_workflow(golem, key: str, blocks: list, md: str = "", start: str = "change"):
-    """A workflow of Riggy's, saved as the editor saves one: valid and signed."""
-    subs = {wf.key: workflows.engine.outputs_of(golem.store.tab(wf.id, "").working) for wf in golem.store.workflows() if wf.start == "sub"}
-    graph = workflows.build(blocks, md, start == "sub", subs)
-    wf = golem.store.add_workflow(key, key, key.replace("_", " ").title(), start, "For tests.")
-    golem.store.put_tab(wf.id, "", graph, graph, [], golem.scheduler.library.sign(graph))
-    return wf
 
 
 def change_job(golem, key: str, request: str = "do the thing"):
@@ -48,7 +40,9 @@ JUDGED = [
 JUDGED_MD = "Text for every block.\n\n## build\n\nBuild it.\n\n## judge\n\nSay whether it works."
 
 
-def test_an_agent_with_several_outputs_chooses_the_way_on(golem):
+def test_an_agent_with_several_outputs_chooses_the_way_on(own):
+    golem = own
+
     async def go():
         await idle_project(golem)
         add_workflow(golem, "judged", JUDGED, JUDGED_MD)
@@ -62,13 +56,15 @@ def test_an_agent_with_several_outputs_chooses_the_way_on(golem):
         assert "## How this step ends" in judge.prompt and "- `fail`: it doesn't yet" in judge.prompt
         build = next(c for c in golem.harness.calls if c.label == "build")
         assert "After your step: judge." in build.prompt and "What comes next depends on the verdict you choose" in judge.prompt
-        assert "# Quality bar" not in build.prompt  # Riggy's own workflow: no web-app rules it didn't ask for
+        assert "# Quality bar" not in build.prompt  # a workflow that doesn't build for the web: no web-app rules
         assert golem.store.job(job.id).graph  # finished: its copy stays, its record of how it went
 
     run(go())
 
 
-def test_a_job_that_goes_round_too_often_asks_before_going_on(golem):
+def test_a_job_that_goes_round_too_often_asks_before_going_on(own):
+    golem = own
+
     async def go():
         room = await idle_project(golem)
         golem.store.put("guard_visits", "2")
@@ -93,41 +89,6 @@ def test_a_job_that_goes_round_too_often_asks_before_going_on(golem):
         await golem.step()
         build = [c for c in golem.harness.calls if c.label == "build"]
         assert len(build) == 3 and "> try a different approach" in build[-1].prompt
-
-    run(go())
-
-
-# --- script blocks ----------------------------------------------------------------------
-
-TESTED = [
-    "setup",
-    {"script": "tests", "command": "test -f ok.txt || (echo 'npm test: ok.txt is missing'; exit 3)", "fail": "mend"},
-    {"use": "ship"},
-    "end",
-    {"agent": "mend", "turns": 20, "done": "tests"},
-]
-
-
-def test_a_script_block_passes_on_exit_0_and_its_failure_goes_to_the_next_agent(golem):
-    async def go():
-        await idle_project(golem)
-        add_workflow(golem, "tested", TESTED, "## mend\n\nMake the tests pass.")
-        job = change_job(golem, "tested")
-
-        def mend(call) -> dict:
-            (call.cwd / "ok.txt").write_text("fixed")
-            return verdict("done", "Added the missing file.")
-
-        golem.harness.script = by_label({"mend": [mend]})
-        await golem.finish()
-        assert golem.store.job(job.id).state == "done"
-        assert trail(golem, job.id)[:5] == ["set up", "tests✗", "mend", "tests#2", "push"]
-        prompt = next(c for c in golem.harness.calls if c.label == "mend").prompt
-        assert "## What golem's checks found" in prompt and "npm test: ok.txt is missing" in prompt and "exited 3" in prompt
-        failed, passed = [s for s in golem.store.steps(job.id) if s.kind == "script"]
-        assert (failed.port, passed.port, passed.visit) == ("fail", "pass", 2)
-        log = next(golem.settings.job_logs(job.id).glob("*-tests.log")).read_text()
-        assert log.startswith("$ test -f ok.txt") and "ok.txt is missing" in log
 
     run(go())
 
@@ -217,7 +178,9 @@ def test_a_second_change_waits_for_the_first_on_a_project_that_takes_one_at_a_ti
 from golem import route  # noqa: E402
 
 
-def test_a_jobs_route_is_its_blocks_in_order_loops_once_and_containers_as_one(golem):
+def test_a_jobs_route_is_its_blocks_in_order_loops_once_and_containers_as_one(own):
+    golem = own
+
     async def go():
         await idle_project(golem)
         add_workflow(golem, "judged", JUDGED, JUDGED_MD)

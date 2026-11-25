@@ -98,10 +98,10 @@ def graph() -> dict:
 def snapshot() -> dict:
     """A triage job's own copy of its workflow, as a job keeps one (engine.flatten)."""
 
-    def nothing_to_open(key: str, tab: str, mode: str) -> engine.Sub:
+    def nothing_to_open(key: str) -> engine.Sub:
         raise engine.GraphError("triage has no containers")
 
-    return engine.flatten(engine.Sub("triage", "Triage", "", graph()), TRIAGE, "", nothing_to_open)
+    return engine.flatten(engine.Sub("triage", "Triage", graph()), TRIAGE, nothing_to_open)
 
 
 def due(store: Store, at: datetime, spare: bool = False) -> bool:

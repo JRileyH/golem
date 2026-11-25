@@ -26,8 +26,9 @@ from .deployer_client import Deployer, DeployerError
 from .harness import Harness
 from .prompts import Prompts
 from .scheduler import WORKER_ENV_DENY, Scheduler
-from .store import Job, Project, Store, Workflow
+from .store import Job, Project, Store
 from .talk import Talk
+from .workflows import Builtin
 from .workspace import About, Workspace, WorkspaceError
 
 log = logging.getLogger(__name__)
@@ -70,8 +71,8 @@ class Bot:
         async with self.lock:
             if not intake.valid_slug(slug) or await self.slug_taken(slug):
                 raise ValueError(f"{slug} can't be had.")
-            wf = self.store.workflow(key=workflow) if workflow else None
-            if wf is None or wf.archived or wf.start != "new":
+            wf = self.library.get(workflow)
+            if wf is None or wf.start != "new":
                 wf = self.library.fallback("new")
             about = await self.summarize(name, idea)
             project = self.store.add_project(slug, name.strip()[:60], about.summary, mode="", model=model, effort=effort)
@@ -141,14 +142,14 @@ class Bot:
 
     def kinds(self) -> list[options.Kind]:
         """The workflows a project's request can be for: changes, and those that only look."""
-        return [options.Kind(w.key, w.handle, w.start == "look", w.ingest) for w in self.library.choices(("change", "look"))]
+        return [options.Kind(w.key, w.start == "look", w.ingest) for w in self.library.choices(("change", "look"))]
 
-    def builtin(self, key: str, start: str) -> Workflow | None:
-        """One of golem's own workflows by key, if it's there to use, else the start type's fallback."""
-        wf = self.store.workflow(key=key)
-        return wf if wf and not wf.archived and wf.start == start else self.library.fallback(start)
+    def builtin(self, key: str, start: str) -> Builtin | None:
+        """One of golem's own workflows by key, if it's there, else the start type's fallback."""
+        wf = self.library.get(key)
+        return wf if wf and wf.start == start else self.library.fallback(start)
 
-    def start_job(self, project: Project, wf: Workflow, mode: str, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
+    def start_job(self, project: Project, wf: Builtin, mode: str, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
         """A job for a request, running a workflow in a mode."""
         kind = kind or {"new": "new", "adopt": "adopt"}.get(wf.start, "change")
         job = self.store.add_job(project.slug, kind, request, wf.key, priority=priority, title=title, start=wf.start)
@@ -164,9 +165,9 @@ class Bot:
         says which workflow it's for. `mode` None for the project's default, "" for none."""
         fallback = self.library.fallback("change")
         asked = await options.read_request(self.harness, self.settings, text, self.kinds(), fallback.key if fallback else "")
-        picked = self.store.workflow(key=workflow) if workflow else None
-        if picked is None or picked.archived or picked.start not in ("change", "look"):
-            picked = self.store.workflow(key=asked.workflow) or fallback
+        picked = self.library.get(workflow)
+        if picked is None or picked.start not in ("change", "look"):
+            picked = self.library.get(asked.workflow) or fallback
         mode = plan.mode_for(project) if mode is None else plan.mode_for(None, mode)
         async with self.lock:
             job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
@@ -205,7 +206,7 @@ class Bot:
             self.store.add_note(job.id, request)
             follow = "The current job will update the references and redeploy."
         else:
-            self.start_job(project, self.library.fallback("change") or self.store.workflow(key="change"), plan.mode_for(project), request,
+            self.start_job(project, self.library.fallback("change"), plan.mode_for(project), request,
                            f"Move to {new}")  # fmt: skip
             follow = "A job is updating the references and will redeploy."
         return (

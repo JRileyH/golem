@@ -89,11 +89,10 @@ class Control:
         the survey an adoption's check runs (adopt.py) and its triage of reports about itself
         (triage.py)."""
         names: list[str] = []
-        for wf in self.store.workflows():
-            for tab in self.store.tabs(wf.id).values():
-                for node in plan.blocks_in_order(tab.graph):
-                    if node["type"] == "agent" and node.get("name") and node["name"] not in names:
-                        names.append(node["name"])
+        for wf in self.scheduler.library.all():
+            for node in plan.blocks_in_order(wf.graph):
+                if node["type"] == "agent" and node.get("name") and node["name"] not in names:
+                    names.append(node["name"])
         golems = ("fix", "resolve", "survey", "triage")
         return [*names, *(n for n in golems if n not in names), *(f"stage:{k}" for k in stages.catalog())]
 

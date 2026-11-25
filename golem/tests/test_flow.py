@@ -327,16 +327,14 @@ def test_no_ci_at_all_is_something_to_fix(golem, monkeypatch):
 
 
 def tire_after(golem, fixes: int) -> None:
-    """Ship's fix loop asks Riggy for a hint after this many fixes: its workflow, edited."""
-    ship = golem.store.workflow(key="ship")
-    graph = json.loads(json.dumps(golem.store.tab(ship.id, "").working))
-    for n in graph["nodes"]:
-        if n["id"] == "tired":
-            n["rows"][0]["value"] = fixes
-    golem.store.put_tab(ship.id, "", graph, graph, [], golem.scheduler.library.sign(graph))
+    """Ship's fix loop asks Riggy for a hint after this many fixes: its file, edited (an `own` golem's)."""
+    yml = golem.settings.process_dir / "workflows" / "ship.yml"
+    assert yml.parent != REPO / "workflows" and '[[counter, fixes, ">=", 4]]' in yml.read_text()
+    yml.write_text(yml.read_text().replace('[[counter, fixes, ">=", 4]]', f'[[counter, fixes, ">=", {fixes}]]'))
 
 
-def test_fixing_in_circles_asks_riggy_for_a_hint(golem):
+def test_fixing_in_circles_asks_riggy_for_a_hint(own):
+    golem = own
     tire_after(golem, 1)
 
     async def go():

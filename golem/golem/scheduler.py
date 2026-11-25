@@ -62,7 +62,6 @@ DOING: ContextVar[tuple[int | None, int | None]] = ContextVar("doing", default=(
 
 WRAPUP_TURNS = 15
 FIX_TURNS = 150
-SCRIPT_TIMEOUT = 600  # seconds a script block runs before golem stops it, unless it says
 TEST_TIMEOUT = 1200  # seconds a Test block gives bin/test
 SCRIPT_TAIL = 4096  # bytes of a failed script's output the next agent block gets
 SURVEY_TURNS = 100  # install, run the tests, read for what it needs
@@ -97,8 +96,8 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
-USES_TREE = ("agent", "script", "push", "merge", "deploy", "alert", "sync")
-TREE_STEPS = ("setup", "vet", "agent", "script", "sync", "push", "merge")  # steps after which the branch's commit is kept
+USES_TREE = ("agent", "test", "push", "merge", "deploy", "alert", "sync")
+TREE_STEPS = ("setup", "vet", "agent", "test", "sync", "push", "merge")  # steps after which the branch's commit is kept
 
 
 @dataclass
@@ -359,10 +358,9 @@ class Scheduler:
     ensure_steps = ensure_started
 
     def pin(self, job: Job) -> Job:
-        """The job's own copy of its workflow, for its mode: nothing done to the workflow from now
-        on changes it. If the workflow can't run (its last working state broken by a sub-workflow
-        changing since), its start type's fallback, and Riggy is told. A triage job took its copy
-        when it was made, from golem's code (triage.py): no workflow is one."""
+        """The job's own copy of its workflow: nothing done to the workflow from now on changes it.
+        One golem doesn't have (any more), its start type's fallback, and Riggy is told. A triage
+        job took its copy when it was made, from golem's code (triage.py): no workflow is one."""
         if job.start == TRIAGE:
             if job.graph:
                 return job
@@ -370,18 +368,15 @@ class Scheduler:
             return self.store.update_job(job.id, workflow="triage", graph=json.dumps(snap), graph_hash=engine.digest(snap))
         project = self.store.project(job.slug)
         key, mode = plan.workflow_for(job, project)
-        wf = self.store.workflow(key=key)
-        try:
-            if wf is None:
-                raise engine.GraphError(f"there's no workflow called {key} any more")
-            snap = self.library.pin(wf, job.start, mode)
-        except engine.GraphError as e:
+        wf = self.library.get(key)
+        if wf is None or wf.start != job.start:
             fallback = self.library.fallback(job.start)
-            if fallback is None or (wf and fallback.id == wf.id):
-                raise
-            log.warning("job %s: %s; using %s", job.id, e, fallback.key)
-            self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use its workflow ({e}), so it's running {fallback.name}.", job_id=job.id)
-            wf, snap = fallback, self.library.pin(fallback, job.start, mode)
+            if fallback is None:
+                raise engine.GraphError(f"golem has no workflow for {job.start} jobs")
+            log.warning("job %s: no workflow %s for it; using %s", job.id, key, fallback.key)
+            self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use {key or 'its workflow'}, so it's running {fallback.name}.", job_id=job.id)
+            wf = fallback
+        snap = self.library.pin(wf, job.start)
         return self.store.update_job(job.id, workflow=wf.key, mode=mode, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
     def insert(self, job_id: int, steps: list[Step], after: int) -> None:
@@ -1301,11 +1296,6 @@ class Scheduler:
         folder = options.folder(self.settings, job.id)
         for i, image in enumerate(option.images):
             await self.send_image(project, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
-
-    async def do_script(self, job: Job, project: Project, step: Step) -> Outcome:
-        """A script block: its command run in the job's checkout (run)."""
-        block = plan.node(job, step) or {}
-        return await self.run(job, project, step, block.get("command") or "", int(block.get("timeout") or SCRIPT_TIMEOUT))
 
     async def do_test(self, job: Job, project: Project, step: Step) -> Outcome:
         """A Test block: the project's own `bin/test`, run in the job's checkout (run)."""

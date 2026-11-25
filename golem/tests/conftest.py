@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from golem import intake, plan
 from golem.bot import Bot
@@ -197,6 +199,27 @@ class Golem:
 @pytest.fixture
 def golem(tmp_path):
     return Golem(tmp_path)
+
+
+@pytest.fixture
+def own(tmp_path):
+    """A golem whose process files (prompts, skills, workflows) are a copy, for tests that add
+    workflows of their own (add_workflow)."""
+    process = tmp_path / "process"
+    for name in ("prompts", "skills", "workflows"):
+        shutil.copytree(REPO / name, process / name)
+    return Golem(tmp_path, process_dir=process)
+
+
+def add_workflow(golem: Golem, key: str, blocks: list, md: str = "", start: str = "change") -> None:
+    """A workflow of a test's own, written as golem's are: a file in its workflows folder."""
+    folder = golem.settings.process_dir / "workflows"
+    assert folder != REPO / "workflows", "use the `own` fixture: never write into golem's own files"
+    spec = {"key": key, "name": key.replace("_", " ").title(), "start": start, "ingest": "For tests.", "blocks": blocks}
+    if md:
+        (folder / f"{key}.md").write_text(md)
+        spec["md"] = f"{key}.md"
+    (folder / f"{key}.yml").write_text(yaml.safe_dump(spec, sort_keys=False))
 
 
 @pytest.fixture

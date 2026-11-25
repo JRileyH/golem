@@ -135,14 +135,12 @@ def preview(settings: Settings, store: Store, job: Job) -> dict | None:
         from .triage import snapshot
 
         return snapshot()
-    key, mode = workflow_for(job, store.project(job.slug))
-    wf = store.workflow(key=key)
-    if wf is None:
-        return None
-    try:
-        return Library(store, settings.process_dir / "workflows", settings.web_password).pin(wf, job.start, mode)
-    except graphs.GraphError:
-        return None
+    key, _ = workflow_for(job, store.project(job.slug))
+    library = Library(store, settings.process_dir / "workflows", settings.web_password)
+    wf = library.get(key)
+    if wf is None or wf.start != job.start:
+        wf = library.fallback(job.start)
+    return library.pin(wf, job.start) if wf else None
 
 
 def block_of(settings: Settings, store: Store, job: Job, step: Step) -> dict | None:
@@ -312,7 +310,7 @@ def current(steps: list[Step]) -> Step | None:
 
 def label(step: Step) -> str:
     """What a step is called: an agent's name; golem's own by kind, unless its block has a name of its own."""
-    if step.kind == "agent" or (step.kind in ("checkin", "choose", "script", "condition") and step.name != step.kind):
+    if step.kind == "agent" or (step.kind in ("checkin", "choose", "condition") and step.name != step.kind):
         return step.name
     return LABELS.get(step.kind, step.kind)
 

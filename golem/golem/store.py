@@ -73,34 +73,6 @@ CREATE TABLE IF NOT EXISTS notes (
     step_id INTEGER,                 -- for one step rather than the next
     node_id TEXT NOT NULL DEFAULT '' -- for one block of the workflow rather than the next (a check-in's reply_to)
 );
--- Workflows (engine.py): golem's built-ins (workflows/), and Riggy's. All he sees of one is
--- its current state; jobs keep their own copies, so editing one never touches work under way.
-CREATE TABLE IF NOT EXISTS workflows (
-    id INTEGER PRIMARY KEY,
-    key TEXT NOT NULL UNIQUE,        -- how containers name it; never changes
-    handle TEXT NOT NULL UNIQUE,     -- its short name: what the request call knows it by
-    name TEXT NOT NULL,
-    start TEXT NOT NULL,             -- new | change | look | propose | adopt | sub (store.STARTS, and sub)
-    ingest TEXT NOT NULL DEFAULT '', -- what it's for, in his words: what the request call chooses by
-    builtin INTEGER NOT NULL DEFAULT 0,
-    edited INTEGER NOT NULL DEFAULT 0,   -- a built-in Riggy has changed: golem's new versions don't replace it
-    seeded TEXT NOT NULL DEFAULT '',     -- a built-in's digest when golem last wrote it
-    upstream TEXT NOT NULL DEFAULT '',   -- golem's newer version's digest, for one he's changed ('' if none)
-    archived INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
--- A workflow's graphs: its default tab ('') and one for each mode it has its own way for.
-CREATE TABLE IF NOT EXISTS workflow_tabs (
-    workflow_id INTEGER NOT NULL REFERENCES workflows(id),
-    mode TEXT NOT NULL DEFAULT '',
-    graph TEXT NOT NULL,             -- JSON: what he sees and edits
-    working TEXT NOT NULL,           -- JSON: the latest state with no problems, what new jobs copy
-    problems TEXT NOT NULL DEFAULT '[]',  -- JSON: what's wrong with `graph` (validate.Problem), if anything
-    sig TEXT NOT NULL DEFAULT '',    -- golem's signature on `working`: changed outside the editor, it isn't run
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (workflow_id, mode)
-);
 -- The text of each part of a stage block (stages.py): golem's, or Riggy's once he's changed it.
 CREATE TABLE IF NOT EXISTS stage_texts (
     stage TEXT NOT NULL,
@@ -345,38 +317,6 @@ class Project:
 
 
 @dataclass
-class Workflow:
-    """A workflow as stored: what it is and where it can start. Its graphs are its tabs (Tab)."""
-
-    id: int
-    key: str  # how containers name it; never changes
-    handle: str  # its short name: what the request call knows it by
-    name: str
-    start: str
-    ingest: str
-    builtin: bool
-    edited: bool
-    seeded: str
-    upstream: str
-    archived: bool
-    created_at: str
-    updated_at: str
-
-
-@dataclass
-class Tab:
-    """One of a workflow's graphs: its default ("") or a mode's."""
-
-    workflow_id: int
-    mode: str
-    graph: dict  # what Riggy sees and edits
-    working: dict  # the latest state with no problems: what new jobs copy
-    problems: list[dict]
-    sig: str
-    updated_at: str
-
-
-@dataclass
 class Proposal:
     """An improvement golem proposed for a project, and what Riggy made of it."""
 
@@ -578,6 +518,13 @@ class Store:
             self.db.execute("UPDATE projects SET model = '' WHERE model = 'opus'")
             self.db.execute("UPDATE projects SET effort = '' WHERE effort = 'high'")
             self.put("project_engines", "1")
+        if self.get("workflow_files") is None:
+            # Workflows were kept here, for Riggy to edit; now golem reads its own from its files.
+            self.db.execute("DROP TABLE IF EXISTS workflow_tabs")
+            self.db.execute("DROP TABLE IF EXISTS workflows")
+            for key in ("workflow_key", "modes_seeded", *(f"fallback_{s}" for s in STARTS)):
+                self.db.execute("DELETE FROM kv WHERE key = ?", (key,))
+            self.put("workflow_files", "1")
         if self.get("golems_modes") is None:
             # Modes were Riggy's to make, each a tab of a workflow; now they're golem's (plan.MODES),
             # and none of the old ones is among them.
@@ -1059,55 +1006,7 @@ class Store:
         self.db.execute("UPDATE shipments SET state = ?, ended_at = ? WHERE id = ?", (state, now(), shipment_id))
         return self.shipment(shipment_id)
 
-    # --- workflows ------------------------------------------------------------
-
-    def workflows(self, archived: bool = True) -> list[Workflow]:
-        """Every workflow, built-ins first, then by name."""
-        where = "" if archived else " WHERE archived = 0"
-        return [_workflow(r) for r in self.db.execute(f"SELECT * FROM workflows{where} ORDER BY builtin DESC, name COLLATE NOCASE")]
-
-    def workflow(self, workflow_id: int | None = None, key: str | None = None, handle: str | None = None) -> Workflow | None:
-        if workflow_id is not None:
-            row = self.db.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
-        elif key is not None:
-            row = self.db.execute("SELECT * FROM workflows WHERE key = ?", (key,)).fetchone()
-        else:
-            row = self.db.execute("SELECT * FROM workflows WHERE handle = ? COLLATE NOCASE", (handle,)).fetchone()
-        return _workflow(row) if row else None
-
-    def add_workflow(self, key: str, handle: str, name: str, start: str, ingest: str = "", builtin: bool = False) -> Workflow:
-        cur = self.db.execute(
-            "INSERT INTO workflows (key, handle, name, start, ingest, builtin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (key, handle, name, start, ingest, int(builtin), now(), now()),
-        )
-        return self.workflow(cur.lastrowid)
-
-    def update_workflow(self, workflow_id: int, **fields: object) -> Workflow:
-        allowed = {"handle", "name", "start", "ingest", "edited", "seeded", "upstream", "archived"}
-        assert set(fields) <= allowed, fields
-        fields = {k: int(v) if isinstance(v, bool) else v for k, v in fields.items()}
-        fields["updated_at"] = now()
-        columns = ", ".join(f"{name} = ?" for name in fields)
-        self.db.execute(f"UPDATE workflows SET {columns} WHERE id = ?", (*fields.values(), workflow_id))
-        return self.workflow(workflow_id)
-
-    def tabs(self, workflow_id: int) -> dict[str, Tab]:
-        """A workflow's tabs by mode, the default ("") first."""
-        rows = self.db.execute("SELECT * FROM workflow_tabs WHERE workflow_id = ? ORDER BY mode != '', mode", (workflow_id,))
-        return {r["mode"]: _tab(r) for r in rows}
-
-    def tab(self, workflow_id: int, mode: str = "") -> Tab | None:
-        row = self.db.execute("SELECT * FROM workflow_tabs WHERE workflow_id = ? AND mode = ?", (workflow_id, mode)).fetchone()
-        return _tab(row) if row else None
-
-    def put_tab(self, workflow_id: int, mode: str, graph: dict, working: dict, problems: list[dict], sig: str) -> Tab:
-        self.db.execute(
-            "INSERT INTO workflow_tabs (workflow_id, mode, graph, working, problems, sig, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(workflow_id, mode) DO UPDATE SET graph = excluded.graph, working = excluded.working,"
-            " problems = excluded.problems, sig = excluded.sig, updated_at = excluded.updated_at",
-            (workflow_id, mode, json.dumps(graph), json.dumps(working), json.dumps(problems), sig, now()),
-        )
-        return self.tab(workflow_id, mode)
+    # --- the stage blocks' texts (stages.py) -----------------------------------
 
     def stage_texts(self) -> dict[tuple[str, str], dict]:
         rows = self.db.execute("SELECT * FROM stage_texts").fetchall()
@@ -1123,10 +1022,6 @@ class Store:
 
     def drop_stage_text(self, stage: str, part: str) -> None:
         self.db.execute("DELETE FROM stage_texts WHERE stage = ? AND part = ?", (stage, part))
-
-    def drop_tab(self, workflow_id: int, mode: str) -> None:
-        assert mode, "a workflow always has its default tab"
-        self.db.execute("DELETE FROM workflow_tabs WHERE workflow_id = ? AND mode = ?", (workflow_id, mode))
 
     # --- defaults -------------------------------------------------------------
 
@@ -1393,20 +1288,6 @@ def _shipment(row: sqlite3.Row) -> Shipment:
     data = dict(row)
     data["jobs"] = {int(j): int(s) for j, s in json.loads(data["jobs"])}
     return Shipment(**data)
-
-
-def _workflow(row: sqlite3.Row) -> Workflow:
-    data = dict(row)
-    for name in ("builtin", "edited", "archived"):
-        data[name] = bool(data[name])
-    return Workflow(**data)
-
-
-def _tab(row: sqlite3.Row) -> Tab:
-    data = dict(row)
-    for name in ("graph", "working", "problems"):
-        data[name] = json.loads(data[name])
-    return Tab(**data)
 
 
 def _project(row: sqlite3.Row | dict) -> Project:

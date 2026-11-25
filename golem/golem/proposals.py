@@ -148,11 +148,7 @@ def start(store: Store, project: Project) -> Job:
     """A proposals job for the project, through the next kind in turn (`due` checked one is on)."""
     request = REQUEST.format(next_lens(store, project).name)
     job = store.add_job(project.slug, "change", request, "proposals", priority=PRIORITY, start="propose")
-    key = store.get("fallback_propose") or ""
-    wf = store.workflow(key=key) if key else None
-    if wf and wf.start == "propose" and not wf.archived:
-        job = store.update_job(job.id, workflow=wf.key, mode=project.mode)
-    return job
+    return store.update_job(job.id, workflow="proposals", mode=project.mode)
 
 
 def collect(raw: object) -> list[tuple[str, str]]:

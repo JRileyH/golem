@@ -56,7 +56,7 @@ class Piece:
     @property
     def name(self) -> str:
         s = self.step
-        own = s.kind == "agent" or (s.kind in ("checkin", "choose", "script") and s.name != s.kind)  # a block named for itself
+        own = s.kind == "agent" or (s.kind in ("checkin", "choose") and s.name != s.kind)  # a block named for itself
         return NAMES.get(s.name if own else s.kind, s.name.replace("-", " ").capitalize())
 
     @property

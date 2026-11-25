@@ -334,11 +334,10 @@ class Request:
 
 @dataclass(frozen=True)
 class Kind:
-    """A workflow a project's message can be for: its key and handle, whether it only looks (a
-    question: builds nothing), and what it's for in Riggy's words."""
+    """A workflow a project's message can be for: its key, whether it only looks (a question:
+    builds nothing), and what it's for in Riggy's words."""
 
     key: str
-    handle: str
     looks: bool
     ingest: str
 
@@ -347,19 +346,19 @@ async def read_request(harness: Harness, settings: Settings, text: str, kinds: l
     """Which workflow a request is for (`kinds`, by what each is for: a change, options to pick
     from first, a design pass, only an answer…). The same call names the job it starts. Without
     a model, golem's built-ins by rule; anything else is the `fallback`."""
-    by_handle = {k.handle: k for k in kinds}
+    by_key = {k.key: k for k in kinds}
     if settings.harness != "fake" and kinds:
-        props = {"workflow": {"enum": list(by_handle)}, "title": TITLE}
+        props = {"workflow": {"enum": list(by_key)}, "title": TITLE}
         required = ["workflow", "title"]
         listed = "\n".join(
-            f"  - `{k.handle}`{' (only looks: builds nothing)' if k.looks else ''}: {' '.join(k.ingest.split()) or '(no description)'}"
+            f"  - `{k.key}`{' (only looks: builds nothing)' if k.looks else ''}: {' '.join(k.ingest.split()) or '(no description)'}"
             for k in kinds
         )
         schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
         values = {"$workflows": listed, "$request": text.strip()}
         v = await _ask(harness, settings, "request", values, schema)
-        if v and v.get("workflow") in by_handle:
-            return Request(by_handle[v["workflow"]].key, plan.clean_title(v.get("title")))
+        if v and v.get("workflow") in by_key:
+            return Request(v["workflow"], plan.clean_title(v.get("title")))
     keys = {k.key for k in kinds}
     for key, fits in (("design", lambda t: DESIGN_RE.search(t)), ("options", asks_for_options), ("question", asks_a_question)):
         if key in keys and fits(text):

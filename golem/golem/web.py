@@ -277,7 +277,7 @@ def create_app(
         return lanes_, finished
 
     def flow_names() -> dict[str, str]:
-        return {w.key: w.name for w in store.workflows()}
+        return {w.key: w.name for w in scheduler.library.all()}
 
     def news() -> now_page.News:
         """What's true of golem right now (paused is the page's own banner), and what it said lately."""

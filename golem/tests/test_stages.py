@@ -8,9 +8,10 @@ import stat
 
 import pytest
 from test_flow import by_label, idle_project, verdict
-from test_running import add_workflow, change_job, trail
+from conftest import add_workflow
+from test_running import change_job, trail
 
-from golem import about, plan, stages, validate, workflows
+from golem import about, plan, stages, workflows
 from golem.store import Step
 
 
@@ -225,24 +226,9 @@ def test_a_workflow_of_stages_reads_from_yaml_and_checks_out():
         workflows.build(["setup", {"stage": "dance"}, "end"], "", False, {})
 
 
-def test_stage_blocks_need_no_instructions_but_a_stage_and_settings_golem_has(golem):
-    graph = workflows.build(STAGED, "", False, {"ship": ["shipped"]})
-    catalog = golem.scheduler.library.catalog()
-    assert validate.check(graph, "change", catalog).ok
-    nodes = {n["id"]: n for n in graph["nodes"]}
-    nodes["build"]["stage"] = "dance"
-    nodes["recheck"]["about"] = "docs"  # after it: not what it can be about
-    nodes["plan"]["writes"] = "novel"
-    report = validate.check(graph, "change", catalog)
-    assert {p.message for p in report.errors} >= {
-        "There's no dance stage", "About is a block that comes before this one: docs doesn't lead here", "Writes is one of spec, mini-spec",
-    }
-    lone = workflows.build(["setup", {"stage": "fix"}, "end"], "", False, {})  # straight after setting up: nothing to fix
-    assert any("Nothing that fails leads to fix" in w.message for w in validate.check(lone, "change", catalog).warnings)
-    assert not any("Nothing that fails" in w.message for w in validate.check(graph, "change", catalog).warnings)
+def test_a_job_of_stages_tells_each_step_its_stages_text_and_what_its_about(own):
+    golem = own
 
-
-def test_a_job_of_stages_tells_each_step_its_stages_text_and_what_its_about(golem):
     async def go():
         await idle_project(golem)
         golem.scheduler.library.blocks.save("docs", "message.changed", "Message: what changed, for Riggy.")
@@ -289,7 +275,9 @@ def test_a_job_of_stages_tells_each_step_its_stages_text_and_what_its_about(gole
     run(go())
 
 
-def test_a_test_block_without_bin_test_fails_with_what_to_add(golem):
+def test_a_test_block_without_bin_test_fails_with_what_to_add(own):
+    golem = own
+
     async def go():
         await idle_project(golem)
         add_workflow(golem, "tested", ["setup", {"do": "test", "fail": "mend"}, {"use": "ship"}, "end",
