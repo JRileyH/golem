@@ -17,6 +17,9 @@
   proposal a thumbs up (it becomes a change job) or down, with why (proposals.py).
 - Check for a new version of golem, upgrade to it (once the running step is done), and
   turn upgrading automatically on or off (upgrade.py).
+- Turn golem's triage of the reports about itself on or off, and take each fix it proposes
+  to golem (a prompt for Riggy to paste into a session in golem's repo) or turn it down, with
+  why (triage.py).
 
 Each change to a project is posted in its conversation, so it stays the record of the job.
 """
@@ -26,9 +29,10 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from . import options, plan, shipments, stages
+from . import options, plan, shipments, stages, triage
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
+from .talk import STATUS
 from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, INTERNAL, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
@@ -359,6 +363,15 @@ class Control:
         if p is None or p.state != "open":
             raise ControlError("That proposal has been decided already.")
         reason = " ".join(reason.split())[:1000]
+        if p.slug == INTERNAL:  # a fix to golem itself (triage.py): Riggy makes it, so nothing's built
+            if not accepted and not reason:
+                raise ControlError("Say why you're turning it down: golem's triage learns from it.")
+            p = self.store.decide_proposal(p.id, accepted, reason)
+            self.store.decide_reports(p.id, "accepted" if accepted else "dismissed")
+            await self.scheduler.chat.heard(STATUS, f"{'👍' if accepted else '👎'} {p.title}" + (f": {reason}" if reason else ""))
+            if accepted:
+                return f"Took “{p.title}”: paste its prompt into a Claude Code session in golem's repo."
+            return f"Turned down “{p.title}”. golem's triage takes that into account next time."
         p = self.store.decide_proposal(p.id, accepted, reason)
         project = self._project(p.slug)
         await self.scheduler.chat.heard(project.slug, f"{'👍' if accepted else '👎'} {p.title}" + (f": {reason}" if reason else ""))
@@ -384,6 +397,13 @@ class Control:
             return blocked
         n = v.get("behind", 0)
         return f"{n} new commit{'s' if n != 1 else ''} on GitHub." if n else "golem is up to date."
+
+    def set_triage(self, on: bool) -> str:
+        """Whether golem triages the reports about itself when it's idle (triage.py)."""
+        self.store.put("triage", triage.ON if on else "off")
+        if on:
+            return "golem triages the reports about itself when it has nothing else to do."
+        return "golem keeps the reports about itself, and doesn't triage them."
 
     def auto_upgrade(self, on: bool) -> str:
         self.store.put("auto_upgrade", "1" if on else "0")

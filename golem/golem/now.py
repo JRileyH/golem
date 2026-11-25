@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 
-from . import plan, route
+from . import plan, reportspage, route
 from .conversation import proposals_card
 from .pages import LaneData, ask_card, badge, headline, route_strip, signin_card, when, _dt
-from .store import Proposal, Project, Said
+from .store import INTERNAL, Proposal, Project, Said
 from .watch import span
 
 RECENT = timedelta(days=7)  # finished jobs shown
@@ -101,9 +101,17 @@ def _row(lane: LaneData, flows: dict[str, str], now: datetime) -> str:
 
 
 def _proposals(project: Project, items: list[Proposal]) -> str:
-    """A project's undecided proposals, folded to a line: open it to thumb each."""
+    """A project's undecided proposals, folded to a line: open it to thumb each. golem's for
+    itself (triage.py) open with the Reports page's card."""
     oldest = sorted(items, key=lambda p: p.id)
     titles = ", ".join(p.title for p in oldest[:3]) + ("…" if len(items) > 3 else "")
+    if project.slug == INTERNAL:
+        return (
+            f"<details class='card proposals-now' data-key=proposals-golem><summary class=card-head><h2>"
+            f"<a href='/reports'>golem</a><span class=job-title>golem proposes {len(items)} fix(es) to itself: "
+            f"<span class=muted>{escape(titles)}</span></span></h2><span class='badge waiting'>Thumbs</span></summary>"
+            f"{reportspage.proposals_card(items, '/')}</details>"
+        )
     return (
         f"<details class='card proposals-now' data-key=proposals-{escape(project.slug)}><summary class=card-head><h2>"
         f"<a href='/p/{escape(project.slug)}'>{escape(project.name)}</a><span class=job-title>golem proposes {len(items)}: "

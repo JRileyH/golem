@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 
 from . import engine as graphs
 from .config import Settings
-from .store import ACTIVE, OPEN, Job, Project, Step, Store
+from .store import ACTIVE, OPEN, TRIAGE, Job, Project, Step, Store
 
 # How golem's own steps read in messages and on the status page.
 LABELS = {
@@ -140,9 +140,14 @@ def planned(settings: Settings, store: Store, job: Job) -> list[Step]:
 
 
 def preview(settings: Settings, store: Store, job: Job) -> dict | None:
-    """The copy of its workflow a job that hasn't started will take, as it is now."""
+    """The copy of its workflow a job that hasn't started will take, as it is now. A triage's is
+    golem's code, never a workflow (triage.py)."""
     from .workflows import Library
 
+    if job.start == TRIAGE:
+        from .triage import snapshot
+
+        return snapshot()
     key, mode = workflow_for(job, store.project(job.slug))
     wf = store.workflow(key=key)
     if wf is None:

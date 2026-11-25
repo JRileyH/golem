@@ -39,7 +39,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, engine, flows, gallery, home, insights, intake, options, pages, plan, pwa, turns, workflows
 from . import now as now_page
-from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages
+from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -47,7 +47,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, Job, Project, Said, Step, Store, Workflow
+from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, TRIAGE, Job, Project, Said, Step, Store, Workflow
 from .talk import STATUS
 
 if TYPE_CHECKING:
@@ -298,6 +298,8 @@ def create_app(
             for p in store.projects():
                 if open_ := store.proposals(p.slug, ("open",)):
                     waiting[p.slug] = (p, open_)
+            if open_ := store.proposals(INTERNAL, ("open",)):  # golem's fixes to itself (triage.py)
+                waiting[INTERNAL] = (store.project(INTERNAL), open_)
         body = now_page.page(active, finished, waiting, news(), flow_names(), signed, now)
         return respond(request, "golem", body, signed, here="now")
 
@@ -377,8 +379,32 @@ def create_app(
             source = request.query_params.get("source", "")
             source = source if source in reports.SOURCES else ""
             rows = store.reports((state,) if state else None, source, limit=reportspage.SHOWN)
-            body = reportspage.page(rows, state, source, datetime.now(UTC))
+            body = reportspage.page(rows, state, source, datetime.now(UTC), triage_info())
         return respond(request, "Reports", body, signed, here="reports", up=("/settings", "Settings"))
+
+    def triage_info() -> reportspage.Triage:
+        """golem's triage of the reports about itself, for the Reports page (triage.py)."""
+        jobs = []
+        for job in store.jobs_from(TRIAGE, limit=5)[::-1]:
+            runs = store.runs(job.id)
+            step = next((s.id for s in store.steps(job.id) if s.kind == "agent"), None)
+            jobs.append((job, sum(r["cost_usd"] or 0 for r in runs), step))
+        mine = store.proposals(INTERNAL, limit=40)
+        return reportspage.Triage(
+            store.get("triage") == triage.ON, jobs, [p for p in mine if p.state == "open"], [p for p in mine if p.state != "open"][:20]
+        )
+
+    async def fix_page(request: Request) -> Response:
+        """A fix to golem Riggy took from its triage: the prompt for a Claude Code session in golem's repo."""
+        p = store.proposal(request.path_params["proposal_id"])
+        if p is None or p.slug != INTERNAL:
+            return HTMLResponse("No such proposal.", 404)
+        if not signed_in(request):
+            body = pages.signin_card(f"/reports/proposals/{p.id}")
+        else:
+            prompt = triage.fix_prompt(p, store.proposal_reports(p.id), settings.url("golem"), scheduler.version())
+            body = reportspage.fix_page(p, prompt)
+        return respond(request, p.title, body, signed_in(request), here="reports", up=("/reports", "Reports"))
 
     async def projects_page(request: Request) -> Response:
         """Every live project as a card, for anyone (gallery.py)."""
@@ -921,6 +947,11 @@ def create_app(
                     if value not in ("accept", "reject"):
                         raise ControlError("Thumbs up or down?")
                     message = await control.decide(_int(form.get("proposal")), value == "accept", form.get("reason", ""))
+                    taken = store.proposal(_int(form.get("proposal")))
+                    if taken and taken.slug == INTERNAL and taken.state == "accepted":  # a fix to golem: its prompt, to copy
+                        return _back({"back": f"/reports/proposals/{taken.id}"}, message)
+                case "triage":
+                    message = control.set_triage(value == "on")
                 case _:
                     message = "Unknown action."
         except ControlError as e:
@@ -971,6 +1002,7 @@ def create_app(
             Route("/steps/{step_id:int}", step_page),
             Route("/insights", insights_page),
             Route("/reports", reports_page),
+            Route("/reports/proposals/{proposal_id:int}", fix_page),
             Route("/static/{name}", static),
             Route("/jobs/{job_id:int}/flow", job_flow), Route("/jobs/{job_id:int}/flow.json", job_flow_json),
             Route("/workflows", workflows_list), Route("/workflows/modes", modes_page), Route("/workflows/{workflow_id:int}", workflow_page),

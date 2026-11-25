@@ -1,15 +1,21 @@
 """The Reports page (/reports): what got in the way of golem's workers, about golem itself
 (reports.py), from both sources: their own reports and golem's incidents. Riggy reads it to see
-how many there are and whether they say anything. Signed in only: they quote runs and errors.
+how many there are and whether they say anything, turns golem's triage of them on or off, and
+takes or turns down the fixes to golem it proposes (triage.py): taking one opens its prompt
+(/reports/proposals/<id>), to paste into a Claude Code session in golem's repo. Signed in
+only: they quote runs and errors.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from html import escape
 from urllib.parse import urlencode
 
-from .store import Report
+from . import triage
+from .pages import _hidden, action_form
+from .store import Job, Proposal, Report
 from .watch import span
 
 STATES = (("new", "New"), ("triaged", "Triaged"), ("accepted", "Taken"), ("dismissed", "Dismissed"), ("", "All"))
@@ -25,10 +31,93 @@ ABOUT = (
 )
 
 
-def page(rows: list[Report], state: str, source: str, now: datetime) -> str:
+@dataclass
+class Triage:
+    """What the page says about golem's triage: whether it's on, its latest jobs with what each
+    cost, golem's proposals for itself awaiting Riggy, and those he's decided on."""
+
+    on: bool
+    jobs: list[tuple[Job, float, int | None]]  # the latest first: each with its cost and its triage step
+    waiting: list[Proposal]
+    decided: list[Proposal]
+
+
+def page(rows: list[Report], state: str, source: str, now: datetime, t: Triage) -> str:
     filters = _filters("state", state, STATES, {"source": source}) + _filters("source", source, SOURCES, {"state": state})
     body = "<ol class=reports>" + "".join(_row(r, now) for r in rows) + "</ol>" if rows else "<p class=empty>No reports here.</p>"
-    return f"<section class=reports-page>{ABOUT}{filters}{body}</section>"
+    head = proposals_card(t.waiting, "/reports") + triage_card(t, now) + decided_card(t.decided)
+    return f"<section class=reports-page>{head}<h2 class=section-title>Reports</h2>{ABOUT}{filters}{body}</section>"
+
+
+def proposals_card(waiting: list[Proposal], back: str) -> str:
+    """golem's proposals for itself awaiting Riggy, oldest first: take one (its prompt opens) or
+    turn it down, saying why."""
+    if not waiting:
+        return ""
+    items = "".join(
+        f"<li class=proposal><h4>{escape(p.title)}</h4><p class=muted>{escape(p.lens)}</p><p class=fix-body>{escape(p.body)}</p>"
+        f"<form method=post action=/act>{_hidden(action='proposal', proposal=p.id, back=back)}"
+        f"<input name=reason placeholder='Why? (needed to turn it down)' aria-label='Why, for {escape(p.title)}' maxlength=1000>"
+        "<div class=row-form><button name=value value=accept class=primary>👍 Take it</button>"
+        "<button name=value value=reject>👎 Not this</button></div></form></li>"
+        for p in sorted(waiting, key=lambda p: p.id)
+    )
+    return (
+        "<section class='card proposals'><h2>golem proposes fixes to itself</h2><p class=sub>From its triage of the "
+        "reports below. Taking one gives you a prompt to paste into a Claude Code session in golem's repo; golem "
+        f"never changes itself. Saying why you turn one down steers what triage proposes next.</p><ol>{items}</ol></section>"
+    )
+
+
+def triage_card(t: Triage, now: datetime) -> str:
+    toggle = action_form("triage", "Triage: on" if t.on else "Triage: off", value="off" if t.on else "on", back="/reports")
+    how = (
+        f"When golem has nothing else to do, at most every {_hours(triage.MIN_GAP)} hours, once {triage.BATCH} reports are "
+        f"new or the oldest has waited {_hours(triage.WAIT)} hours, and while fewer than {triage.MAX_OPEN} of its proposals "
+        "wait on you."
+    )
+    rows = "".join(
+        (f"<li><a href='/steps/{step}'>job #{j.id}</a>" if step else f"<li>job #{j.id}")
+        + f" {escape(j.state)} · {span(now - datetime.fromisoformat(j.created_at))} ago · ${cost:.2f}</li>"
+        for j, cost, step in t.jobs
+    )
+    return (
+        "<section class='card settings'><h2>Triage</h2><p class=sub>golem's own look at the new reports: what in golem "
+        f"causes them, and what to change. {how}</p><div class=row-form>{toggle}</div>"
+        + (f"<p class=sub>Lately:</p><ol class=links-list>{rows}</ol>" if rows else "")
+        + "</section>"
+    )
+
+
+def decided_card(decided: list[Proposal]) -> str:
+    if not decided:
+        return ""
+    rows = "".join(
+        f"<li>{'👍' if p.state == 'accepted' else '👎'} "
+        + (f"<a href='/reports/proposals/{p.id}'>{escape(p.title)}</a>" if p.state == "accepted" else escape(p.title))
+        + (f"<span class=sub>“{escape(p.reason)}”</span>" if p.reason else "")
+        + "</li>"
+        for p in decided
+    )
+    return f"<section class=card><h2>What you decided</h2><ol class=links-list>{rows}</ol></section>"
+
+
+def fix_page(p: Proposal, prompt: str) -> str:
+    """A fix to golem Riggy took: its prompt, to copy into a Claude Code session in golem's repo."""
+    copy = (
+        "<button type=button class=primary onclick=\"navigator.clipboard.writeText(document.getElementById('fix').value)"
+        ".then(() => this.textContent = 'Copied')\">Copy the prompt</button>"
+    )
+    state = {"open": "Not decided yet.", "accepted": "You took it.", "rejected": "You turned it down."}.get(p.state, "")
+    return (
+        f"<section class='card fix'><h2>{escape(p.title)}</h2><p class=sub>{state} Paste this into a Claude Code session "
+        f"in golem's repo: it has the fix and the reports it answers.</p><div class=row-form>{copy}</div>"
+        f"<textarea id=fix readonly rows=24 aria-label='The prompt'>{escape(prompt)}</textarea></section>"
+    )
+
+
+def _hours(delta) -> int:
+    return int(delta.total_seconds() // 3600)
 
 
 def _filters(name: str, current: str, choices: tuple[tuple[str, str], ...], keep: dict[str, str]) -> str:

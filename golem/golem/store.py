@@ -1357,6 +1357,15 @@ class Store:
         rows = self.db.execute(f"SELECT * FROM reports{clause} ORDER BY last_seen DESC, id DESC LIMIT ?", (*args, limit))
         return [Report(**r) for r in rows]
 
+    def proposal_reports(self, proposal_id: int) -> list[Report]:
+        """The reports a proposal for golem cites, oldest first."""
+        return [Report(**r) for r in self.db.execute("SELECT * FROM reports WHERE proposal_id = ? ORDER BY id", (proposal_id,))]
+
+    def decide_reports(self, proposal_id: int, state: str) -> None:
+        """The reports a proposal for golem cites, accepted with it or dismissed."""
+        assert state in ("accepted", "dismissed"), state
+        self.db.execute("UPDATE reports SET state = ? WHERE proposal_id = ?", (state, proposal_id))
+
     def new_reports(self, limit: int = 100) -> list[Report]:
         """Reports triage hasn't read yet, oldest first."""
         rows = self.db.execute("SELECT * FROM reports WHERE state = 'new' ORDER BY id LIMIT ?", (limit,))

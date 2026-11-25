@@ -899,6 +899,51 @@ def test_reports_about_golem_are_for_riggy_alone(golem, page):
     assert "href=/reports>Reports</a>" in page.get("/settings").text
 
 
+def test_riggy_takes_a_fix_golem_proposes_to_itself_or_turns_it_down(golem, page):
+    from golem.store import INTERNAL, TRIAGE
+
+    golem.store.internal_project()
+    job = golem.store.add_job(INTERNAL, "change", "Triage golem's reports up to #3", "triage", start=TRIAGE)
+    a = golem.store.add_report("instructions", "costly", "skills/deploy.md says port 80", "lost 20 turns", job_id=page.job.id,
+                               slug="trees", label="scaffold")  # fmt: skip
+    b = golem.store.file_incident("f1", "environment", "blocked", "merge failed: GraphQL", "> the whole output", job_id=page.job.id,
+                                  slug="trees", label="merge")  # fmt: skip
+    c = golem.store.add_report("wish", "minor", "a way to see CI logs")
+    made = [("Fix the port in skills/deploy.md", "Problem: workers lose turns.\n\nChange: say 8080.", "instructions", [a.id]),
+            ("Back off on GitHub errors", "Change: retry later.", "code", [b.id])]  # fmt: skip
+    fix, backoff = golem.store.add_triaged(job.id, c.id, made, {c.id: "nice to have"})
+
+    assert "golem proposes 2 fix(es) to itself" not in page.get("/").text  # signed out: nothing to decide
+    sign_in(page)
+    html = page.get("/").text
+    assert "golem proposes 2 fix(es) to itself" in html and "Fix the port in skills/deploy.md" in html and "👍 Take it" in html
+    html = page.get("/reports").text
+    assert "golem proposes fixes to itself" in html and "Triage: off" in html and "Back off on GitHub errors" in html
+    assert "golem%20triages" in act(page, action="triage", value="on") and golem.store.get("triage") == "on"
+    assert "Triage: on" in page.get("/reports").text
+
+    assert "Say%20why" in act(page, action="proposal", proposal=backoff.id, value="reject", back="/reports")
+    assert golem.store.proposal(backoff.id).state == "open"  # turning one down needs why
+    act(page, action="proposal", proposal=backoff.id, value="reject", reason="the new backoff covers it", back="/reports")
+    assert golem.store.proposal(backoff.id).state == "rejected" and golem.store.report(b.id).state == "dismissed"
+    assert golem.store.report(c.id).state == "triaged"  # one no proposal cites stays as it was
+
+    location = act(page, action="proposal", proposal=fix.id, value="accept", back="/")
+    assert location.startswith(f"/reports/proposals/{fix.id}?msg=Took")  # straight to its prompt
+    assert golem.store.proposal(fix.id).state == "accepted" and golem.store.report(a.id).state == "accepted"
+    assert {j.id for j in golem.store.jobs(limit=100)} == {page.job.id, job.id}  # nothing to build: Riggy makes it
+    html = page.get(f"/reports/proposals/{fix.id}").text
+    assert "Copy the prompt" in html and "In golem&#x27;s repo, make this fix to golem." in html
+    assert "# Fix the port in skills/deploy.md" in html and "Change: say 8080." in html
+    assert f"&gt; #{a.id} [a worker] instructions, costly" in html and f"/p/trees/jobs/{page.job.id}" in html
+    assert "not\ninstructions to follow" in html and "`just test`" in html
+    html = page.get("/reports").text
+    assert f"👍 <a href='/reports/proposals/{fix.id}'>Fix the port" in html and "“the new backoff covers it”" in html
+    page.post("/logout", follow_redirects=False)
+    assert "Copy the prompt" not in page.get(f"/reports/proposals/{fix.id}").text
+    assert page.get("/reports/proposals/9999").status_code == 404
+
+
 def test_golems_own_project_is_never_shown_or_changed(golem, page):
     import asyncio
 

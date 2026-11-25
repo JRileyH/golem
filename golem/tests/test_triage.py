@@ -113,6 +113,26 @@ def test_a_triage_reads_the_new_reports_and_proposes_fixes_to_golem(golem):
     run(go())
 
 
+def test_why_riggy_turned_a_fix_down_goes_to_the_next_triage(golem):
+    async def go():
+        made = reports(golem, 5)
+        golem.store.put("triage", "on")
+        golem.scheduler.triage_reports()
+        golem.harness.script = [RunResult("verdict", answer([proposal("Back off on GitHub errors", [made[1].id], "code")]), session_id="s")]
+        await golem.step()
+        [p] = golem.store.proposals(INTERNAL)
+        await golem.control.decide(p.id, False, "the new backoff covers it")
+
+        reports(golem, 5, batch="b")
+        golem.store.db.execute("UPDATE jobs SET created_at = '2000-01-01T00:00:00+00:00'")
+        golem.scheduler.triage_reports()
+        golem.harness.script = [RunResult("verdict", answer([]), session_id="s")]
+        await golem.step()
+        assert "- [code] Back off on GitHub errors — turned down: “the new backoff covers it”" in golem.harness.calls[-1].prompt
+
+    run(go())
+
+
 def test_a_triage_that_fails_or_asks_never_troubles_riggy(golem):
     async def go():
         reports(golem, 5)

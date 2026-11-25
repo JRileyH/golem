@@ -1443,6 +1443,8 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .report-summary { margin:.35rem 0 0; font-weight:600; }
 .report details { margin-top:.35rem; } .report summary { cursor:pointer; color:var(--muted); font-size:.85rem; }
 .report pre.log { white-space:pre-wrap; overflow-wrap:anywhere; }
+.fix-body { white-space:pre-wrap; }
+.fix textarea { width:100%; margin-top:.6rem; font:12px/1.5 var(--mono); }
 .bars { background:var(--card); border-radius:var(--radius); padding:.8rem 1rem; margin-bottom:1rem; box-shadow:0 2px 0 var(--edge); }
 .bars h2, .defaults h2 { font-size:.75rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted); margin-bottom:.4rem; }
 .bars h3 { font:700 1rem/1.3 var(--display); margin-bottom:.3rem; }
