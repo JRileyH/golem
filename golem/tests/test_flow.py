@@ -236,7 +236,7 @@ def test_step_prompts_are_fully_filled_in(golem):
             rest = rest.replace(name, "")
         assert "$" not in rest
         assert "only on your ports, `$GOLEM_PORT` to `$GOLEM_PORT+9`" in prompt
-        assert "/proposals/`, named\n  `job-1-<what>.md`" in prompt
+        assert "never rewrite the file.\n- **Reports about golem:**" in prompt  # the standing order, in its place
         assert "# Your step: spec" in prompt
         assert "on the branch `golem/job-1`" in prompt
         assert "Don't push, open or merge pull requests, or deploy" in prompt
@@ -245,6 +245,26 @@ def test_step_prompts_are_fully_filled_in(golem):
         assert golem.workspace.branch == "golem/job-1"
 
     run(go())
+
+
+def test_every_worker_prompt_says_how_to_report_what_golem_got_wrong(golem):
+    from golem import reports
+    from golem.proposals import LENSES
+    from golem.store import Step
+
+    project = golem.store.add_project("trees", "Trees", "A tree game.")
+    job = golem.store.add_job("trees", "change", "why is it slow?", "question")
+    step = Step(0, job.id, 1, "agent", "examine")
+    made = {
+        "step": golem.prompts.step(project, job, "", "Do it.", step, [], "golem/job-1", [], ""),
+        "question": golem.prompts.question(project, job, "", "Answer it.", step, "main", False, [], [], []),
+        "proposals": golem.prompts.proposals(project, job, "", "Propose.", step, "main", LENSES[0], [], [], []),
+        "survey": golem.prompts.survey(project, "main", ""),
+    }
+    for name, prompt in made.items():
+        assert "- **Reports about golem:**" in prompt and "golem report KIND IMPACT" in prompt, name
+        assert "$report" not in prompt, name
+        assert all(k in prompt for k in reports.KINDS) and all(i in prompt for i in reports.IMPACTS), name
 
 
 # --- when something fails ------------------------------------------------------

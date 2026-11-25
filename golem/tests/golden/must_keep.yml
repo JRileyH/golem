@@ -127,6 +127,8 @@ carried:
   rigorous.docs:
     <<: *web-docs
     "Add lessons that apply to every project": "Add lessons that apply to every project (a deploy gotcha, a CI trick) to the golem lessons file."
+    # A report about golem, which golem's triage reads, in place of a file in a directory nothing read.
+    "If a workflow or skill step was wrong or missing": "If a workflow, skill or prompt golem gave you was wrong or missed a step, report it (`golem report instructions ...`) with the edit you'd propose in its detail."
   reckless.build:  # Build's everything part, then how, with quick care
     "Tests are optional": "Keep tests light: the image build is the only required check."
     "Build the whole thing.": "Build the whole thing in one pass"

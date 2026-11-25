@@ -22,6 +22,10 @@ class Prompts:
         text = (self.dir / f"{template}.md").read_text()
         return Template(text).safe_substitute({k: str(v) for k, v in values.items()})
 
+    def snippet(self, name: str) -> str:
+        """A piece of text several prompts share, as it is (no placeholders)."""
+        return (self.dir / f"{name}.md").read_text().rstrip("\n")
+
     def step(
         self,
         project: Project,
@@ -72,8 +76,7 @@ class Prompts:
             feedback=format_feedback(feedback),
             lessons=lessons.strip() or "(none yet)",
             lessons_path=s.state_dir / "lessons.md",
-            proposals_dir=s.state_dir / "proposals",
-            job=job.id,
+            report=self.snippet("report"),
             skills=s.process_dir / "skills",
         )
 
@@ -98,6 +101,7 @@ class Prompts:
             step=step.name,
             intro=intro,
             instructions=instructions,
+            report=self.snippet("report"),
             skills=s.process_dir / "skills",
         )
 
@@ -124,6 +128,7 @@ class Prompts:
             step=step.name,
             intro=intro,
             instructions=instructions,
+            report=self.snippet("report"),
             skills=s.process_dir / "skills",
         )
 
@@ -141,6 +146,7 @@ class Prompts:
             branch=branch,
             platform=s.platform,
             said=format_feedback([said]) if said.strip() else "(nothing more)",
+            report=self.snippet("report"),
         )
 
     def resume(self, feedback: list[str]) -> str:

@@ -62,8 +62,7 @@ $lessons
   when your step says to, and only lessons that would help on any project. Other
   workers may be adding theirs, so only ever append, in one command
   (`cat >> $lessons_path <<'EOF'` … `EOF`), and never rewrite the file.
-  Proposed workflow edits go in new files in `$proposals_dir/`, named
-  `job-$job-<what>.md`.
+$report
 - Decide small things yourself and note them in `docs/decisions.md`. Don't stop to
   ask about colors, names, libraries or layout: where `docs/design.md` covers
   it, it has the answer.

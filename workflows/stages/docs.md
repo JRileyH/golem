@@ -22,5 +22,5 @@ he reads when golem tells him it's done.
 
 ## care.thorough
 
-If a workflow or skill step was wrong or missing, write the edit you'd propose
-to a new file in the golem proposals directory, for Riggy to apply by hand.
+If a workflow, skill or prompt golem gave you was wrong or missed a step, report
+it (`golem report instructions ...`) with the edit you'd propose in its detail.

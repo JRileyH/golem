@@ -20,6 +20,10 @@ the golem image.
 - `survey.md`: the run inside an adoption's `vet` step (`golem/golem/adopt.py`):
   install and test the repo in golem's container, and say what it needs that
   golem can't give. It changes nothing; its answer is structured output.
+- `report.md`: the standing order in every worker prompt above (`$report`): when and
+  how to report something golem itself did that got in the worker's way, with
+  `golem report` (`golem/golem/cli.py`, `golem/golem/reports.py`). Pasted as it is:
+  no placeholders.
 - `resolve.md`: the instructions of a `resolve` step, which golem inserts when a
   change's branch conflicts with main as it catches up (changes taking turns on
   one project, `golem/golem/turns.py`), or with another change shipping with it

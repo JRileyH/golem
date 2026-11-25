@@ -66,6 +66,10 @@ say where you saw it and what would remove it.
 No edits, commits or pushes. golem puts the checkout back afterwards (installed
 dependencies stay). Be quick: this is a check, not a job.
 
+# If golem gets in your way
+
+$report
+
 # Finishing
 
 Return the structured output: `tests` (what you ran and how it went, or `none`

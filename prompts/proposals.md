@@ -47,3 +47,4 @@ $instructions
 - **No Docker here.** You can run the app's own tooling (node, npm, python, uv)
   to measure or try things, and `golem-deploy status` or `golem-deploy logs` to
   see the live site's state.
+$report

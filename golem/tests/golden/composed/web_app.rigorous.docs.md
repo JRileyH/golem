@@ -7,8 +7,8 @@
    `docs/lessons.md`. Add lessons that apply to every project (a deploy gotcha,
    a CI trick) to the golem lessons file.
 
-If a workflow or skill step was wrong or missing, write the edit you'd propose
-to a new file in the golem proposals directory, for Riggy to apply by hand.
+If a workflow, skill or prompt golem gave you was wrong or missed a step, report
+it (`golem report instructions ...`) with the edit you'd propose in its detail.
 
 Message: one or two sentences on what Riggy can do on the site now. It's what
 he reads when golem tells him it's done.
