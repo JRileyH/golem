@@ -47,7 +47,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, LOOKS, MODELS, Job, Project, Said, Step, Store, Workflow
+from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, Job, Project, Said, Step, Store, Workflow
 from .talk import STATUS
 
 if TYPE_CHECKING:
@@ -117,6 +117,10 @@ def create_app(
 
     def signed_in(request: Request) -> bool:
         return auth.valid(request.cookies.get(COOKIE))
+
+    def visible_project(slug: str) -> Project | None:
+        """One of Riggy's projects by slug; never golem's own (INTERNAL), which has no pages."""
+        return store.project(slug) if slug != INTERNAL else None
 
     def colors() -> dict[str, int]:
         """Each project's color, 1-8, in the order they were made: it stays as others come and go."""
@@ -266,8 +270,8 @@ def create_app(
         ctx = context(now)
         order = ctx["order"]
         active = sorted(store.jobs(ACTIVE, limit=1000), key=lambda j: (order.get(j.id, 999), j.id))
-        lanes_ = [lane(j, store.project(j.slug), order.get(j.id), signed, ctx) for j in active if store.project(j.slug)]
-        recent = [j for j in store.jobs(limit=60) if j.state not in ACTIVE and store.project(j.slug)][: now_page.RECENT_SHOWN]
+        lanes_ = [lane(j, store.project(j.slug), order.get(j.id), signed, ctx) for j in active if visible_project(j.slug)]
+        recent = [j for j in store.jobs(limit=60) if j.state not in ACTIVE and visible_project(j.slug)][: now_page.RECENT_SHOWN]
         finished = [lane(j, store.project(j.slug), None, signed, ctx) for j in recent]
         live.forget({r["id"] for j in active for r in store.runs(j.id)[-1:]})
         return lanes_, finished
@@ -347,9 +351,11 @@ def create_app(
         if request.query_params.get("part") == "sheet":
             return HTMLResponse(body, headers={"Cache-Control": "no-store"})
         body = f"<article class=card>{body}</article><p><a href='{projectpage.href(job)}'>The whole job</a></p>"
-        project = store.project(job.slug)
+        project = visible_project(job.slug)
+        if project is None:  # one of golem's own jobs (its triage): shown with its reports
+            return respond(request, plan.label(step), body, signed, here="reports", up=("/reports", "Reports"))
         return respond(request, plan.label(step), body, signed, here=job.slug, up=(projectpage.href(job), f"Job #{job.id}"),
-                       subnav=tabs(project, "", signed) if project else "")  # fmt: skip
+                       subnav=tabs(project, "", signed))  # fmt: skip
 
     async def insights_page(request: Request) -> Response:
         signed = signed_in(request)
@@ -454,13 +460,13 @@ def create_app(
                        stage=stage, parts=parts)  # fmt: skip
 
     async def project_page(request: Request) -> Response:
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
         return project_view(request, project, None)
 
     async def project_job_page(request: Request) -> Response:
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         job = store.job(request.path_params["job_id"])
         if project is None or job is None or job.slug != project.slug:
             return HTMLResponse("No such job.", 404)
@@ -468,7 +474,7 @@ def create_app(
 
     async def project_jobs_page(request: Request) -> Response:
         """All of a project's jobs, to search (jobhistory.py): its page lists only the latest."""
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
         signed = signed_in(request)
@@ -481,7 +487,7 @@ def create_app(
     async def project_ask(request: Request) -> Response:
         """A request on a project's page: always a job of its own (bot.ask)."""
         form = await _form(request)
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
         form["back"] = f"/p/{project.slug}"
@@ -500,7 +506,7 @@ def create_app(
 
     async def project_history(request: Request) -> Response:
         """What was said in a project's conversation, before jobs had their own activity: read-only."""
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
         signed = signed_in(request)
@@ -513,7 +519,7 @@ def create_app(
                        subnav=tabs(project, "history", signed))  # fmt: skip
 
     async def project_settings(request: Request) -> Response:
-        project = store.project(request.path_params["slug"])
+        project = visible_project(request.path_params["slug"])
         if project is None:
             return HTMLResponse("No such project.", 404)
         signed = signed_in(request)
@@ -892,7 +898,7 @@ def create_app(
                 case "block-reset":
                     message = control.block_reset(form.get("stage", ""), form.get("part", ""))
                 case "project-slug" | "project-delete":
-                    project = store.project(slug)
+                    project = visible_project(slug)
                     if project is None or bot is None:
                         raise ControlError("That project isn't there.")
                     if action == "project-slug":

@@ -29,7 +29,7 @@ from dataclasses import replace
 from . import options, plan, shipments, stages
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
-from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, INTERNAL, MAX_WORKERS, MODELS, STARTS, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
@@ -54,7 +54,7 @@ class Control:
         return job, self.store.project(job.slug)
 
     def _project(self, slug: str) -> Project:
-        project = self.store.project(slug)
+        project = self.store.project(slug) if slug != INTERNAL else None  # golem's own isn't his to change
         if project is None:
             raise ControlError(f"No project called {slug}.")
         return project

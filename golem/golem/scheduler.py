@@ -52,7 +52,7 @@ from .history import records
 from .talk import STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
-from .store import ACTIVE, LOOKS, MAX_WORKERS, Job, Project, Proposal, Shipment, Step, Store, later, now
+from .store import ACTIVE, INTERNAL, LOOKS, MAX_WORKERS, Job, Project, Proposal, Shipment, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
@@ -1534,7 +1534,8 @@ class Scheduler:
         doing_job, doing_step = DOING.get()
         job_id = (job.id if isinstance(job, Job) else job) if job is not None else doing_job
         step_id = step if step is not None else (doing_step if job_id == doing_job else None)
-        await self.chat.send(project.slug, text, notice=notice, job=job_id, step=step_id)
+        channel = STATUS if project.slug == INTERNAL else project.slug  # golem's own jobs: golem's news, on Now
+        await self.chat.send(channel, text, notice=notice, job=job_id, step=step_id)
 
     async def send_image(self, project: Project, path: Path, caption: str = "") -> None:
         """A picture for Riggy, about the job and step this worker slot is on."""

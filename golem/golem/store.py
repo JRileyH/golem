@@ -313,6 +313,9 @@ STARTS = ("new", "change", "look", "propose", "adopt")
 # steps of a project's change.
 LOOKS = ("look", "propose")
 EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
+# golem's own project, hidden from every list of projects (its slug is reserved: intake.RESERVED):
+# where its jobs about itself belong, its triage of reports about golem (triage.py).
+INTERNAL = "golem"
 MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
 CHANGES_AT_ONCE = (1, 2, 3, 4)  # what a project's parallel_jobs can be
@@ -621,7 +624,17 @@ class Store:
         return _project(row) if row else None
 
     def projects(self) -> list[Project]:
-        return [_project(r) for r in self.db.execute("SELECT * FROM projects ORDER BY created_at DESC")]
+        """Riggy's projects, the latest first: not golem's own (INTERNAL)."""
+        return [_project(r) for r in self.db.execute("SELECT * FROM projects WHERE slug != ? ORDER BY created_at DESC", (INTERNAL,))]
+
+    def internal_project(self) -> Project:
+        """golem's own project (INTERNAL), made the first time it's wanted: where golem's jobs about
+        itself belong (its triage, triage.py), since every job, run and proposal has a project."""
+        self.db.execute(
+            "INSERT OR IGNORE INTO projects (slug, name, summary, model, effort, created_at) VALUES (?, ?, ?, '', '', ?)",
+            (INTERNAL, "golem", "golem itself: its jobs about how golem works", now()),
+        )
+        return self.project(INTERNAL)
 
     def set_paused(self, slug: str, paused: bool) -> None:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
@@ -689,7 +702,8 @@ class Store:
         rows = self.db.execute(
             "SELECT projects.*, MAX(COALESCE(steps.ended_at, jobs.updated_at)) AS live_at FROM projects"
             " JOIN jobs USING (slug) LEFT JOIN steps ON steps.job_id = jobs.id AND steps.kind = 'deploy' AND steps.state = 'done'"
-            " WHERE steps.id IS NOT NULL OR jobs.state = 'done' GROUP BY projects.slug ORDER BY live_at DESC"
+            " WHERE (steps.id IS NOT NULL OR jobs.state = 'done') AND projects.slug != ? GROUP BY projects.slug ORDER BY live_at DESC",
+            (INTERNAL,),
         )
         found = []
         for r in rows:
@@ -1240,8 +1254,11 @@ class Store:
         return self.proposal(proposal_id)
 
     def unbuilt_proposals(self) -> list[Proposal]:
-        """Accepted proposals with no job yet (their project was busy), oldest first."""
-        rows = self.db.execute("SELECT * FROM proposals WHERE state = 'accepted' AND built_by IS NULL ORDER BY decided_at, id")
+        """Accepted proposals with no job yet (their project was busy), oldest first. Not golem's
+        for itself (INTERNAL): Riggy makes those."""
+        rows = self.db.execute(
+            "SELECT * FROM proposals WHERE state = 'accepted' AND built_by IS NULL AND slug != ? ORDER BY decided_at, id", (INTERNAL,)
+        )
         return [Proposal(**r) for r in rows]
 
     def set_built_by(self, proposal_id: int, job_id: int) -> None:

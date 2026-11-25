@@ -899,6 +899,31 @@ def test_reports_about_golem_are_for_riggy_alone(golem, page):
     assert "href=/reports>Reports</a>" in page.get("/settings").text
 
 
+def test_golems_own_project_is_never_shown_or_changed(golem, page):
+    import asyncio
+
+    from golem import nuke, projectpage
+    from golem.store import INTERNAL
+
+    golem.store.internal_project()
+    golem.store.internal_project()  # made once
+    triage = golem.store.add_job(INTERNAL, "change", "Triage golem's reports", "triage")
+    assert [p.slug for p in golem.store.projects()] == ["trees"] and golem.store.project(INTERNAL).name == "golem"
+    assert projectpage.href(triage) == "/reports" and page.get(f"/jobs/{triage.id}", follow_redirects=False).headers["location"] == "/reports"
+    sign_in(page)
+    for path in ("/", "/p", "/settings"):
+        assert "its jobs about how golem works" not in page.get(path).text and "/p/golem" not in page.get(path).text, path
+    for path in ("/p/golem", "/p/golem/settings", "/p/golem/jobs", f"/p/golem/jobs/{triage.id}", "/p/golem/history"):
+        assert page.get(path).status_code == 404, path
+    assert page.post("/p/golem/ask", data={"text": "hi"}).status_code == 404
+    assert "No%20project%20called%20golem" in act(page, action="pause", slug=INTERNAL)
+    assert "No%20project%20called%20golem" in act(page, action="rename", slug=INTERNAL, value="Mine")
+    assert "isn%27t%20there" in act(page, action="project-delete", slug=INTERNAL, value=INTERNAL)
+    assert golem.store.project(INTERNAL).name == "golem" and not golem.store.project(INTERNAL).paused
+    said = asyncio.run(nuke.plan(golem.settings, golem.store, golem.deployer))
+    assert "- 1 project(s)" in said and "    trees (Trees <b>)" in said and "golem (golem)" not in said
+
+
 def test_every_page_is_a_click_from_anywhere(golem, page):
     golem.store.add_project("birds", "Birds", "")
     golem.store.update_job(page.job.id, state="waiting")

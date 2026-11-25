@@ -23,7 +23,7 @@ from . import plan, route
 from .conversation import proposals_card, thread
 from .pages import (STAGE_HERE, LaneData, _hidden, action_form, ask_card, badge, headline, region, request_card, route_list,
                     route_strip, trail, working)  # fmt: skip
-from .store import ACTIVE, LOOKS, Job, Project, Proposal, Said, Step
+from .store import ACTIVE, INTERNAL, LOOKS, Job, Project, Proposal, Said, Step
 
 JOBS_SHOWN = 12  # the latest jobs in the list (and any older one still under way); the rest are on the All jobs page
 
@@ -37,7 +37,8 @@ class Picks:
 
 
 def href(job: Job) -> str:
-    return f"/p/{job.slug}/jobs/{job.id}"
+    """Where a job is shown: its project's page, open on it; golem's own jobs, on the Reports page."""
+    return "/reports" if job.slug == INTERNAL else f"/p/{job.slug}/jobs/{job.id}"
 
 
 def chosen(jobs: list[Job]) -> Job | None:
