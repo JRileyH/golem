@@ -309,9 +309,12 @@ MODES = ("reckless", "standard", "rigorous")
 # (propose), taking on a repo golem didn't make (adopt). `sub` is for workflows used only inside
 # others, never a job's own.
 STARTS = ("new", "change", "look", "propose", "adopt")
+# golem's triage of the reports about itself (triage.py): a job's start too, but none of a
+# workflow's, so no workflow can start one or be one.
+TRIAGE = "triage"
 # Jobs that only look: nothing is committed, pushed or deployed, so they can run between the
 # steps of a project's change.
-LOOKS = ("look", "propose")
+LOOKS = ("look", "propose", TRIAGE)
 EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposals
 # golem's own project, hidden from every list of projects (its slug is reserved: intake.RESERVED):
 # where its jobs about itself belong, its triage of reports about golem (triage.py).
@@ -818,7 +821,7 @@ class Store:
     ) -> Job:
         """A new job, which works in a tree of its own (Job.worktree)."""
         start = start or start_of(kind, playbook)
-        assert start in STARTS, start
+        assert start in (*STARTS, TRIAGE), start
         cur = self.db.execute(
             "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
@@ -1271,6 +1274,34 @@ class Store:
         """The project's proposals jobs, oldest first."""
         rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? AND start = 'propose' ORDER BY id", (slug,))
         return [Job(**r) for r in rows]
+
+    def jobs_from(self, start: str, limit: int = 1000) -> list[Job]:
+        """Jobs that came from `start` (STARTS, TRIAGE), the latest `limit`, oldest first."""
+        rows = self.db.execute(f"SELECT {LISTED} FROM jobs WHERE start = ? ORDER BY id DESC LIMIT ?", (start, limit))
+        return [Job(**r) for r in rows][::-1]
+
+    def add_triaged(self, job_id: int, upto: int, made: list[tuple[str, str, str, list[int]]], notes: dict[int, str]) -> list[Proposal]:
+        """What a triage job (triage.py) made of the new reports up to #`upto`: its proposals for
+        golem, (title, body, area, the reports each cites), in place of any it made before (its
+        step ran again); each report it read triaged, with the proposal citing it or its note."""
+        with self.db:
+            self.db.execute("BEGIN")
+            self.db.execute("DELETE FROM proposals WHERE job_id = ? AND state = 'open'", (job_id,))
+            for title, body, area, cited in made:
+                cur = self.db.execute(
+                    "INSERT INTO proposals (slug, job_id, lens, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (INTERNAL, job_id, area, title, body, now()),
+                )
+                self.db.executemany(
+                    "UPDATE reports SET proposal_id = ? WHERE id = ? AND id <= ? AND state = 'new'",
+                    [(cur.lastrowid, i, upto) for i in cited],
+                )
+            self.db.executemany(
+                "UPDATE reports SET note = ? WHERE id = ? AND id <= ? AND state = 'new' AND proposal_id IS NULL",
+                [(why, i, upto) for i, why in notes.items()],
+            )
+            self.db.execute("UPDATE reports SET state = 'triaged', triage_job = ? WHERE state = 'new' AND id <= ?", (job_id, upto))
+        return self.job_proposals(job_id)
 
     # --- reports about golem itself (reports.py) ---------------------------------
 

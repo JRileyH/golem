@@ -20,6 +20,9 @@ the golem image.
 - `survey.md`: the run inside an adoption's `vet` step (`golem/golem/adopt.py`):
   install and test the repo in golem's container, and say what it needs that
   golem can't give. It changes nothing; its answer is structured output.
+- `triage.md`: golem's triage of the reports about itself (`golem/golem/triage.py`):
+  the new reports, where golem's installed source, process files and job logs are, and
+  every earlier proposal for golem with what Riggy decided and why.
 - `report.md`: the standing order in every worker prompt above (`$report`): when and
   how to report something golem itself did that got in the worker's way, with
   `golem report` (`golem/golem/cli.py`, `golem/golem/reports.py`). Pasted as it is:

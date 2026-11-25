@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, legacy, options, plan, proposals, reports, shipments, stages, teardown, turns
+from . import about, adopt, engine, legacy, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -52,7 +52,7 @@ from .history import records
 from .talk import STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
-from .store import ACTIVE, INTERNAL, LOOKS, MAX_WORKERS, Job, Project, Proposal, Shipment, Step, Store, later, now
+from .store import ACTIVE, INTERNAL, LOOKS, MAX_WORKERS, TRIAGE, Job, Project, Proposal, Shipment, Step, Store, later, now
 from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
@@ -233,7 +233,7 @@ class Scheduler:
                     continue
                 if not self.paused:
                     await self.build_accepted()
-                    if not self.fill() and self.propose() is not None:
+                    if not self.fill() and (self.propose() or self.triage_reports()) is not None:
                         continue
                 await self.idle()
         except asyncio.CancelledError:  # golem is shutting down; the jobs carry on when it starts
@@ -316,6 +316,15 @@ class Scheduler:
         log.info("job %s: %s on %s", job.id, job.request, project.slug)
         return job
 
+    def triage_reports(self) -> Job | None:
+        """With nothing else to do (a worker spare), golem's triage of the reports about itself, if
+        it's on and they're due one (triage.py)."""
+        if not triage.due(self.store, datetime.now(UTC), spare=len(self.running) < self.workers):
+            return None
+        job = triage.start(self.store)
+        log.info("job %s: %s", job.id, job.request)
+        return job
+
     async def build_accepted(self) -> None:
         """A change job for each proposal Riggy accepted, once its project has room for another
         change (one at a time, unless it allows more: turns.py)."""
@@ -361,7 +370,13 @@ class Scheduler:
     def pin(self, job: Job) -> Job:
         """The job's own copy of its workflow, for its mode: nothing done to the workflow from now
         on changes it. If the workflow can't run (its last working state broken by a sub-workflow
-        changing since), its start type's fallback, and Riggy is told."""
+        changing since), its start type's fallback, and Riggy is told. A triage job took its copy
+        when it was made, from golem's code (triage.py): no workflow is one."""
+        if job.start == TRIAGE:
+            if job.graph:
+                return job
+            snap = triage.snapshot()
+            return self.store.update_job(job.id, workflow="triage", graph=json.dumps(snap), graph_hash=engine.digest(snap))
         project = self.store.project(job.slug)
         key, mode = plan.workflow_for(job, project)
         wf = self.store.workflow(key=key)
@@ -604,9 +619,10 @@ class Scheduler:
             self.store.update_job(job.id, state="parked", attempts=attempts, retry_at=later(wait), resume_session=None)
             log.warning("job %s attempt %s failed: %s", job.id, attempts, error)
             return
-        if job.start == "propose":  # nobody asked for it: no reason to interrupt Riggy, just stop
+        if job.start in ("propose", TRIAGE):  # nobody asked for it: no reason to interrupt Riggy, just stop
             self.store.update_job(job.id, state="failed", attempts=0, resume_session=None)
-            await self.say(project, f"I couldn't finish looking for proposals: {error[:300]}", notice=True)
+            what = "triaging the reports about golem" if job.start == TRIAGE else "looking for proposals"
+            await self.say(project, f"I couldn't finish {what}: {error[:300]}", notice=True)
             return
         # Stuck after retries is one of the few reasons to interrupt Riggy.
         self.store.update_job(job.id, state="waiting", attempts=0, resume_session=None)
@@ -623,7 +639,9 @@ class Scheduler:
         way), and anything it changes there is put back."""
         block = plan.node(job, step) or {}
         looking, tree = job.start in LOOKS, self.tree(job)
-        if looking:
+        if project.slug == INTERNAL:  # golem's own job: no repo, a scratch directory (checkout)
+            branch, was_clean = "", False
+        elif looking:
             branch = await self.workspace.current_branch(project.slug, job=tree)
             was_clean = await self.workspace.clean(project.slug, job=tree)
         else:
@@ -644,6 +662,8 @@ class Scheduler:
             busy = self.store.active_job(project.slug, questions=False) is not None
             jobs, said = self.history(project, job)
             prompt, resume = self.prompts.question(project, job, intro, instructions, step, branch, busy, jobs, said, feedback), None
+        elif job.start == TRIAGE:
+            prompt, resume = self.triage_prompt(job, project), None
         else:
             lessons = self.lessons_path.read_text() if self.lessons_path.exists() else ""
             steps = plan.shown(self.store.steps(job.id))
@@ -652,6 +672,8 @@ class Scheduler:
 
         contract = block.get("contract") or ""
         schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
+        if job.start == TRIAGE:
+            schema = triage.SCHEMA
         if outputs:  # its verdict is the output it takes, or blocked
             schema = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": [*(o["name"] for o in outputs), "blocked"]}}}
         turns = step.max_turns or FIX_TURNS
@@ -697,12 +719,27 @@ class Scheduler:
         if job.start == "propose":  # nobody is waiting to answer: a question back is nothing to propose
             made = self.store.add_proposals(project.slug, job.id, proposals.lens(self.store, job).name, proposals.collect(v.get("proposals")))
             return Outcome("done", message or f"Proposed {len(made)}.", links)
+        if job.start == TRIAGE:  # nor here
+            read = triage.shown(self.store, job)
+            found, said = triage.collect(v.get("proposals"), v.get("notes"), read)
+            made = self.store.add_triaged(job.id, triage.upto(job), found, said)
+            await self.say(project, triage.announcement(len(read), made, f"{self.settings.url('golem')}/reports"), notice=True)
+            return Outcome("done", message or f"Proposed {len(made)} fix(es) to golem.", links)
         if v["verdict"] == "blocked":
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
         passed_on = message if block.get("stage") and port == "fail" else None  # a Review that reports: what to fix, for the next block
         return Outcome("done", message, links, port=port, context=passed_on)
+
+    def triage_prompt(self, job: Job, project: Project) -> str:
+        """A triage step's prompt (triage.py), the reports it reads written out in full where it works."""
+        read = triage.shown(self.store, job)
+        path = self.checkout(project, job) / "reports.json"
+        triage.write_reports(path, read)
+        earlier = [p for p in self.store.proposals(INTERNAL, limit=proposals.PAST_SHOWN) if p.job_id != job.id]
+        lines = [triage.line(r) for r in read]
+        return self.prompts.triage(lines, path, path.parent, triage.SOURCE, self.version(), earlier, triage.MAX_PER_RUN)
 
     def after(self, job: Job, step: Step, outputs: list[dict]) -> str:
         """For the worker: what comes after its step, as the job's workflow has it, so its
@@ -836,7 +873,10 @@ class Scheduler:
 
     def incident(self, job: Job, step: Step, same: tuple[str, ...], kind: str, impact: str, summary: str, detail: str = "") -> None:
         """One of golem's own incidents, as a report about golem (reports.py): the same again (by
-        `same`, what makes two of them one) counts up on its report. Costs no tokens."""
+        `same`, what makes two of them one) counts up on its report. Costs no tokens. golem's own
+        jobs (its triage) file none: they'd be reports about reading reports."""
+        if job.slug == INTERNAL:
+            return
         detail = reports.redact(detail, os.environ)[-reports.INCIDENT_CHARS :]
         self.store.file_incident(
             reports.fingerprint(*same), kind, impact, reports.redact(summary, os.environ)[: reports.SUMMARY_CHARS], detail,
@@ -1469,7 +1509,12 @@ class Scheduler:
         return job.id if job.worktree else None
 
     def checkout(self, project: Project, job: Job) -> Path:
-        """Where the job's files are: its tree, or the project's checkout."""
+        """Where the job's files are: its tree, or the project's checkout. golem's own jobs have
+        no repo: a scratch directory of their own."""
+        if project.slug == INTERNAL:
+            scratch = self.settings.job_tmp(job.id) / "work"
+            scratch.mkdir(parents=True, exist_ok=True)
+            return scratch
         return self.workspace.tree_path(job.id) if job.worktree else self.workspace.path(project.slug)
 
     def commit_url(self, project: Project, sha: str) -> str:
@@ -1503,7 +1548,8 @@ class Scheduler:
             GOLEM_SLUG=project.slug,
             GOLEM_JOB=str(job.id),
             GOLEM_PROGRESS=str(self.progress_path(job)),
-            GOLEM_REPORTS=str(self.reports_path(job)),
+            # golem's own jobs (its triage) file no reports about golem: they'd be about themselves.
+            GOLEM_REPORTS="" if project.slug == INTERNAL else str(self.reports_path(job)),
             GOLEM_URL=self.settings.project_url(project.slug),
             GITHUB_ORG=self.settings.org,
             GOLEM_PLATFORM=self.settings.platform,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from string import Template
 
 from . import plan
@@ -147,6 +148,26 @@ class Prompts:
             platform=s.platform,
             said=format_feedback([said]) if said.strip() else "(nothing more)",
             report=self.snippet("report"),
+        )
+
+    def triage(self, lines: list[str], reports_file: Path, cwd: Path, source: Path, version: str, earlier: list[Proposal],
+               most: int) -> str:  # fmt: skip
+        """golem's triage of the reports about itself (triage.py): the new reports, where golem's
+        source, process files and job logs are, and every earlier proposal for golem with what
+        Riggy made of it."""
+        s = self.settings
+        return self.render(
+            "triage",
+            count=len(lines),
+            reports="\n".join(lines),
+            reports_file=reports_file,
+            source=source,
+            version=version[:12] or "unknown",
+            process=s.process_dir,
+            logs=s.state_dir / "jobs",
+            past=past(earlier),
+            max=most,
+            cwd=cwd,
         )
 
     def resume(self, feedback: list[str]) -> str:

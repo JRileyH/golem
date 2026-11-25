@@ -84,15 +84,17 @@ class Control:
 
     def kinds(self) -> list[str]:
         """The kinds of agent run, by name: every agent block's in the workflows, built-ins first,
-        each in the order its graph runs them; then those golem starts itself: resolve (turns.py)
-        and the survey an adoption's check runs (adopt.py)."""
+        each in the order its graph runs them; then those golem starts itself: resolve (turns.py),
+        the survey an adoption's check runs (adopt.py) and its triage of reports about itself
+        (triage.py)."""
         names: list[str] = []
         for wf in self.store.workflows():
             for tab in self.store.tabs(wf.id).values():
                 for node in plan.blocks_in_order(tab.graph):
                     if node["type"] == "agent" and node.get("name") and node["name"] not in names:
                         names.append(node["name"])
-        return [*names, *(n for n in ("fix", "resolve", "survey") if n not in names), *(f"stage:{k}" for k in stages.catalog())]
+        golems = ("fix", "resolve", "survey", "triage")
+        return [*names, *(n for n in golems if n not in names), *(f"stage:{k}" for k in stages.catalog())]
 
     def skippable(self, job: Job, step: Step) -> bool:
         """Whether an upcoming step can be skipped: optional, and not under way."""

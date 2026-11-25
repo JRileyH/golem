@@ -46,7 +46,7 @@ CLASSES = {
     "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
     "checkin": "wait", "choose": "wait",
     "push": "ship", "push-main": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
-    "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look",
+    "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look", "triage": "look",
 }  # fmt: skip
 # Steps golem puts in where they're needed: each is part of the section it's in (the class of the
 # next step that has one). A fix after failed CI is shipping; a catch-up with main before
@@ -228,6 +228,7 @@ SUGGESTED = {
     "docs": ("sonnet", "medium"),
     "examine": ("sonnet", "high"),  # a question: a quick look and an answer
     "propose": ("opus", "high"),  # finding what's worth doing, unprompted, takes judgment
+    "triage": ("opus", "high"),  # what in golem causes its workers' trouble: reading its code and their logs
     "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
     "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
     # Stage blocks (stages.py), by stage, after a block's own name:
