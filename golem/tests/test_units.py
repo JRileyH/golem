@@ -739,6 +739,63 @@ def test_deploy_cli_is_scoped_to_the_job_project(monkeypatch):
     assert deploy_cli.main(["status"]) == 2
 
 
+# --- the golem command (cli.py) ----------------------------------------------
+
+
+def test_golem_report_files_a_report_for_golem_to_read_after_the_run(tmp_path, capsys):
+    from golem import cli
+
+    path = tmp_path / "reports.jsonl"
+    env = {"GOLEM_REPORTS": str(path), "GOLEM_RUN": "7"}
+    assert cli.main(["report", "instructions", "costly", "skills/deploy.md says port 80; compose says 8080", "--detail", "lost 20 turns"], env) == 0
+    assert "Filed." in capsys.readouterr().out
+    [line] = path.read_text().splitlines()
+    assert json.loads(line) == {"kind": "instructions", "impact": "costly", "summary": "skills/deploy.md says port 80; compose says 8080",
+                                "detail": "lost 20 turns", "run": "7"}  # fmt: skip
+
+
+def test_golem_report_says_what_it_wont_take(tmp_path, capsys, monkeypatch):
+    from golem import cli
+
+    path = tmp_path / "reports.jsonl"
+    env = {"GOLEM_REPORTS": str(path), "GOLEM_RUN": "7"}
+    assert cli.main(["report", "gripe", "minor", "x"], env) == 2
+    assert "invalid choice: 'gripe' (choose from bug, instructions, environment, friction, wish)" in capsys.readouterr().err
+    assert cli.main(["report", "bug", "huge", "x"], env) == 2
+    assert cli.main(["report", "bug", "minor", "two\nlines"], env) == 2
+    assert "put the rest in --detail" in capsys.readouterr().err
+    assert cli.main(["report", "bug", "minor", "x"], {}) == 1  # not in a step
+    assert "only works inside one of golem's agent steps" in capsys.readouterr().err
+    assert not path.exists()
+
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("from stdin\n" + "y" * 5000))
+    assert cli.main(["report", "bug", "minor", "one", "--detail", "-"], env) == 0
+    assert "cut to 4000 characters" in capsys.readouterr().out
+    assert cli.main(["report", "wish", "minor", "two"], env) == 0
+    assert cli.main(["report", "wish", "minor", "three"], env) == 1  # two a step
+    assert "report only what cost you most" in capsys.readouterr().err
+    assert cli.main(["report", "wish", "minor", "next step"], {**env, "GOLEM_RUN": "8"}) == 0
+    assert [json.loads(line)["summary"] for line in path.read_text().splitlines()] == ["one", "two", "next step"]
+    assert json.loads(path.read_text().splitlines()[0])["detail"].startswith("from stdin\nyyy")
+
+
+def test_golem_deploy_is_golem_deploy(monkeypatch):
+    from golem import cli
+
+    calls = []
+    monkeypatch.setattr(deploy_cli, "call", lambda method, path, body=None: calls.append((method, path)) or 0)
+    monkeypatch.setenv("GOLEM_SLUG", "trees")
+    assert cli.main(["deploy", "logs", "web", "50"], {}) == 0
+    assert cli.main(["deploy", "deploy", "abc"], {}) == 2
+    assert calls == [("GET", "/logs?slug=trees&service=web&tail=50")]
+
+
+def test_golem_and_golem_deploy_run_golems_own_code_wherever_a_worker_is():
+    dockerfile = (REPO / "golem/Dockerfile").read_text()
+    for name, module in (("golem", "golem.cli"), ("golem-deploy", "golem.deploy_cli")):
+        assert f"python -P -m {module} \"$@\"\\n' > /usr/local/bin/{name}" in dockerfile, name
+
+
 def test_structured_output_with_a_custom_schema_is_not_a_verdict():
     """The bug that named a project after the first words of its dictation."""
     brief = {"name": "Leaf Peeper", "slug": "leaf-peeper", "summary": "s"}

@@ -62,9 +62,12 @@ COPY golem/golem ./golem
 COPY --chmod=755 golem/tools/golem-screenshot.mjs /usr/local/bin/golem-screenshot
 COPY --chmod=755 golem/tools/golem-card-shot.mjs /usr/local/bin/golem-card-shot
 COPY --chmod=755 golem/tools/golem-render-doc.mjs /usr/local/bin/golem-render-doc
-# Workers deploy their own project through this (skills/deploy.md).
-RUN printf '#!/bin/sh\nexec /opt/golem/app/.venv/bin/python -m golem.deploy_cli "$@"\n' > /usr/local/bin/golem-deploy \
-    && chmod 755 /usr/local/bin/golem-deploy
+# Workers' commands: `golem` (cli.py: report, deploy...), and `golem-deploy`, their project's
+# deployment (skills/deploy.md). -P: a project's own golem/ directory, where the worker runs
+# them, mustn't stand in for golem's.
+RUN printf '#!/bin/sh\nexec /opt/golem/app/.venv/bin/python -P -m golem.cli "$@"\n' > /usr/local/bin/golem \
+    && printf '#!/bin/sh\nexec /opt/golem/app/.venv/bin/python -P -m golem.deploy_cli "$@"\n' > /usr/local/bin/golem-deploy \
+    && chmod 755 /usr/local/bin/golem /usr/local/bin/golem-deploy
 
 USER golem
 # npm's cache in the cache volume with uv's: each job installs in a fresh tree, from the cache.
