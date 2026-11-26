@@ -36,6 +36,33 @@ where its files are is under "Done so far"; what he said about it is under
 3. Record the choice in `docs/decisions.md` (which option, and his words).
    Leave `docs/options/` as it is: it's the record of what he was shown.
 
+## checklist
+
+This job is in checklist mode: you don't build the work above yourself. You plan
+it, and smaller, cheaper workers build it, one item at a time, each in a short
+run of its own with only its item, the project's files and the lessons to go on.
+Your plan is all they have, so make it good.
+
+1. Read what this step is about and the project (`AGENTS.md`, `docs/`), and work
+   out what needs building. For anything bigger than a small fix, write the plan
+   down first, as you would: a mini-spec in `docs/specs/`, or the spec's list.
+2. Split the work into items in the order to build them: each one thing a worker
+   can finish in about half an hour, building on the items before it. Usually 3
+   to 10 items, never more than 16; small work can be one.
+3. Give each item a check: a command golem runs in the checkout that exits 0
+   once the item works, and not before (unit tests for logic, Playwright for
+   what's on screen). Write the tests the checks run now, and commit them; if the
+   project has no test setup yet, set it up first (skills/new-repo.md). Run each
+   check once: it should fail because its item isn't built yet, not because the
+   check is broken. Workers can't change the check files: golem puts them back
+   before it checks.
+4. Say for each item what to do, concretely: the files to touch, what to reuse,
+   what done looks like on screen, what's easy to get wrong. A worker who has
+   never seen the project should be able to start straight away.
+
+Return the items with your verdict, in order (`items`), and the check files you
+wrote (`checks`).
+
 ## builds.skeleton
 
 A skeleton that deploys, so hosting is proven before features are built.

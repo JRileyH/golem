@@ -86,14 +86,14 @@ class Control:
     def kinds(self) -> list[str]:
         """The kinds of agent run, by name: every agent block's in the workflows, built-ins first,
         each in the order its graph runs them; then those golem starts itself: resolve (turns.py),
-        the survey an adoption's check runs (adopt.py) and its triage of reports about itself
-        (triage.py)."""
+        the survey an adoption's check runs (adopt.py), its triage of reports about itself
+        (triage.py) and a checklist's items (checklist.py)."""
         names: list[str] = []
         for wf in self.scheduler.library.all():
             for node in plan.blocks_in_order(wf.graph):
                 if node["type"] == "agent" and node.get("name") and node["name"] not in names:
                     names.append(node["name"])
-        golems = ("fix", "resolve", "survey", "triage")
+        golems = ("fix", "resolve", "survey", "triage", "item")
         return [*names, *(n for n in golems if n not in names), *(f"stage:{k}" for k in stages.catalog())]
 
     def skippable(self, job: Job, step: Step) -> bool:

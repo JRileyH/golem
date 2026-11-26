@@ -40,6 +40,8 @@ NAMES = {
     "setup": "Get ready",
     "refresh": "Catch up",
     "test": "Test it",
+    "item": "Build an item",
+    "check": "Check an item",
     "examine": "Look into it",
     "answer": "Answer you",
 }

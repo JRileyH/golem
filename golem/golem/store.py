@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS steps (
     node_id TEXT NOT NULL DEFAULT '',   -- the block of the job's workflow it's a visit to (engine.py); '' from before
     port TEXT NOT NULL DEFAULT '',      -- the output it left by, once it's done
     visit INTEGER NOT NULL DEFAULT 0,   -- which visit to its block it is: 1, 2… (loops come back)
-    head TEXT NOT NULL DEFAULT ''       -- the job's branch's commit once it was done, for what came since (about.py)
+    head TEXT NOT NULL DEFAULT '',      -- the job's branch's commit once it was done, for what came since (about.py)
+    item TEXT NOT NULL DEFAULT '{}'     -- JSON: a checklist item's build or check, its item (checklist.py); {} for any other step
 );
 -- What the projects page shows for a live project (cards.py).
 CREATE TABLE IF NOT EXISTS cards (
@@ -253,6 +254,7 @@ MIGRATIONS = {
         "port": "TEXT NOT NULL DEFAULT ''",
         "visit": "INTEGER NOT NULL DEFAULT 0",
         "head": "TEXT NOT NULL DEFAULT ''",
+        "item": "TEXT NOT NULL DEFAULT '{}'",
     },
     "messages": {"job_id": "INTEGER", "step_id": "INTEGER"},
     "notes": {"step_id": "INTEGER", "node_id": "TEXT NOT NULL DEFAULT ''"},  # a note for one step (or block) rather than the next
@@ -473,6 +475,7 @@ class Step:
     port: str = ""  # the output it left by, once done (engine.advance)
     visit: int = 0  # which visit to its block: loops come back
     head: str = ""  # the job's branch's commit once it was done ("" if it touches no tree, or from before)
+    item: dict = field(default_factory=dict)  # a checklist item's build or check: its item (checklist.py); {} for any other step
 
 
 class Store:
@@ -922,14 +925,19 @@ class Store:
             for i, s in enumerate(steps, start=after + 1):
                 self.db.execute(
                     "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn,"
-                    " node_id, port, visit, model, effort, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " node_id, port, visit, model, effort, started_at, ended_at, item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links), s.turn,
-                     s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
+                     s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at, json.dumps(s.item)),
                 )
 
     def drop_steps_after(self, job_id: int, position: int) -> None:
         """Forget the steps after one (written by walking on from it, none started): undoing a skip."""
         self.db.execute("DELETE FROM steps WHERE job_id = ? AND position > ? AND started_at IS NULL", (job_id, position))
+
+    def drop_steps(self, job_id: int, ids: list[int]) -> None:
+        """Forget these steps of the job, none started (a checklist's, put in before a crash)."""
+        for step_id in ids:
+            self.db.execute("DELETE FROM steps WHERE job_id = ? AND id = ? AND started_at IS NULL", (job_id, step_id))
 
     def steps(self, job_id: int) -> list[Step]:
         rows = self.db.execute("SELECT * FROM steps WHERE job_id = ? ORDER BY position", (job_id,))
@@ -940,7 +948,7 @@ class Store:
         return _step(row) if row else None
 
     def update_step(self, step_id: int, **fields) -> Step:
-        for name in ("links", "options", "design"):
+        for name in ("links", "options", "design", "item"):
             if name in fields:
                 fields[name] = json.dumps(fields[name])
         columns = ", ".join(f"{name} = ?" for name in fields)
@@ -951,7 +959,7 @@ class Store:
         """A step's end and what comes after it, in one go: the step `close` updated with `closed`
         (its state, the output it left by…), `rows` added after the job's last step (blocks
         passed on the way, the next to do), the job's vars and any other `job` fields saved."""
-        for name in ("links", "options", "design"):
+        for name in ("links", "options", "design", "item"):
             if name in closed:
                 closed[name] = json.dumps(closed[name])
         with self.db:
@@ -963,9 +971,9 @@ class Store:
             for i, s in enumerate(rows, start=last + 1):
                 self.db.execute(
                     "INSERT INTO steps (job_id, position, kind, name, max_turns, optional, state, summary, problem, links, turn,"
-                    " node_id, port, visit, model, effort, started_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " node_id, port, visit, model, effort, started_at, ended_at, item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (job_id, i, s.kind, s.name, s.max_turns, int(s.optional), s.state, s.summary, s.problem, json.dumps(s.links),
-                     s.turn, s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at),
+                     s.turn, s.node_id, s.port, s.visit, s.model, s.effort, s.started_at, s.ended_at, json.dumps(s.item)),
                 )  # fmt: skip
             fields = {"vars": json.dumps(vars), **job, "updated_at": now()}
             columns = ", ".join(f"{name} = ?" for name in fields)
@@ -1280,6 +1288,7 @@ def _step(row: sqlite3.Row | dict) -> Step:
     data["links"] = json.loads(data["links"] or "{}")
     data["options"] = json.loads(data.get("options") or "[]")
     data["design"] = json.loads(data.get("design") or "{}")
+    data["item"] = json.loads(data.get("item") or "{}")
     data["optional"] = bool(data["optional"])
     return Step(**data)
 

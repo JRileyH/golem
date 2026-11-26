@@ -1,0 +1,131 @@
+"""Checklist mode (checklist.py): a Build plans items with checks, cheaper runs build them, golem checks each."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+from test_flow import by_label, idle_project, verdict
+
+from golem import checklist, plan, route
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def planner(items: list[dict], checks: list[str]):
+    """A Build in checklist mode: writes its check files and returns its plan."""
+
+    def plan_(call) -> dict:
+        (call.cwd / "tests").mkdir(exist_ok=True)
+        (call.cwd / "tests" / "items.txt").write_text("a.txt\nb.txt\n")
+        return {**verdict("done", "Two small items."), "items": items, "checks": checks}
+
+    return plan_
+
+
+def builds(name: str = "", tamper: bool = False):
+    """An item's build: makes `name` (or nothing), and changes the check file if told to."""
+
+    def build(call) -> dict:
+        if name:
+            (call.cwd / name).write_text("ok\n")
+        if tamper:
+            (call.cwd / "tests" / "items.txt").write_text("anything passes\n")
+        return verdict("done", f"Made {name or 'nothing'}.")
+
+    return build
+
+
+ITEMS = [
+    {"title": "File A", "do": "Make a.txt.", "files": ["a.txt"], "check": "test -f a.txt"},
+    {"title": "File B", "do": "Make b.txt.", "files": ["b.txt"], "check": "test -f b.txt && grep -q '^b.txt$' tests/items.txt"},
+]
+
+
+async def checklist_job(golem, request: str = "add the a and b files"):
+    room = await idle_project(golem)
+    job = await golem.ask(room, request, workflow="change")
+    return golem.store.update_job(job.id, mode=checklist.MODE)
+
+
+def test_a_build_in_checklist_mode_plans_items_that_cheaper_runs_build_and_golem_checks(golem):
+    async def go():
+        golem.store.put("guard_runs", "3")  # a checklist's item runs don't count towards the loop guard
+        job = await checklist_job(golem)
+        golem.harness.script = by_label({
+            "change": [planner(ITEMS, ["tests/items.txt", "../outside.txt"])],
+            "item": [builds("a.txt"), builds(tamper=True), builds(), builds("b.txt")],
+        })  # fmt: skip
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"
+        assert golem.labels(job.id)[:12] == ["set up", "change", "item", "check", "item", "check", "item", "check", "item", "check", "review", "docs"]
+        steps = golem.store.steps(job.id)
+        checks = [s for s in steps if s.kind == "check"]
+        assert [s.state for s in checks] == ["done", "failed", "failed", "done"]
+        assert checks[1].summary == "2/2 File B: its check failed (put back tests/items.txt, which it had changed), so it goes again"
+
+        # The planner: the Build's model and text, its "how" swapped for planning, returning items.
+        plan_call = next(c for c in golem.harness.calls if c.label == "change")
+        assert plan_call.schema == checklist.SCHEMA and "This job is in checklist mode" in plan_call.prompt
+        assert "Add or update tests for the paths you touch" not in plan_call.prompt  # the building is the items'
+        # The items: the item default, then for an item's last try, the Build's own model.
+        built = [c for c in golem.harness.calls if c.label == "item"]
+        assert [(c.model, c.effort) for c in built] == [("haiku", "medium")] * 3 + [(plan_call.model, plan_call.effort)]
+        assert "Build one item of this step's checklist: **File B**" in built[1].prompt and "→ 2. File B" in built[1].prompt
+        assert "What failed last time" not in built[1].prompt and "## What failed last time" in built[2].prompt
+        assert "`test -f b.txt" in built[2].prompt and "This is try 2 at this item" in built[2].prompt
+        assert [s.summary for s in steps if s.kind == "agent" and s.name == "item"][0] == "1/2 File A: Made a.txt."
+        items = [s for s in steps if s.item]
+        assert all(s.turn == "build" for s in items) and {s.item["plan"] for s in items} == {next(s.id for s in steps if s.name == "change")}
+        # The check files were kept as written, and put back before each check.
+        where = checklist.folder(golem.settings.job_logs(job.id), items[0].item["plan"])
+        assert json.loads((where / "plan.json").read_text())["checks"] == ["tests/items.txt"]  # outside the checkout: not kept
+        assert (plan_call.cwd / "tests" / "items.txt").read_text() == "a.txt\nb.txt\n"
+        # Drawn small: the checklist is one chip that fills.
+        chips = route.chips(golem.store.job(job.id), plan.planned(golem.settings, golem.store, golem.store.job(job.id)))
+        [chip] = [c for c in chips if c.label == "Checklist"]
+        assert chip.container and chip.state == "done" and len(chip.steps) == 8
+
+    run(go())
+
+
+def test_an_item_that_never_passes_is_left_and_the_next_agent_step_is_told(golem):
+    async def go():
+        job = await checklist_job(golem, "add a file that never comes")
+        never = [{"title": "Never", "do": "Make never.txt.", "files": [], "check": "test -f never.txt"}]
+        golem.harness.script = by_label({"change": [planner(never, ["tests/items.txt"])]})
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"
+        checks = [s for s in golem.store.steps(job.id) if s.kind == "check"]
+        assert [s.item["try"] for s in checks] == [1, 2, 3] and checks[-1].summary == "1/1 Never: its check still fails after 3 tries; carrying on"
+        review = next(c for c in golem.harness.calls if c.label == "review")
+        assert "## Checklist items that didn't pass" in review.prompt and "1/1 Never (its check: `test -f never.txt`)" in review.prompt
+        assert "Fixing it." not in " ".join(golem.chat.texts("tree-cards"))
+
+    run(go())
+
+
+def test_a_plan_with_no_usable_items_is_tried_again(golem):
+    async def go():
+        job = await checklist_job(golem)
+        golem.harness.script = by_label({"change": [{**verdict("done"), "items": [{"title": "", "do": "x", "files": [], "check": ""}], "checks": []}]})
+        await golem.step()  # set up
+        await golem.step()
+        step = next(s for s in golem.store.steps(job.id) if s.name == "change")
+        assert step.state == "pending" and "no items" in step.error and not any(s.item for s in golem.store.steps(job.id))
+
+    run(go())
+
+
+def test_items_are_built_on_the_item_default_riggy_can_change(golem):
+    async def go():
+        golem.store.set_default("item", "model", "sonnet")
+        job = await checklist_job(golem)
+        golem.harness.script = by_label({"change": [planner(ITEMS[:1], [])], "item": [builds("a.txt")]})
+        await golem.finish()
+        assert [(c.model, c.effort) for c in golem.harness.calls if c.label == "item"] == [("sonnet", "medium")]
+        assert golem.store.job(job.id).state == "done"
+
+    run(go())

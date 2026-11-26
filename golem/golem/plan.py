@@ -30,6 +30,7 @@ LABELS = {
     "vet": "check it over",
     "sync": "catch up with main",
     "test": "test",
+    "check": "check",
 }
 TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
@@ -41,7 +42,7 @@ ASKS = ("checkin", "choose")
 CLASSES = {
     "setup": "plan", "vet": "plan", "spec": "plan", "spec-review": "plan", "options": "plan", "design": "plan",
     "scaffold": "build", "mvp": "build", "buildout": "build", "build": "build", "change": "build", "adopt": "build",
-    "guide": "build", "apply": "build",
+    "guide": "build", "apply": "build", "item": "build", "check": "build",
     "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
     "checkin": "wait", "choose": "wait",
     "push": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
@@ -196,12 +197,13 @@ SUGGESTED = {
     "triage": ("opus", "high"),  # what in golem causes its workers' trouble: reading its code and their logs
     "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
     "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
+    "item": ("haiku", "medium"),  # a checklist item's build (checklist mode): small, with a check to pass; its last try is on its Build's
     # Stage blocks (stages.py), by stage, after a block's own name:
     "stage:plan": ("opus", "xhigh"), "stage:build": ("opus", "high"), "stage:review": ("opus", "xhigh"),
     "stage:docs": ("sonnet", "medium"), "stage:design": ("opus", "high"), "stage:fix": ("opus", "high"),
     "stage:look": ("sonnet", "high"), "stage:options": ("opus", "high"),
 }  # fmt: skip
-SUGGESTED_KEY = "suggested_defaults_2"  # a new key fills in the whole set again, where unset
+SUGGESTED_KEY = "suggested_defaults_3"  # a new key fills in the whole set again, where unset
 
 
 @dataclass

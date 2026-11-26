@@ -47,6 +47,8 @@ DOES = {
     "alert": "Tells you it's live. Always the last step, after the last deploy.",
     "refresh": "Brings the checkout up to date with what's live, unless a job's work is under way in it.",
     "test": "Runs the project's bin/test in the job's checkout: passes if it exits 0. If it fails, what it printed goes to the next block (a Fix, usually).",
+    "check": "Runs a checklist item's check in the job's checkout, its planner's test files put back first: passes if it exits 0. "
+             "If it fails, the item is built again with what failed (its last try on its Build's model), then golem carries on without it.",
     "answer": "Sends you the answer. A question changes nothing: no commits, pushes or deploys.",
     "sync": "Brings the job's branch up to date with main where its turn at building or shipping begins, when "
     "changes on a project take turns. If what shipped since conflicts with it, a resolve step goes in to merge them.",

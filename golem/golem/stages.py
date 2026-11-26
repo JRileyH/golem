@@ -85,12 +85,14 @@ class Stage:
         made = self.spec.get("produces") or {}
         return [p for s in self.settings for p in made.get(f"{s.key}.{node.get(s.key, s.default)}", [])]
 
-    def parts(self, node: dict, variant: str = "") -> list[str]:
-        """The names of the parts a block uses, in the order they go together."""
+    def parts(self, node: dict, variant: str | tuple[str, ...] = "") -> list[str]:
+        """The names of the parts a block uses, in the order they go together: each of its
+        variants (one, or several) instead of the part it replaces."""
         chosen = [f"{s.key}.{node.get(s.key, s.default)}" for s in self.settings]
         found = [*chosen, "base"] if self.base_after else ["base", *chosen]
-        if variant in self.variants and self.variants[variant][0] in found:
-            found[found.index(self.variants[variant][0])] = variant
+        for v in (variant,) if isinstance(variant, str) else variant:
+            if v in self.variants and self.variants[v][0] in found:
+                found[found.index(self.variants[v][0])] = v
         if self.care:
             found.append(f"care.{node.get('care') or 'usual'}")
         return found
@@ -191,7 +193,7 @@ def setting_keys() -> tuple[str, ...]:
     return tuple(dict.fromkeys(s.key for stage in catalog().values() for s in stage.settings))
 
 
-def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: str = "") -> str:
+def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: str | tuple[str, ...] = "") -> str:
     """What a stage block tells its agent: golem's parts for its settings, in order (what its
     message should say last), then its own extra instructions, then what the step is about."""
     stage = catalog().get(node.get("stage") or "")

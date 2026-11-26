@@ -31,6 +31,8 @@ the golem image.
   change's branch conflicts with main as it catches up (changes taking turns on
   one project, `golem/golem/turns.py`), or with another change shipping with it
   (`golem/golem/shipments.py`): merge them in, keeping both intents.
+- `item.md`: the instructions of a checklist item's build (checklist mode,
+  `golem/golem/checklist.py`): its item, its check, and the list it's part of.
 - `resume.md`: Riggy answered a `blocked` question; the same session carries on.
 - `wrapup.md`: a step ran out of turns; commit and say whether it finished.
 - `request.md`: which workflow a request on a project's page is for (by what each
