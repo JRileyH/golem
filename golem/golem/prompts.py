@@ -176,9 +176,10 @@ class Prompts:
 
         failed = ""
         if item.get("problem"):
+            said = f"\n\nThe last try said: {item['said']}" if item.get("said") else ""
             failed = (
                 f"\n## What failed last time\n\nThis is try {item.get('try')} at this item. Its check failed after the last one:\n\n"
-                f"{item['problem']}\n\nThat try's work is on the branch: start from it.\n"
+                f"{item['problem']}{said}\n\nThat try's work is on the branch: start from it.\n"
             )
         return self.render(
             "item",

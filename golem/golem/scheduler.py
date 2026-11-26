@@ -664,6 +664,8 @@ class Scheduler:
             schema = checklist.SCHEMA
         if job.start == TRIAGE:
             schema = triage.SCHEMA
+        if step.item:  # an item asks nobody: its check decides
+            schema = checklist.ITEM_SCHEMA
         if outputs:  # its verdict is the output it takes, or blocked
             schema = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": [*(o["name"] for o in outputs), "blocked"]}}}
         turns = step.max_turns or FIX_TURNS
@@ -715,7 +717,7 @@ class Scheduler:
             made = self.store.add_triaged(job.id, triage.upto(job), found, said)
             await self.say(project, triage.announcement(len(read), made, f"{self.settings.url('golem')}/reports"), notice=True)
             return Outcome("done", message or f"Proposed {len(made)} fix(es) to golem.", links)
-        if v["verdict"] == "blocked":
+        if v["verdict"] == "blocked" and not step.item:  # an item that asks anyway goes to its check, which decides
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
@@ -1350,7 +1352,10 @@ class Scheduler:
         note = f" (put back {', '.join(put)}, which it had changed)" if put else ""
         if ran.state == "done":
             return Outcome("done", f"{checklist.name(item)}: its check passed{note}.", ran.links)
-        if nxt := checklist.again(item, ran.problem):
+        built = next((s for s in reversed(self.store.steps(job.id)) if s.position < step.position and s.kind == "agent"
+                      and s.item.get("plan") == item.get("plan") and s.item.get("n") == item.get("n")), None)  # fmt: skip
+        said = (built.summary or "").removeprefix(f"{checklist.name(item)}: ") if built else ""
+        if nxt := checklist.again(item, ran.problem, said):
             self.insert(job.id, [replace(s, job_id=job.id) for s in nxt], after=step.position)
             return Outcome("failed", f"{checklist.name(item)}: its check failed{note}, so it goes again", ran.links, ran.problem)
         self.tell_next_agent(job, step, checklist.gave_up(item, ran.problem))

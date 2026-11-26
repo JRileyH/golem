@@ -5,8 +5,9 @@ splits what the step is about into items small enough for one short run, each wi
 golem can run (a command that exits 0 once the item works and not before), writes and commits
 the checks, and returns the items. Golem then puts in, after it, a step that builds each item
 (on the `item` default: haiku at medium effort until Riggy sets another) and a step that runs
-its check. An item whose check fails is built again with what failed: once more on the item
-model, then once on the Build block's own. After that golem leaves it failed and carries on,
+its check. An item asks Riggy nothing (its verdict is `done` however it went), so it never stops
+the job. An item whose check fails is built again with what failed and what the last try said:
+once more on the item model, then once on the Build block's own. After that golem leaves it failed and carries on,
 and tells the next agent step which items didn't pass. Before each check golem puts the
 planner's check files back as it wrote them, so an item can't pass by changing its test.
 
@@ -60,6 +61,11 @@ SCHEMA = {
 }
 
 
+# An item's verdict is `done`, however it went: its check says whether it works, and one that
+# fails goes again and then carries on. It can't ask Riggy: a question would stop the whole job.
+ITEM_SCHEMA = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": ["done"]}}}
+
+
 TWIN_PREFIX = "cl-"
 
 
@@ -107,12 +113,13 @@ def build_and_check(item: dict, model: tuple[str, str]) -> list[Step]:
     return [build, Step(0, 0, 0, "check", "check", turn="build", item=item)]
 
 
-def again(item: dict, problem: str) -> list[Step] | None:
-    """The next try at an item whose check failed, with what failed; None once it's had its tries."""
+def again(item: dict, problem: str, said: str = "") -> list[Step] | None:
+    """The next try at an item whose check failed, with what failed and what the last try said
+    of it (what was in its way, say); None once it's had its tries."""
     tries = int(item.get("try") or 1)
     if tries >= TRIES:
         return None
-    nxt = {**item, "try": tries + 1, "problem": problem}
+    nxt = {**item, "try": tries + 1, "problem": problem, "said": said[:TEXT_CHARS]}
     model = tuple(item["up"]) if tries + 1 == TRIES else tuple(item.get("model") or DEFAULT)
     return build_and_check(nxt, model)  # type: ignore[arg-type]
 

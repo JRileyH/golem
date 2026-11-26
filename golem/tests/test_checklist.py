@@ -109,6 +109,25 @@ def test_an_item_that_never_passes_is_left_and_the_next_agent_step_is_told(golem
     run(go())
 
 
+def test_an_item_asks_nobody_its_check_decides_and_its_next_try_hears_what_it_said(golem):
+    async def go():
+        job = await checklist_job(golem, "add a file the check is strict about")
+        golem.harness.script = by_label({
+            "change": [planner(ITEMS[:1], ["tests/items.txt"])],
+            "item": [verdict("blocked", "The check wants 0.6 and it measures 0.59: lower it, or retune?"), builds("a.txt")],
+        })  # fmt: skip
+        await golem.finish()
+        assert golem.store.job(job.id).state == "done"  # never waited on Riggy
+        built = [c for c in golem.harness.calls if c.label == "item"]
+        assert built[0].schema == checklist.ITEM_SCHEMA and checklist.ITEM_SCHEMA["properties"]["verdict"]["enum"] == ["done"]
+        assert "Never return `blocked`" in built[0].prompt
+        assert "The last try said: The check wants 0.6 and it measures 0.59: lower it, or retune?" in built[1].prompt
+        assert [s.state for s in golem.store.steps(job.id) if s.kind == "check"] == ["failed", "done"]
+        assert not any("Question:" in t for t in golem.chat.texts("tree-cards"))
+
+    run(go())
+
+
 def test_a_plan_with_no_usable_items_is_tried_again(golem):
     async def go():
         job = await checklist_job(golem)

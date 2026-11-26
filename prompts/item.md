@@ -20,4 +20,7 @@ The checklist (yours is $n of $of):
 
 $list
 $failed
-Message: one sentence on what you built.
+Message: one sentence on what you built. Never return `blocked`: nobody is
+waiting to answer, and golem's check decides. If something in your way isn't
+yours to change (its check, the spec), build what you can and say what's in the
+way: an item whose check fails goes again, its last try on a stronger model.
