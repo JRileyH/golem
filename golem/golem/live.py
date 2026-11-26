@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from .glance import Glance, Reading
 from .watch import Tail, _clock, _output, _short, _time
 
 KEEP = 40  # events kept per run, for the tail
@@ -36,6 +37,7 @@ class Line:
 class Live:
     started: datetime
     tail: Tail
+    reading: Reading
     lines: deque = field(default_factory=lambda: deque(maxlen=KEEP))
 
 
@@ -50,12 +52,20 @@ class LiveRuns:
         )
 
     def lines(self, run: dict) -> list[Line]:
+        return list(self._read(run).lines)
+
+    def glance(self, run: dict, now: datetime) -> Glance:
+        """Where a running step's time has gone so far, and what it's on (glance.py)."""
+        return self._read(run).reading.glance(now)
+
+    def _read(self, run: dict) -> Live:
         live = self.runs.get(run["id"])
         if live is None:
-            live = self.runs[run["id"]] = Live(_time(run["started_at"]), Tail(Path(run["log_path"])))
+            live = self.runs[run["id"]] = Live(_time(run["started_at"]), Tail(Path(run["log_path"])), Reading(self.mask))
         for event in live.tail.events():
             live.lines.extend(self.describe(event, live.started))
-        return list(live.lines)
+            live.reading.read(event)
+        return live
 
     def transcript(self, run: dict) -> list[Line]:
         """Everything a run did, from the start: for a step's history."""

@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, checklist, engine, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
+from . import about, adopt, checklist, engine, glance, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -863,7 +863,7 @@ class Scheduler:
         except asyncio.CancelledError:
             run.cancel()
             await asyncio.wait({run})
-            self.store.finish_run(run_id, "killed")
+            self.store.finish_run(run_id, "killed", glance=_glance(log_path))
             self.take_reports(job, project, current, run_id, str(chosen), filed_before)
             raise
         finally:
@@ -872,7 +872,7 @@ class Scheduler:
             result = RunResult("error", error=f"no sign of life for {STUCK_SECONDS // 60} minutes")
         else:
             result = run.result()
-        self.store.finish_run(run_id, result.outcome, session_id=result.session_id, **result.usage)
+        self.store.finish_run(run_id, result.outcome, session_id=result.session_id, glance=_glance(log_path), **result.usage)
         self.take_reports(job, project, current, run_id, str(chosen), filed_before)
         return result
 
@@ -1649,6 +1649,16 @@ class Scheduler:
 
     async def status(self, text: str, notice: bool = False) -> None:
         await self.chat.send(STATUS, text, notice=notice)
+
+
+def _glance(log_path: Path) -> str:
+    """Where a run's time went and what went wrong (glance.py), from its log, secrets taken out:
+    it's shown on golem's pages. Only a record: "" if the log can't be read."""
+    try:
+        return glance.of(Tail(log_path).events(), lambda text: reports.redact(text, os.environ)).to_json()
+    except (OSError, EOFError, ValueError) as e:
+        log.warning("glance of %s: %s", log_path, e)
+        return ""
 
 
 def _safe(name: str) -> str:

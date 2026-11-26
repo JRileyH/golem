@@ -245,7 +245,7 @@ MIGRATIONS = {
         "vars": "TEXT NOT NULL DEFAULT '{}'",
     },
     "proposals": {"issue": "INTEGER", "card": "TEXT NOT NULL DEFAULT '{}'"},
-    "runs": {"step_id": "INTEGER"},
+    "runs": {"step_id": "INTEGER", "glance": "TEXT NOT NULL DEFAULT ''"},  # glance: where its time went (glance.py), once it ended
     "steps": {
         "optional": "INTEGER NOT NULL DEFAULT 0",
         "model": "TEXT",
