@@ -95,7 +95,7 @@ def _modes(c: Choices, f: Filled) -> str:
     if not c.modes:
         return ""
     current = f.get("mode")
-    items = [("", "Usual"), *((m, m) for m in c.modes)]
+    items = [("", "Usual"), *((m, m.capitalize()) for m in c.modes)]
     select = "<select name=mode>" + "".join(f"<option value='{escape(v)}'{' selected' if current == v else ''}>{escape(label)}</option>" for v, label in items) + "</select>"
     return _field("Mode", select, f, "mode")
 

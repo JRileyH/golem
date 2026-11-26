@@ -129,3 +129,22 @@ def test_items_are_built_on_the_item_default_riggy_can_change(golem):
         assert golem.store.job(job.id).state == "done"
 
     run(go())
+
+
+def test_riggy_picks_checklist_mode_for_a_request_or_a_new_project(golem):
+    from test_flow import TREES
+
+    async def go():
+        golem.harness.script = [TREES]
+        job = await golem.new_project("a flashcard game for trees", mode=checklist.MODE)
+        assert job.mode == "checklist" and golem.store.project("tree-cards").mode == ""
+        golem.harness.script = by_label({"spec": [verdict("done", "The plan.")], "scaffold": [planner(ITEMS[:1], [])], "item": [builds("a.txt")]})
+        await golem.until("item")  # the scaffold, a Build, planned its one item
+        assert [s.summary for s in golem.store.steps(job.id) if s.name == "scaffold"] == ["Two small items."]
+        await golem.control.setting("tree-cards", "mode", checklist.MODE)
+        golem.store.update_job(job.id, state="done")
+        asked = await golem.ask("tree-cards", "make it bigger", workflow="change")
+        assert asked.mode == "checklist"  # the project's default
+        assert (await golem.ask("tree-cards", "why is it slow?", workflow="question", mode="")).mode == ""
+
+    run(go())

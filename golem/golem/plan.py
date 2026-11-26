@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from . import checklist
 from . import engine as graphs
 from .config import Settings
 from .store import ACTIVE, OPEN, TRIAGE, Job, Project, Step, Store
@@ -71,7 +72,7 @@ def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
 
 
 # Golem's modes: ways of working a job can be in, each with what it means. "" is the usual way.
-MODES: dict[str, str] = {}
+MODES: dict[str, str] = {checklist.MODE: checklist.ABOUT}
 
 
 def mode_for(project: Project | None, asked: str = "") -> str:

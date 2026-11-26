@@ -85,7 +85,7 @@ def ask_form(project: Project, picks: Picks) -> str:
     """A request: a job of its own. A workflow on Auto is golem's pick (the request call), as the
     words say; the mode on Auto, the project's default (only while golem has modes: plan.MODES)."""
     flows = "".join(f"<option value='{escape(k)}'>{escape(n)}</option>" for k, n in picks.workflows)
-    modes = "".join(f"<option>{escape(m)}</option>" for m in picks.modes)
+    modes = "".join(f"<option value='{escape(m)}'>{escape(m.capitalize())}</option>" for m in picks.modes)
     mode = f"<label>Mode <select name=mode><option value=auto>Auto</option><option value=''>Usual</option>{modes}</select></label>" if modes else ""
     return (
         f"<form method=post action='/p/{escape(project.slug)}/ask' class='card ask-form' data-send>"

@@ -783,10 +783,11 @@ def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
     assert "max-age=7776000" in cookie and "samesite=lax" in cookie
     html = app.get("/new").text
     assert "<option value='web_app' selected" in html and "<option>Game</option>" in html
-    assert "name=mode>" not in html  # golem has no modes to pick
+    assert "<select name=mode><option value='' selected>Usual</option><option value='checklist'>Checklist</option>" in html  # golem's modes
     assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
-    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care."})  # one that has: the Mode field, the usual way first
-    assert "<select name=mode><option value='' selected>Usual</option><option value='careful'>careful</option>" in app.get("/new").text
+    monkeypatch.setattr(plan, "MODES", {})  # with none, no Mode field
+    assert "name=mode>" not in app.get("/new").text
+    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care."})
 
     r = new(app, name="", slug="Bad Slug!", idea="", mode="nope", model="gpt")  # what's wrong comes back with what he wrote
     html = r.text

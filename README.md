@@ -52,7 +52,7 @@ phone.
 - **A new project:** + New project. Name it (its address, and its repo
   `<GITHUB_ORG>/<slug>`, follow the name until you change them), say what it's
   for ("a flashcard game for northeastern US trees"), and pick its workflow (the
-  fallback for new projects is picked) and tag; model and effort are under
+  fallback for new projects is picked), its mode and tag; model and effort are under
   More. golem writes its summary and its first job's title, and the job starts
   straight away.
 - **How a job runs:** it walks a workflow: blocks wired output to input, from
@@ -66,8 +66,9 @@ phone.
 - **Asking for something:** on a project's page, Ask for… always starts a job
   of its own. Leave Workflow on Auto and a quick haiku call picks it from what
   you wrote, by what each is for (when it's not sure, it takes a question, the
-  cheap mistake), and titles the job; or pick it. A change waits for one under
-  way, unless the project allows more at once.
+  cheap mistake), and titles the job; or pick it. Its Mode is the project's
+  default on Auto, or the one you pick. A change waits for one under way,
+  unless the project allows more at once.
   - **Questions** ("why does the score reset?", "what's left on the spec?"):
     golem looks into it (the code, the docs, the live site, its logs) and
     answers in a few minutes, building nothing: no branch, commit, PR or
@@ -102,7 +103,15 @@ phone.
   - When golem is waiting on you, your reply is the answer ("looks good",
     "make the photos bigger"), from the job's pane or from Now.
   - While it's working, a note (Add a note) goes to the job's next step.
+- **Checklist mode:** an experiment in building with cheaper models. Each Build
+  plans its work as a checklist on its usual model (items in order, each with a
+  check whose tests it writes); golem builds each item on the `item` default
+  (haiku at medium effort) and runs its check, trying a failed item again (its
+  last try on the Build's model) before carrying on without it. Pick it for a
+  new project, a request, or a project's default.
 - **Settings,** per project, on its Settings tab:
+  - **Default mode:** what its requests run in unless they pick another: the
+    usual way, or checklist. Only you set it.
   - **Model and effort:** for all the project's agent steps, from the next
     one; "each step's default" goes back to each step's own.
 
@@ -117,8 +126,8 @@ phone.
   and "Reset to golem's suggestions" puts them all back (projects' and single
   steps' own choices stay).
 - **Adopting a repo golem didn't make:** on the New project page, "Adopt a repo
-  golem didn't make": the repo, what it is (or its README says), and its name
-  and tag. Golem checks it over first: its CI, build workflow,
+  golem didn't make": the repo, what it is (or its README says), and its name,
+  mode and tag. Golem checks it over first: its CI, build workflow,
   `deploy/compose.yml` by the deployer's own rules, the shape every project has,
   and a worker run that builds and tests it in golem's container and says what
   it needs that golem can't give. Anything only you can change and it leaves the
