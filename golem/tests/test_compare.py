@@ -8,12 +8,15 @@ import gzip
 import io
 import json
 import os
+import sqlite3
 import subprocess
 
+import pytest
 from test_checklist import ITEMS, builds, checklist_job, costed, planner
 from test_flow import TREES
 
 from golem import compare
+from golem.store import Store
 
 LOG = [  # a run's events, as Claude Code streams them
     {"type": "system", "subtype": "init", "claude_code_version": "2.9.1", "session_id": "s"},
@@ -120,3 +123,16 @@ def test_the_command_says_what_its_columns_mean_and_what_it_cant_find(golem, tmp
     assert compare.main(["--columns"]) == 0
     said = capsys.readouterr().out.splitlines()
     assert len(said) == len(compare.COLUMNS) and said[0] == "level: project, job or step: what the row is about"
+
+
+def test_it_reads_golems_database_as_it_is_and_never_writes_to_it(golem):
+    """A golem of another version may be running on it, the experiment under way: no migrations."""
+    two_projects(golem)
+    db = golem.settings.state_dir / "golem.db"
+    golem.store.db.execute("ALTER TABLE proposals DROP COLUMN card")  # as a golem from before proposal cards has it
+    store = Store.read_only(db)
+    assert [p.slug for p in store.projects()] == [p.slug for p in golem.store.projects()]
+    assert compare.table(store, golem.settings, "tree-cards", "fish")
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        store.put("anything", "1")
+    assert "card" not in {r[1] for r in golem.store.db.execute("PRAGMA table_info(proposals)")}  # left as it was

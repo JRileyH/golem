@@ -486,6 +486,15 @@ class Step:
 
 
 class Store:
+    @classmethod
+    def read_only(cls, path: Path | str) -> Store:
+        """The database as it is, for reading only: no schema or migrations, so a golem of another
+        version can go on using it meanwhile, its work undisturbed (compare.py)."""
+        store = cls.__new__(cls)
+        store.db = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False)
+        store.db.row_factory = sqlite3.Row
+        return store
+
     def __init__(self, path: Path | str):
         self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row

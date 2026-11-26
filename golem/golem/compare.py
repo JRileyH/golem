@@ -15,7 +15,8 @@ how many came back as errors, and the models Claude Code itself used. A job's ro
 items went. Each project's checkout gives the size of what it built.
 
 Golem keeps no judgement of how good the work is: that's for whoever reads the CSV, and the sites.
-Reads only: the database, the run logs and the checkouts.
+Reads only: the database (opened read-only, so it's safe beside a running golem of another version,
+with no migrations), the run logs and the checkouts.
 """
 
 from __future__ import annotations
@@ -397,7 +398,7 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> int
         if not db.is_file():
             print(f"No golem database at {db}.", file=sys.stderr)
             return 2
-        store = Store(db)
+        store = Store.read_only(db)  # golem may be running, on another version: its schema stays as it is
         missing = [s for s in (args.a, args.b) if store.project(s) is None]
         if missing:
             print(f"No project at {' or '.join(missing)}.", file=sys.stderr)
