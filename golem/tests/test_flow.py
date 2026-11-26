@@ -966,6 +966,50 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
     run(go())
 
 
+def test_riggy_dismisses_a_proposal_with_no_verdict_either_way(golem):
+    from golem.control import Control, ControlError
+    from golem.store import INTERNAL
+
+    async def go():
+        room = await idle_project(golem)
+        golem.store.update_project("tree-cards", proposals="hourly", proposals_max=1)
+        golem.harness.script = by_label({"propose": [proposing(OFFLINE), proposing()]})
+        golem.scheduler.propose()
+        await golem.finish()
+        [offline] = golem.store.proposals("tree-cards", ("open",))
+        time_passes(golem, timedelta(hours=1))
+        assert golem.scheduler.propose() is None  # as many wait on him as he allows
+        said = len(golem.store.messages(room))
+
+        control = Control(golem.store, golem.scheduler)
+        assert await control.dismiss(offline.id) == "Dismissed “Offline mode”: no verdict either way, and golem won't propose it again."
+        p = golem.store.proposal(offline.id)
+        assert (p.state, p.reason, p.built_by) == ("dismissed", "", None) and p.decided_at
+        assert golem.store.active_job("tree-cards") is None  # nothing built
+        assert len(golem.store.messages(room)) == said  # no 👎 in the conversation for workers to read
+        assert golem.workspace.comments[-1] == ("tree-cards", offline.issue, "Dismissed, with no verdict either way.", True)
+        with pytest.raises(ControlError, match="decided already"):
+            await control.dismiss(offline.id)
+        with pytest.raises(ControlError, match="decided already"):
+            await control.decide(offline.id, True, "")
+
+        time_passes(golem, timedelta(minutes=30))  # its place is free: the next comes at the next turn
+        assert golem.scheduler.propose() is not None
+        await golem.finish()
+        call = [c for c in golem.harness.calls if c.label == "propose"][-1]
+        assert "- [features] Offline mode — dismissed, no verdict either way\n" in call.prompt  # not proposed again, not a no
+        assert "dismissed it or" in call.prompt and "don't read it as a no" in call.prompt
+
+        golem.store.internal_project()  # golem's fixes to itself are taken or turned down, saying why
+        triaged = golem.store.add_job(INTERNAL, "change", "Triage golem's reports up to #1", "triage")
+        [fix] = golem.store.add_proposals(INTERNAL, triaged.id, "code", [("Say the port", "Change: say it.")])
+        with pytest.raises(ControlError, match="turn them down"):
+            await control.dismiss(fix.id)
+        assert golem.store.proposal(fix.id).state == "open"
+
+    run(go())
+
+
 def test_proposals_skip_the_kinds_riggy_turned_off(golem):
     from golem import proposals
 

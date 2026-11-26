@@ -379,6 +379,18 @@ class Control:
             return f"Accepted “{p.title}”: job {p.built_by} builds it."
         return f"Accepted “{p.title}”: it's built once {project.name}'s current job is done."
 
+    async def dismiss(self, proposal_id: int) -> str:
+        """Riggy clears a proposal away without a thumbs up or down: it stops waiting on him, and
+        golem keeps it only so as not to propose it again, as no verdict either way."""
+        p = self.store.proposal(proposal_id)
+        if p is None or p.state != "open":
+            raise ControlError("That proposal has been decided already.")
+        if p.slug == INTERNAL:  # its reports are taken or dismissed with it, and triage learns from why
+            raise ControlError("Take golem's fixes to itself or turn them down, saying why.")
+        p = self.store.dismiss_proposal(p.id)
+        await self.scheduler.record_decision(p)
+        return f"Dismissed “{p.title}”: no verdict either way, and golem won't propose it again."
+
     def upgrade(self) -> str:
         message = self.scheduler.upgrades.request()
         self.scheduler.wake()

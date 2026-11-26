@@ -817,9 +817,12 @@ def create_app(
                 case "auto-upgrade":
                     message = control.auto_upgrade(value == "on")
                 case "proposal":
-                    if value not in ("accept", "reject"):
+                    if value not in ("accept", "reject", "dismiss"):
                         raise ControlError("Thumbs up or down?")
-                    message = await control.decide(_int(form.get("proposal")), value == "accept", form.get("reason", ""))
+                    if value == "dismiss":
+                        message = await control.dismiss(_int(form.get("proposal")))
+                    else:
+                        message = await control.decide(_int(form.get("proposal")), value == "accept", form.get("reason", ""))
                     taken = store.proposal(_int(form.get("proposal")))
                     if taken and taken.slug == INTERNAL and taken.state == "accepted":  # a fix to golem: its prompt, to copy
                         return _back({"back": f"/reports/proposals/{taken.id}"}, message)

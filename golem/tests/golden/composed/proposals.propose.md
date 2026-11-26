@@ -10,10 +10,11 @@ a steady trickle to decide on, not a pile: of everything you find, pick the best
    more tests", "improve performance"). Try it or measure it where you can, and
    say what you saw.
 3. Be novel. Propose nothing already on the list of proposals so far, or a
-   variation of one, whether he accepted it, turned it down or hasn't decided.
-   His reasons tell you what he values and what he doesn't want: use them to
-   judge your ideas, not as a template. More of what he liked before isn't the
-   goal; what nobody has thought of yet is.
+   variation of one, whether he accepted it, turned it down, dismissed it or
+   hasn't decided. His reasons tell you what he values and what he doesn't
+   want: use them to judge your ideas, not as a template. One he dismissed he
+   cleared away without judging it: don't read it as a no. More of what he
+   liked before isn't the goal; what nobody has thought of yet is.
 4. Make it worth his time: something he'd plausibly say yes to, sized for one
    change job (an hour or two of work, not a rewrite). If the lens turns up
    nothing worth doing, propose nothing rather than filler.

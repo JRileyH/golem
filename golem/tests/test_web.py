@@ -521,6 +521,7 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     assert "<summary>How it'd be built</summary><p>Cache it.<br>Test it.</p></details>" in html
     assert html.index("Offline &lt;mode&gt;") < html.index("Bigger cards")  # oldest first
     assert html.count("name=value value=accept") == 2 and "name=proposal value='1'" in html
+    assert html.count("name=value value=dismiss class='quiet dismiss'") == 2 and "Dismiss clears one away and tells golem nothing." in html
 
     assert "Thumbs%20up%20or%20down" in act(page, action="proposal", proposal=offline.id, value="maybe")
     assert "golem%20takes%20that%20into%20account" in act(page, action="proposal", proposal=offline.id, value="reject", reason="always online")
@@ -533,6 +534,13 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
 
     html = page.get("/p/trees/settings").text
     assert "<h2>Proposals</h2>" in html and "<option value='' selected>off</option>" in html
+
+    again = golem.store.add_job("trees", "change", "Look at its polish for things to propose", "proposals")
+    golem.store.update_job(again.id, state="done")
+    [unused] = golem.store.add_proposals("trees", again.id, "polish", [("Sounds", "Clicks.")])
+    location = act(page, action="proposal", proposal=unused.id, value="dismiss", reason="ignored")
+    assert "Dismissed%20%E2%80%9CSounds%E2%80%9D" in location and golem.store.proposal(unused.id).reason == ""
+    assert "Sounds" not in page.get("/p/trees/settings").text  # not among what he said: he said nothing
     assert "👎 Offline &lt;mode&gt;<span class=sub>“always online”</span>" in html and f"👍 Bigger cards <a href='/jobs/{built.id}'>" in html
     act(page, action="setting", slug="trees", name="proposals", value="hourly")
     assert golem.store.project("trees").proposals == "hourly" and "<option selected>hourly</option>" in page.get("/p/trees/settings").text

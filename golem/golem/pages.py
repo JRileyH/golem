@@ -1111,6 +1111,7 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .proposal .changes { margin:.3rem 0; padding-left:1.1rem; font-size:.9rem; } .proposal .changes li { margin:.1rem 0; }
 .proposal .changes li::marker { content:"▸ "; color:var(--accent); }
 .proposal .fact { color:var(--muted); font-size:.84rem; } .proposal .fact b { color:var(--ink); font-weight:600; margin-right:.2rem; }
+.proposal .dismiss { margin-left:auto; color:var(--muted); }
 .proposal .plan summary { cursor:pointer; color:var(--muted); font-size:.84rem; } .proposal .plan p { font-size:.84rem; }
 .proposal input { font:inherit; font-size:16px; padding:.4rem .6rem; border-radius:var(--radius); border:2px solid var(--line);
   background:var(--card); color:var(--ink); width:100%; box-sizing:border-box; margin-top:.3rem; }

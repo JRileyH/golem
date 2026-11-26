@@ -341,9 +341,9 @@ class Scheduler:
             self.wake()
 
     async def record_decision(self, p: Proposal) -> None:
-        """Riggy's decision on the proposal's issue, closing it if he turned it down. Only a record."""
+        """Riggy's decision on the proposal's issue, closing it if he turned it down or dismissed it. Only a record."""
         if p.issue:
-            await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state == "rejected")
+            await self.workspace.comment_issue(p.slug, p.issue, proposals.decision(p), close=p.state in ("rejected", "dismissed"))
 
     def ensure_started(self, job: Job) -> list[Step]:
         """The job's steps; the first time, its own copy of its workflow and its first step."""

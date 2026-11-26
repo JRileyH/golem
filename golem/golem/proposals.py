@@ -24,7 +24,9 @@ text, for its issue and the change job it becomes; his chat gets only its headli
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
 up becomes a change job (the fallback workflow for changes), as soon as the project has no other change
 under way, and that job's PR closes the proposal's issue; a thumbs down closes it with his
-reason. The issues are only a record: golem never reads anything back from GitHub.
+reason. Or he dismisses it, to clear it away without a verdict: no reason, nothing for golem to
+learn from, its issue closed; golem keeps it only so as not to propose it again. The issues are
+only a record: golem never reads anything back from GitHub.
 
 One at a time, so he gets a steady trickle to decide on rather than a pile: a project's turn
 comes round every interval after its last proposals job (`turn`), and while as many proposals
@@ -216,7 +218,7 @@ def card(p: Proposal) -> dict:
 
 def past(proposals: list[Proposal]) -> str:
     """Earlier proposals for the worker's prompt: what each was and what Riggy made of it."""
-    said = {"open": "not decided yet", "accepted": "accepted", "rejected": "turned down"}
+    said = {"open": "not decided yet", "accepted": "accepted", "rejected": "turned down", "dismissed": "dismissed, no verdict either way"}
     lines = []
     for p in proposals[:PAST_SHOWN]:
         why = f": “{' '.join(p.reason.split())}”" if p.reason else ""
@@ -241,6 +243,8 @@ def issue(p: Proposal, page: str) -> tuple[str, str]:
 
 def decision(p: Proposal) -> str:
     """Riggy's decision, for the proposal's issue."""
+    if p.state == "dismissed":
+        return "Dismissed, with no verdict either way."
     said = "👍 Accepted" if p.state == "accepted" else "👎 Turned down"
     return said + (f": “{p.reason}”" if p.reason else ".") + (" golem builds it next; its PR closes this." if p.state == "accepted" else "")
 

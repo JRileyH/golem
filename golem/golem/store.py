@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     title TEXT NOT NULL,
     body TEXT NOT NULL,              -- the whole of it as plain text: what, why, how big, how to build it
     card TEXT NOT NULL DEFAULT '{}', -- JSON: its fields for the card he decides from (proposals.collect); {} before cards
-    state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected
+    state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected | dismissed (cleared away, no verdict either way)
     reason TEXT NOT NULL DEFAULT '', -- Riggy's why, if he gave one
     built_by INTEGER,                -- the change job an accepted one became, once it's queued
     created_at TEXT NOT NULL,
@@ -334,7 +334,7 @@ class Proposal:
     lens: str
     title: str
     body: str
-    state: str  # open | accepted | rejected
+    state: str  # open | accepted | rejected | dismissed (cleared away, no verdict either way)
     reason: str
     built_by: int | None  # the change job building it, once accepted and queued
     created_at: str
@@ -1091,7 +1091,7 @@ class Store:
 
     def proposals(self, slug: str, states: tuple[str, ...] | None = None, limit: int = 200) -> list[Proposal]:
         """A project's proposals, newest first; only those in `states` if given."""
-        states = states or ("open", "accepted", "rejected")
+        states = states or ("open", "accepted", "rejected", "dismissed")
         marks = ", ".join("?" * len(states))
         rows = self.db.execute(
             f"SELECT * FROM proposals WHERE slug = ? AND state IN ({marks}) ORDER BY id DESC LIMIT ?", (slug, *states, limit)
@@ -1116,6 +1116,11 @@ class Store:
             "UPDATE proposals SET state = ?, reason = ?, decided_at = ? WHERE id = ?",
             ("accepted" if accepted else "rejected", reason, now(), proposal_id),
         )
+        return self.proposal(proposal_id)
+
+    def dismiss_proposal(self, proposal_id: int) -> Proposal:
+        """Riggy cleared it away without a verdict: no reason, and nothing for golem to learn from."""
+        self.db.execute("UPDATE proposals SET state = 'dismissed', reason = '', decided_at = ? WHERE id = ?", (now(), proposal_id))
         return self.proposal(proposal_id)
 
     def unbuilt_proposals(self) -> list[Proposal]:
