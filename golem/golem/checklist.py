@@ -60,9 +60,12 @@ SCHEMA = {
 }
 
 
+TWIN_PREFIX = "cl-"
+
+
 def twin_slug(slug: str) -> str:
-    """Where a project built both ways has its checklist twin."""
-    return f"{slug}-list"
+    """Where a project built both ways has its checklist twin: the same address with a prefix."""
+    return f"{TWIN_PREFIX}{slug}"
 
 
 def planning(job_mode: str, block: dict, step: Step) -> bool:

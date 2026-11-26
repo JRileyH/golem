@@ -1560,9 +1560,9 @@ class Scheduler:
         return f"{self.settings.repo_url(project.slug)}/commit/{sha}"
 
     def lessons_path(self, project: Project) -> Path:
-        """The lessons file the project's workers read and add to: its own, for a twin built both
-        ways (each started as a copy of golem's when the pair was made), else golem's."""
-        return self.settings.lessons(project.slug if project.twin else "")
+        """The lessons file the project's workers read and add to: its own, from nothing, for a
+        project in a vacuum, else golem's."""
+        return self.settings.lessons(project.slug if project.vacuum else "")
 
     def error_log(self, job: Job, step: Step) -> Path:
         """Where all that a step's failed commands printed is kept, each try after the last."""
@@ -1602,6 +1602,10 @@ class Scheduler:
             # memory, shared by every job on a repo and kept where golem can't see it, stays off.
             CLAUDE_CODE_DISABLE_AUTO_MEMORY="1",
         )
+        if project.vacuum:  # a Claude Code of the job's own, as freshly installed: it signs in with the token in the environment
+            config = self.settings.job_claude(job.id)
+            config.mkdir(parents=True, exist_ok=True)
+            env["CLAUDE_CONFIG_DIR"] = str(config)
         return env
 
     async def tidy(self) -> None:
@@ -1609,6 +1613,7 @@ class Scheduler:
         is read before anything is awaited, so a tree made meanwhile is never among what goes."""
         keep = self.store.active_job_ids() | set(self.running)
         ids = {p: p.name.removeprefix("job-") for p in self.settings.tmp_dir.glob("job-*")}
+        ids |= {p: p.name.removeprefix("claude-") for p in self.settings.tmp_dir.glob("claude-*")}  # a job in a vacuum's Claude Code
         scratch = [p for p, n in ids.items() if n.isdigit() and int(n) not in keep]
         try:
             await self.workspace.prune_trees(keep)  # lists the trees before it awaits anything

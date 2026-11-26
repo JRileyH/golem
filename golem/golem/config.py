@@ -76,13 +76,18 @@ class Settings:
         return f"https://github.com/{self.org}/{slug}"
 
     def lessons(self, slug: str = "") -> Path:
-        """The lessons file workers read and add to: golem's, or a project's own (a twin built both
-        ways has one, so neither run learns from the other: checklist.py)."""
+        """The lessons file workers read and add to: golem's, or a project's own (one that runs in a
+        vacuum has one, starting empty, as on a fresh golem)."""
         return self.state_dir / "lessons" / f"{slug}.md" if slug else self.state_dir / "lessons.md"
 
     def job_logs(self, job_id: int) -> Path:
         """Where a job's runs are logged, one compressed event stream per run."""
         return self.state_dir / "jobs" / str(job_id)
+
+    def job_claude(self, job_id: int) -> Path:
+        """A job's own Claude Code configuration, empty when it starts, for a project in a vacuum:
+        no settings, memory or history from any other run (Scheduler.worker_env)."""
+        return self.tmp_dir / f"claude-{job_id}"
 
     def job_tmp(self, job_id: int) -> Path:
         """A job's own scratch directory, its workers' TMPDIR: workers running beside it have theirs.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from test_flow import by_label, idle_project, verdict
 from test_web import app, new, sign_in  # noqa: F401  (app: the web app fixture)
@@ -151,45 +152,62 @@ def test_riggy_picks_checklist_mode_for_a_request_or_a_new_project(golem):
     run(go())
 
 
-def test_an_idea_built_both_ways_is_two_projects_that_know_each_other(golem, app):
+def test_an_idea_built_both_ways_is_two_projects_hosted_alike(golem, app):
     from test_flow import TREES
 
     sign_in(app)
     assert "name=both value=1" in app.get("/new").text
     golem.harness.script = [TREES, TREES]
     r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for trees", workflow="web_app", both="1", tag="")
-    usual, twin = golem.store.project("trees"), golem.store.project("trees-list")
-    assert (usual.twin, twin.twin, twin.name) == ("trees-list", "trees", "Tree Cards (checklist)")
+    usual, other = golem.store.project("trees"), golem.store.project("cl-trees")
+    assert (usual.vacuum, other.vacuum, other.name) == (True, True, "Tree Cards (checklist)")
     jobs = {j.slug: j for j in golem.store.jobs()}
-    assert (jobs["trees"].mode, jobs["trees-list"].mode) == ("", "checklist") and jobs["trees"].request == jobs["trees-list"].request
-    assert "both%20ways" in r.headers["location"]
-    assert "href='/p/trees-list' class=twin>" in app.get("/p/trees").text
-    golem.workspace.repos.add("fish-list")
+    assert (jobs["trees"].mode, jobs["cl-trees"].mode) == ("", "checklist") and jobs["trees"].request == jobs["cl-trees"].request
+    assert "both%20ways" in r.headers["location"] and "cl-trees" in r.headers["location"]
+    assert golem.settings.project_url("cl-trees").startswith("https://cl-trees.")  # hosted as any project is
+    golem.workspace.repos.add("cl-fish")
     html = new(app, name="Fish", slug="fish", idea="fish", both="1").text
-    assert "its twin would be at fish-list, and that&#x27;s taken" in html and golem.store.project("fish") is None
-    golem.store.move_project("trees", "leaves")
-    assert golem.store.project("trees-list").twin == "leaves"
-    golem.store.delete_project("leaves")
-    assert golem.store.project("trees-list").twin == ""
+    assert "its checklist one would be at cl-fish, and that&#x27;s taken" in html and golem.store.project("fish") is None
+    html = new(app, name="Long", slug="a-very-long-address-of-29-chars", idea="x", both="1").text
+    assert "pick a shorter address" in html
 
 
-def test_twins_run_in_a_vacuum_each_with_lessons_of_its_own(golem):
+def test_built_both_ways_each_runs_in_a_vacuum_as_on_a_fresh_golem(golem):
     from test_flow import TREES
 
     async def go():
         golem.settings.lessons().write_text("- golem's lesson from before\n")
         golem.harness.script = [TREES, TREES]
-        usual, twin = await golem.bot.new_twins("Trees", "a flashcard game for trees", slug="trees")
-        for slug in ("trees", "trees-list"):
-            assert golem.settings.lessons(slug).read_text() == "- golem's lesson from before\n"
-        golem.settings.lessons("trees-list").write_text("- golem's lesson from before\n- learnt by the checklist twin\n")
+        usual, other = await golem.bot.new_twins("Trees", "a flashcard game for trees", slug="trees")
+        for slug in ("trees", "cl-trees"):
+            assert golem.settings.lessons(slug).read_text() == ""  # nothing golem has learnt
+        golem.settings.lessons("cl-trees").write_text("- learnt by the checklist one\n")
         await golem.until("spec")
         await golem.step()
         spec = golem.harness.calls[-1]
-        assert "golem's lesson from before" in spec.prompt and "learnt by the checklist twin" not in spec.prompt
-        assert str(golem.settings.lessons("trees")) in spec.prompt and str(golem.settings.lessons()) not in spec.prompt
-        assert spec.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"  # nor does Claude Code's own memory carry anything over
+        assert "golem's lesson from before" not in spec.prompt and "learnt by the checklist one" not in spec.prompt
+        assert str(golem.settings.lessons("trees")) in spec.prompt  # where its own go
+        config = golem.settings.job_claude(usual.id)
+        assert spec.env["CLAUDE_CONFIG_DIR"] == str(config) and config.is_dir()  # a Claude Code of its own, as freshly installed
+        assert spec.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
         assert golem.settings.lessons().read_text() == "- golem's lesson from before\n"  # golem's own, untouched
+        golem.store.update_job(usual.id, state="done")
+        await golem.scheduler.tidy()
+        assert not config.exists()  # gone with the job
+
+    run(go())
+
+
+def test_a_usual_project_shares_golems_lessons_and_claude_code(golem):
+    async def go():
+        room = await idle_project(golem)
+        golem.settings.lessons().write_text("- golem's lesson\n")
+        await golem.ask(room, "make it bigger", workflow="change")
+        golem.harness.script = by_label({})
+        await golem.until("change")
+        await golem.step()
+        call = golem.harness.calls[-1]
+        assert "golem's lesson" in call.prompt and call.env.get("CLAUDE_CONFIG_DIR") == os.environ.get("CLAUDE_CONFIG_DIR")  # golem's own
 
     run(go())
 
@@ -225,32 +243,11 @@ def test_the_ledger_says_what_a_checklist_job_cost_and_how_its_items_went(golem,
         return job
 
     job = run(go())
-    [r] = [r for r in ledger.rows(golem.store) if r.job.id == job.id]
-    assert (r.kind, r.mode, r.done) == ("change", "checklist", True)
+    r = ledger.row(golem.store.job(job.id), golem.store.steps(job.id), golem.store.runs(job.id))
     assert (r.items, r.first_try, r.again, r.escalated, r.gave_up) == (2, 1, 1, 1, 0)
     assert round(r.planning_cost, 2) == 1.0 and round(r.items_cost, 2) == 0.4 and r.runs == 7  # plan, 4 builds, review, docs
     assert round(r.cost, 2) == 1.95 and r.tokens_in == 7000 and round(r.by_model["haiku"], 2) == 0.3
-    html = app.get("/insights/jobs?days=all").text
-    assert "The usual way against checklist mode" in html and f"#{job.id}</a>" in html and "2: 1 first time, 1 again (1 on its Build" in html
-    assert "/insights/jobs.csv?days=all" in html and "Each job's cost ›</a>" in app.get("/insights").text
-    csv = app.get("/insights/jobs.csv?days=all")
-    assert csv.headers["content-type"].startswith("text/csv") and "attachment" in csv.headers["content-disposition"]
-    header, *lines = csv.text.strip().splitlines()
-    assert header.startswith("job,project,twin,kind,workflow,mode") and any(line.startswith(f"{job.id},tree-cards,,change,change,checklist") for line in lines)
-
-
-def test_twins_are_compared_side_by_side_and_modes_by_their_usual_cost():
-    from golem.store import Job, Project
-
-    def a(slug, twin, mode, cost, start="new", state="done", n=1):
-        job = Job(n, slug, "new", "an idea", "", 0, state, 0, None, 0, None, None, "2026-11-25T10:00:00", "", start=start, mode=mode)
-        project = Project(slug, slug, "", "", "", "", False, "", twin=twin)
-        return ledger.row(job, project, [], [{"cost_usd": cost, "input_tokens": 1, "output_tokens": 1, "model": "opus/high",
-                                              "started_at": "2026-11-25T10:00:00", "ended_at": "2026-11-25T10:10:00", "step_id": None}])  # fmt: skip
-
-    usual, twin = a("trees", "trees-list", "", 4.0, n=1), a("trees-list", "trees", "checklist", 2.5, n=2)
-    other = a("birds", "", "", 6.0, n=3)
-    assert ledger.twins([usual, twin, other]) == [(usual, twin)]
-    [u, c] = ledger.groups([usual, twin, other])
-    assert (u.kind, u.mode, len(u.rows), u.cost) == ("new project", "usual", 2, 5.0) and (c.mode, c.cost) == ("checklist", 2.5)
-    assert ledger.saved(4.0, 2.5) == "38% less" and ledger.saved(2.0, 2.5) == "25% more" and ledger.saved(2.0, 2.0) == "the same"
+    html = app.get(f"/p/tree-cards/jobs/{job.id}").text  # on its page, to hold beside another's
+    assert "<p class=costs><b>Cost:</b> $1.95 at API prices · 7k in / 700 out · agents" in html
+    assert "2 items: 1 first time, 1 again (1 on its Build&#x27;s model) · planning $1.00, items $0.40" in html
+    assert app.get("/insights/jobs").status_code == 404  # no page comparing them: two tabs do

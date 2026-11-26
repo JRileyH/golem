@@ -3,27 +3,27 @@
 On the left, the way to ask for something (always a job of its own, with its workflow and mode
 picked or left to golem), golem's proposals for the project while there are some, and its latest
 jobs and any still under way, newest first, each drawn by its route; the rest are on its All jobs
-page, to search (jobhistory.py). On the right, the job: where it is and what it needs
-from Riggy (answered right there), a note for its next step, its workflow drawn and lit
-(flows.stage), its steps as a list, its activity (what each block did, notes, questions and
-replies), and the request and its runs.
+page, to search (jobhistory.py). On the right, the job: where it is, what it's cost and what it
+needs from Riggy (answered right there), a note for its next step, its steps as a list, its
+activity (what each block did, notes, questions and replies), and the request and its runs.
 
-On a phone it's one side at a time: the list at /p/<slug>, the job at /p/<slug>/jobs/<id>, its
-steps first and its graph a tap away. The page refreshes in parts (pages.region); the graph
-keeps itself up to date between them.
+On a phone it's one side at a time: the list at /p/<slug>, the job at /p/<slug>/jobs/<id>. The
+page refreshes in parts (pages.region).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 
 from . import plan, route
 from .conversation import proposals_card, thread
-from .pages import (LaneData, _hidden, action_form, ask_card, badge, headline, region, request_card, route_list,
+from .ledger import Row
+from .pages import (LaneData, _count, _hidden, _money, action_form, ask_card, badge, headline, region, request_card, route_list,
                     route_strip, trail, working)  # fmt: skip
 from .store import ACTIVE, INTERNAL, LOOKS, Job, Project, Proposal, Said, Step
+from .watch import span
 
 JOBS_SHOWN = 12  # the latest jobs in the list (and any older one still under way); the rest are on the All jobs page
 
@@ -56,8 +56,6 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
     """The page around its parts. `focus`: which side a phone shows, "list" or "job"; `links`:
     where it's live and its repo, by name."""
     out = "".join(f"<a href='{escape(url)}' target=_blank rel=noopener>{escape(name)} ↗</a>" for name, url in links.items())
-    if project.twin:  # the same idea, built the other way (checklist.py)
-        out += f"<a href='/p/{escape(project.twin)}' class=twin>Built both ways: its twin ›</a>"
     left = (
         "<section class=jobs-pane aria-label=Jobs>"
         f"<header class=project-head><p>{escape(project.summary)}</p><p class=out>{out}</p></header>"
@@ -144,9 +142,10 @@ def workflow_words(job: Job, project: Project | None, flows: dict[str, str]) -> 
 # --- the right: the job ------------------------------------------------------------------------
 
 
-def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datetime) -> str:
-    """Where the job is and what it needs: its title and state, what the running step is doing,
-    what it's waiting on Riggy for (answered here), a note for its next step, and its controls."""
+def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datetime, cost: Row | None = None) -> str:
+    """Where the job is and what it needs: its title and state, what it's cost (ledger.py), what
+    the running step is doing, what it's waiting on Riggy for (answered here), a note for its next
+    step, and its controls."""
     job, back = lane.job, href(lane.job)
     active = job.state in ACTIVE
     answer = plan.last_said(lane.steps) if job.start == "look" and not active else ""
@@ -170,6 +169,7 @@ def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datet
     return (
         f"<header class='card job-head c{lane.color}'><div class=card-head><h2>{escape(plan.title(job))}</h2>{badge(lane)}</div>"
         f"<p class=sub>{what(lane, flows)} · job #{job.id} · {headline(lane, now)}</p>"
+        + (costs(cost, active) if cost else "")
         + (f"<p class=answer>{escape(answer)}</p>" if answer else "")
         + (working(lane, signed_in, now) if active else "")
         + ask_card(lane, signed_in, back=back, reply=True)
@@ -177,6 +177,24 @@ def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datet
         + controls
         + "</header>"
     )
+
+
+def costs(r: Row, active: bool) -> str:
+    """What the job's cost, in a line (ledger.py): usage at API prices, tokens, how long its agents
+    ran, its cost by model, fixes, and a checklist's items."""
+    if not r.runs:
+        return ""
+    bits = [f"{_money(r.cost)} at API prices", f"{_count(r.tokens_in)} in / {_count(r.tokens_out)} out", f"agents {span(timedelta(seconds=r.agent_seconds))}"]
+    if r.cost:
+        bits.append(", ".join(f"{m} {round(100 * c / r.cost)}%" for m, c in sorted(r.by_model.items(), key=lambda x: -x[1]) if c))
+    if r.fixes:
+        bits.append(f"{r.fixes} fix{'es' if r.fixes != 1 else ''}")
+    if r.items:
+        items = f"{r.items} items: {r.first_try} first time, {r.again} again"
+        items += f" ({r.escalated} on its Build's model)" if r.escalated else ""
+        items += f", {r.gave_up} given up" if r.gave_up else ""
+        bits += [items, f"planning {_money(r.planning_cost)}, items {_money(r.items_cost)}"]
+    return f"<p class=costs><b>{'Cost so far' if active else 'Cost'}:</b> {escape(' · '.join(bits))}</p>"
 
 
 def steps_part(lane: LaneData, signed_in: bool, now: datetime, trace: list[Step]) -> str:

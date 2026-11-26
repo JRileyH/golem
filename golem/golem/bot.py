@@ -62,7 +62,7 @@ class Bot:
     # --- new projects ---------------------------------------------------------
 
     async def new_project(self, name: str, idea: str, *, slug: str, workflow: str = "", mode: str | None = None, tag: str = "",
-                          model: str = "", effort: str = "") -> Job:  # fmt: skip
+                          model: str = "", effort: str = "", vacuum: bool = False) -> Job:  # fmt: skip
         """A project as Riggy named it on the New project form, and its first job, which starts
         straight away: the form already said all a minute's grace was for. `workflow`: one for new
         projects by key, else the fallback; `mode` one of golem's (plan.MODES), or "" for none. The
@@ -78,6 +78,8 @@ class Bot:
             project = self.store.add_project(slug, name.strip()[:60], about.summary, mode="", model=model, effort=effort)
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
+            if vacuum:
+                project = self.store.update_project(slug, vacuum=1)
             title = about.title or project.name  # without a model: what he called it, not his first line cut short
             job = self.start_job(project, wf, plan.mode_for(project, mode or ""), idea.strip(), title, kind="new")
             await self.chat.heard(slug, idea.strip(), job=job.id)
@@ -86,21 +88,20 @@ class Bot:
     async def new_twins(self, name: str, idea: str, *, slug: str, workflow: str = "", tag: str = "", model: str = "",
                         effort: str = "") -> tuple[Job, Job]:  # fmt: skip
         """The same idea built both ways, to compare them (checklist.py): a project the usual way at
-        `slug`, and its twin in checklist mode at `<slug>-list`, each knowing the other. Raises
-        ValueError if either address can't be had."""
+        `slug`, and one in checklist mode at `cl-<slug>`, hosted alike. Both run in a vacuum, as on
+        a fresh golem: nothing golem has learnt, and nothing from each other. Raises ValueError if
+        either address can't be had."""
         twin = checklist.twin_slug(slug)
         if not intake.valid_slug(twin) or await self.slug_taken(twin):
             raise ValueError(f"{twin} can't be had.")
-        for each in (slug, twin):  # what golem has learnt so far, the same for both, and from now on each its own
-            own = self.settings.lessons(each)
+        made = []
+        for each, mode, label in ((slug, "", name), (twin, checklist.MODE, f"{name} (checklist)"[:60])):
+            own = self.settings.lessons(each)  # lessons of its own, from nothing
             own.parent.mkdir(parents=True, exist_ok=True)
-            own.write_text(self.settings.lessons().read_text() if self.settings.lessons().exists() else "")
-        usual = await self.new_project(name, idea, slug=slug, workflow=workflow, mode="", tag=tag, model=model, effort=effort)
-        listed = await self.new_project(f"{name} (checklist)"[:60], idea, slug=twin, workflow=workflow, mode=checklist.MODE, tag=tag,
-                                        model=model, effort=effort)  # fmt: skip
-        self.store.update_project(slug, twin=twin)
-        self.store.update_project(twin, twin=slug)
-        return usual, listed
+            own.write_text("")
+            made.append(await self.new_project(label, idea, slug=each, workflow=workflow, mode=mode, tag=tag, model=model, effort=effort,
+                                               vacuum=True))  # fmt: skip
+        return made[0], made[1]
 
     async def summarize(self, name: str, idea: str) -> intake.Summary:
         if self.settings.harness == "fake":
@@ -213,7 +214,7 @@ class Bot:
             return f"Couldn't move the repo: {e}"
         await self.deployer.stop(old)
         project = self.store.move_project(old, new)
-        if (lessons := self.settings.lessons(old)).exists():  # a twin's own lessons go with it
+        if (lessons := self.settings.lessons(old)).exists():  # a project in a vacuum's own lessons go with it
             lessons.rename(self.settings.lessons(new))
         url, repo = self.settings.project_url(new), self.settings.repo_url(new)
 

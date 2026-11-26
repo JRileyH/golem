@@ -484,7 +484,6 @@ def insights(r: Report, found: list[str], days: int | None) -> str:
         f"<div class=tile><span>Tokens</span><b>{_count(t.tokens)}</b></div>"
         f"<div class=tile><span>Agent runs</span><b>{t.runs}</b></div></div>"
     )
-    windows += "<a href=/insights/jobs class=more>Each job's cost ›</a>"
     if not t.seconds and not t.runs:
         return f"<section class=insights><nav class=windows>{windows}</nav><p class=empty>Nothing has run in this window yet.</p></section>"
     found_html = "<ul class=findings>" + "".join(f"<li>{escape(f)}</li>" for f in found) + "</ul>" if found else ""
@@ -1232,7 +1231,7 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .found .excerpt { margin:.3rem 0 .1rem; color:var(--ink); overflow-wrap:anywhere; }
 .pager { display:flex; gap:1rem; margin:0 0 1rem; } .pager .older { margin-left:auto; }
 .job-head h2 { font:700 1.2rem/1.25 var(--display); margin:0; }
-.job-head .sub { margin:.2rem 0 0; }
+.job-head .sub { margin:.2rem 0 0; } .job-head .costs { margin:.3rem 0 0; font-size:.85rem; color:var(--muted); } .job-head .costs b { color:var(--ink); font-weight:600; }
 .job-head .answer { margin:.6rem 0 0; padding:.55rem .75rem; background:var(--bg); border-radius:var(--radius); white-space:pre-wrap; }
 .job-head .add-note { margin:.6rem 0 0; } .job-head .add-note summary { cursor:pointer; color:var(--muted); font-size:.88rem; }
 .job-controls { margin-top:.7rem; }
@@ -1399,7 +1398,7 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .windows { display:flex; gap:.3rem; margin-bottom:.75rem; }
 .windows a { padding:.3rem .75rem .45rem; border-radius:var(--radius); background:var(--stone); color:var(--ink); font-size:.88rem; font-weight:600;
   box-shadow:inset 0 -3px 0 var(--lip); }
-.windows a.on { background:var(--ink); color:var(--card); } .windows a.more { margin-left:auto; background:none; color:var(--accent); }
+.windows a.on { background:var(--ink); color:var(--card); }
 .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(8rem, 1fr)); gap:.6rem; margin-bottom:.75rem; }
 .tile { background:var(--card); border-radius:var(--radius); padding:.7rem .85rem; box-shadow:0 2px 0 var(--edge); }
 .tile span { display:block; color:var(--muted); font-size:.8rem; } .tile b { font:700 1.5rem/1.2 var(--display); }

@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import blockspage, brand, checklist, config, conversation, gallery, home, insights, intake, ledger, ledgerpage, options, pages, plan, pwa, turns
+from . import blockspage, brand, checklist, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
 from . import now as now_page
 from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
 from .cards import fallback
@@ -368,23 +368,6 @@ def create_app(
         body = pages.insights(report, insights.findings(report), days)
         return respond(request, "Insights", body, signed, here="insights", up=("/settings", "Settings"))
 
-    def ledger_window(request: Request) -> tuple[int | None, str]:
-        raw = request.query_params.get("days", "30")
-        days = int(raw) if raw.isdigit() and 0 < int(raw) <= 3650 else None
-        return days, (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds") if days else ""
-
-    async def ledger_page(request: Request) -> Response:
-        """Insights → Each job's cost (ledger.py, ledgerpage.py): the usual way against checklist mode."""
-        days, since = ledger_window(request)
-        body = ledgerpage.page(ledger.rows(store, since), days)
-        return respond(request, "Each job's cost", body, signed_in(request), here="insights", up=("/insights", "Insights"))
-
-    async def ledger_csv(request: Request) -> Response:
-        days, since = ledger_window(request)
-        name = f"golem-jobs-{days or 'all'}d.csv" if days else "golem-jobs-all.csv"
-        return Response(ledger.to_csv(ledger.rows(store, since)), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f"attachment; filename={name}", "Cache-Control": "no-store"})  # fmt: skip
-
     async def reports_page(request: Request) -> Response:
         """Reports about golem itself, from its workers and its own incidents (reportspage.py)."""
         signed = signed_in(request)
@@ -486,7 +469,7 @@ def create_app(
         }
         details = ""
         if job:
-            parts["head"] = projectpage.head_part(open_, flows_, signed, now)
+            parts["head"] = projectpage.head_part(open_, flows_, signed, now, ledger.row(job, store.steps(job.id), store.runs(job.id)))
             parts["steps"] = projectpage.steps_part(open_, signed, now, store.steps(job.id))
             parts["activity"] = projectpage.activity_part(store.job_messages(job.id) if signed else [], signed)
             details = projectpage.details(job, store.runs(job.id))
@@ -622,9 +605,9 @@ def create_app(
         if both and slug and not errors.get("slug"):
             twin = checklist.twin_slug(slug)
             if not intake.valid_slug(twin):
-                errors["slug"] = f"Built both ways, its twin would be at {twin}: pick a shorter address."
+                errors["slug"] = f"Built both ways, its checklist one would be at {twin}: pick a shorter address."
             elif await bot.slug_taken(twin):
-                errors["slug"] = f"Built both ways, its twin would be at {twin}, and that's taken: pick another address."
+                errors["slug"] = f"Built both ways, its checklist one would be at {twin}, and that's taken: pick another address."
         if errors:
             return new_page(request, newproject.Filled(form, errors), status=400)
         args = {"slug": slug, "workflow": form.get("workflow", ""), "tag": form.get("tag", ""), "model": model, "effort": effort}
@@ -635,7 +618,7 @@ def create_app(
                 job = await bot.new_project(name, idea, mode=mode, **args)
         except ValueError:
             return new_page(request, newproject.Filled(form, {"slug": f"{slug} was just taken. Try another."}), status=400)
-        said = f"Started {name} both ways: {plan.title(job)}, and its checklist twin." if both else f"Started {name}: {plan.title(job)}."
+        said = f"Started {name} both ways: here, and as a checklist at {checklist.twin_slug(slug)}." if both else f"Started {name}: {plan.title(job)}."
         return _back({"back": projectpage.href(job)}, said)
 
     async def new_adopt(request: Request) -> Response:
@@ -890,7 +873,7 @@ def create_app(
             Route("/jobs/{job_id:int}/planned/{position:int}", planned_page),
             Route("/jobs/{job_id:int}/options/{name}", option_image),
             Route("/steps/{step_id:int}", step_page),
-            Route("/insights", insights_page), Route("/insights/jobs", ledger_page), Route("/insights/jobs.csv", ledger_csv),
+            Route("/insights", insights_page),
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
             Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page),

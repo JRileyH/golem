@@ -109,14 +109,14 @@ phone.
   (haiku at medium effort) and runs its check, trying a failed item again (its
   last try on the Build's model) before carrying on without it. Pick it for a
   new project, a request, or a project's default. **Build it both ways** on the
-  New project form makes two projects from one idea, the usual way and its
-  checklist twin at the address with `-list`, linked on their pages, to compare.
-  Neither learns from the other: each gets its own copy of golem's lessons file,
-  and Claude Code's own memory is off for every worker. **Insights → Each job's
-  cost** compares them: what finished jobs of each kind usually cost in each
-  mode, each pair built both ways side by side, and every job's cost, tokens,
-  agent time, cost by model, fixes and items, with a CSV of it all. It's costs
-  only: how good the work is, you judge on the sites.
+  New project form makes two projects from one idea, hosted alike: the usual
+  way at its address, and as a checklist at `cl-` and its address. Both run in
+  a vacuum, as on a fresh golem: lessons of their own starting empty, and each
+  job a Claude Code of its own with nothing in it (no settings, memory or
+  history). Each job's page says what it cost (usage at API prices, tokens,
+  how long its agents ran, cost by model, fixes, and a checklist's items):
+  open the two in two tabs. Golem records no judgement of quality; you look
+  at the sites.
 - **Settings,** per project, on its Settings tab:
   - **Default mode:** what its requests run in unless they pick another: the
     usual way, or checklist. Only you set it.

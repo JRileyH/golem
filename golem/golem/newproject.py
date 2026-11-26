@@ -108,8 +108,8 @@ def _both(c: Choices, f: Filled) -> str:
     on = " checked" if f.get("both") else ""
     return (
         f"<label class=check-row><input type=checkbox name=both value=1{on}> Build it both ways "
-        "<span class=muted>(two projects from this idea: the usual way, and as a checklist at its address with -list, "
-        "to compare on Insights)</span></label>"
+        "<span class=muted>(two projects from this idea, each in a vacuum as on a fresh golem: the usual way at its address, "
+        "and as a checklist at cl- and its address)</span></label>"
     )
 
 
