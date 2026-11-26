@@ -173,7 +173,8 @@ CREATE TABLE IF NOT EXISTS proposals (
     job_id INTEGER NOT NULL REFERENCES jobs(id),  -- the proposals job that made it
     lens TEXT NOT NULL,              -- the kind of improvement it was looking for (proposals.LENSES)
     title TEXT NOT NULL,
-    body TEXT NOT NULL,              -- what, why, and roughly how big
+    body TEXT NOT NULL,              -- the whole of it as plain text: what, why, how big, how to build it
+    card TEXT NOT NULL DEFAULT '{}', -- JSON: its fields for the card he decides from (proposals.collect); {} before cards
     state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected
     reason TEXT NOT NULL DEFAULT '', -- Riggy's why, if he gave one
     built_by INTEGER,                -- the change job an accepted one became, once it's queued
@@ -243,7 +244,7 @@ MIGRATIONS = {
         "graph_hash": "TEXT NOT NULL DEFAULT ''",
         "vars": "TEXT NOT NULL DEFAULT '{}'",
     },
-    "proposals": {"issue": "INTEGER"},
+    "proposals": {"issue": "INTEGER", "card": "TEXT NOT NULL DEFAULT '{}'"},
     "runs": {"step_id": "INTEGER"},
     "steps": {
         "optional": "INTEGER NOT NULL DEFAULT 0",
@@ -339,6 +340,7 @@ class Proposal:
     created_at: str
     decided_at: str | None
     issue: int | None = None  # its GitHub issue, a record of it there: golem never reads it back
+    card: str = "{}"  # JSON: its fields for the card he decides from (proposals.collect); {} before cards
 
 
 @dataclass
@@ -1072,14 +1074,14 @@ class Store:
 
     # --- proposals ------------------------------------------------------------
 
-    def add_proposals(self, slug: str, job_id: int, lens: str, made: list[tuple[str, str]]) -> list[Proposal]:
-        """A proposals job's (title, body) pairs, in place of any it made before (its step ran again)."""
+    def add_proposals(self, slug: str, job_id: int, lens: str, made: list[tuple[str, str] | tuple[str, str, dict]]) -> list[Proposal]:
+        """A proposals job's (title, body, card if it has one), in place of any it made before (its step ran again)."""
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute("DELETE FROM proposals WHERE job_id = ? AND state = 'open'", (job_id,))
             self.db.executemany(
-                "INSERT INTO proposals (slug, job_id, lens, title, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                [(slug, job_id, lens, title, body, now()) for title, body in made],
+                "INSERT INTO proposals (slug, job_id, lens, title, body, card, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [(slug, job_id, lens, title, body, json.dumps(card[0] if card else {}), now()) for title, body, *card in made],
             )
         return self.job_proposals(job_id)
 

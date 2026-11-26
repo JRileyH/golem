@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from html import escape
 
-from . import plan
+from . import plan, proposals
 from .pages import LaneData, _hidden, _pause, job_controls, select_form
 from .proposals import LENSES, WAITING, kinds
 from .store import CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
@@ -34,7 +34,7 @@ def proposals_card(waiting: list[Proposal], back: str) -> str:
     if not waiting:
         return ""
     items = "".join(
-        f"<li class=proposal><h4>{escape(p.title)}</h4><p class=muted>{escape(p.lens)}</p><p>{_linked(p.body)}</p>"
+        f"<li class=proposal><h4>{escape(p.title)}</h4>{_proposal(p)}"
         f"<form method=post action=/act>{_hidden(action='proposal', proposal=p.id, back=back)}"
         f"<input name=reason placeholder='Why? (optional)' aria-label='Why, for {escape(p.title)}' maxlength=1000>"
         "<div class=row-form><button name=value value=accept class=primary>👍 Build it</button>"
@@ -45,6 +45,23 @@ def proposals_card(waiting: list[Proposal], back: str) -> str:
         "<section class='card proposals'><h2>golem proposes</h2><p class=sub>A thumbs up builds it. "
         f"Saying why, either way, steers what golem proposes next.</p><ol>{items}</ol></section>"
     )
+
+
+def _proposal(p: Proposal) -> str:
+    """A proposal's card, to take in at a glance: its kind and size, what it gets him, what changes,
+    what golem saw and what it costs, with the worker's plan folded away. One from before cards
+    has only its body."""
+    c = proposals.card(p)
+    if not c:
+        return f"<p class=muted>{escape(p.lens)}</p><p>{_linked(p.body)}</p>"
+    chips = "".join(f"<span class=chip>{escape(x)}</span>" for x in (p.lens, c.get("size")) if x)
+    changes = "".join(f"<li>{_linked(x)}</li>" for x in c.get("changes") or [])
+    facts = "".join(f"<p class=fact><b>{k}</b> {_linked(c[f])}</p>" for k, f in (("Seen", "saw"), ("Trade-off", "tradeoff")) if c.get(f))
+    folded = f"<details class=plan><summary>How it'd be built</summary><p>{_linked(c['plan'])}</p></details>" if c.get("plan") else ""
+    return (
+        f"<p class=chips>{chips}</p>" + (f"<p class=gain>{_linked(c['gain'])}</p>" if c.get("gain") else "")
+        + (f"<ul class=changes>{changes}</ul>" if changes else "") + facts + folded
+    )  # fmt: skip
 
 
 def proposals_settings(project: Project, decided: list[Proposal]) -> str:

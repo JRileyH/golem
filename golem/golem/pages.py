@@ -1107,6 +1107,11 @@ main { flex:1; width:100%; max-width:46rem; margin:0 auto; padding:1rem max(.75r
 .proposals { margin-top:.6rem; } .proposals ol { list-style:none; padding:0; margin:.5rem 0 0; }
 .proposal { padding:.6rem 0; border-top:1px solid var(--line); } .proposal:first-child { border-top:0; }
 .proposal h4 { margin:0; font:700 1.02rem/1.3 var(--display); } .proposal p { margin:.25rem 0; font-size:.9rem; }
+.proposal .chips { display:flex; margin:.2rem 0 .3rem; } .proposal .gain { font-size:.95rem; }
+.proposal .changes { margin:.3rem 0; padding-left:1.1rem; font-size:.9rem; } .proposal .changes li { margin:.1rem 0; }
+.proposal .changes li::marker { content:"▸ "; color:var(--accent); }
+.proposal .fact { color:var(--muted); font-size:.84rem; } .proposal .fact b { color:var(--ink); font-weight:600; margin-right:.2rem; }
+.proposal .plan summary { cursor:pointer; color:var(--muted); font-size:.84rem; } .proposal .plan p { font-size:.84rem; }
 .proposal input { font:inherit; font-size:16px; padding:.4rem .6rem; border-radius:var(--radius); border:2px solid var(--line);
   background:var(--card); color:var(--ink); width:100%; box-sizing:border-box; margin-top:.3rem; }
 .tail summary { cursor:pointer; color:var(--muted); font-size:.85em; }

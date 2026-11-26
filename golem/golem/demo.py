@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime, timedelta
 
-from . import plan
+from . import plan, proposals
 from .config import Settings
 from .harness import FakeHarness
 from .prompts import Prompts
@@ -67,8 +67,16 @@ def main() -> None:
     walk.finish(done)
     looked = walk.job(recipes, "propose", "proposals", "", "Look at its features for things to propose", "")
     walk.finish(looked)
-    store.add_proposals("recipes", looked.id, "features",
-                        [("Unit memory", "Remember grams or cups per recipe."), ("Share links", "A link that opens the scaled recipe.")])  # fmt: skip
+    store.add_proposals("recipes", looked.id, "features", [proposals.collect([demo])[0] for demo in (
+        {"title": "Remember each recipe's units", "gain": "Cooks stop re-picking cups on every visit.",
+         "changes": ["The unit choice sticks per recipe", "A new recipe starts in your last unit"],
+         "saw": "The toggle resets on reload: src/Scaler.tsx keeps it in memory only.", "tradeoff": "", "size": "small",
+         "plan": "Keep the unit per recipe id in localStorage (src/Scaler.tsx), read it on load.\nCheck: switch to cups, reload, still cups."},
+        {"title": "Share a scaled recipe by link", "gain": "Send the 12-serving version to a friend in one tap.",
+         "changes": ["A Share button on each recipe", "The link opens it already scaled"],
+         "saw": "Servings live only in component state; the URL never changes.", "tradeoff": "Links break if a recipe is renamed.",
+         "size": "medium", "plan": "Put servings and unit in the query string (?s=12&u=g); read them on load; Share uses navigator.share."},
+    )])  # fmt: skip
     moss = walk.project("moss-map", "Moss Map", "Log the mosses on your walks, on a map.")
     old = walk.job(moss, "new", "web_app", "", "a map of mosses I find on walks", "Moss Map")
     walk.finish(old)

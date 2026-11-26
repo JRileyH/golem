@@ -248,15 +248,27 @@ def test_proposals_are_read_from_a_verdict_and_shown_with_what_riggy_said():
     from golem.store import Proposal
 
     raw = [
-        {"title": "  Offline   mode ", "what": "Cache the deck in a service worker.", "why": "Hikes have no signal.", "size": "medium"},
-        {"title": "", "what": "untitled"},  # dropped
+        {"title": "  Offline   mode ", "gain": "Cards work on  hikes.", "changes": [" The deck opens offline ", "", "A badge says so", "c", "d", "e"],
+         "saw": "No service worker.", "tradeoff": "A stale deck until reload.", "size": "medium", "plan": "Cache it.\r\n\n\n\nTest offline."},
+        {"title": "", "gain": "untitled"},  # dropped
+        {"title": "Nothing said", "gain": " ", "changes": []},  # dropped: nothing to decide from
         "not a proposal",
-        {"title": "Bigger cards", "what": "Fill the screen on phones.", "why": "", "size": "huge"},
-        *[{"title": f"Extra {i}", "what": "x", "why": "y", "size": "small"} for i in range(5)],
+        {"title": "Bigger cards", "gain": "", "changes": ["Cards fill the screen"], "size": "huge"},
+        *[{"title": f"Extra {i}", "gain": "x", "size": "small"} for i in range(5)],
     ]
     assert MAX_PER_RUN == 1 and collect("nonsense") == []
-    assert collect(raw) == [("Offline mode", "Cache the deck in a service worker.\n\nWhy: Hikes have no signal.\n\nSize: medium.")]
-    assert collect(raw[1:]) == [("Bigger cards", "Fill the screen on phones.")]  # no why, and no size it can't use
+    [(title, body, card)] = collect(raw)
+    assert title == "Offline mode" and card == {
+        "gain": "Cards work on hikes.", "changes": ["The deck opens offline", "A badge says so", "c", "d"], "saw": "No service worker.",
+        "tradeoff": "A stale deck until reload.", "size": "medium", "plan": "Cache it.\n\nTest offline.",
+    }  # fmt: skip
+    assert body == (
+        "Cards work on hikes.\n\n- The deck opens offline\n- A badge says so\n- c\n- d\n\n"
+        "Seen: No service worker.\nTrade-off: A stale deck until reload.\nSize: medium.\n\nPlan:\nCache it.\n\nTest offline."
+    )
+    # No gain, no size it can't use: the changes alone are enough to decide from.
+    assert collect(raw[1:]) == [("Bigger cards", "- Cards fill the screen", {"gain": "", "changes": ["Cards fill the screen"], "saw": "",
+                                                                             "tradeoff": "", "size": "", "plan": ""})]  # fmt: skip
 
     def made(title, state, reason=""):
         return Proposal(1, "t", 1, "polish", title, "body", state, reason, None, "2026-10-01T00:00:00+00:00", None)

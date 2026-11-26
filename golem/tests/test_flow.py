@@ -880,8 +880,10 @@ def test_a_question_picked_on_the_ask_box_and_its_question_back(golem):
 # --- proposals ------------------------------------------------------------------
 
 
-OFFLINE = {"title": "Offline mode", "what": "Cache the deck in a service worker.", "why": "Hikes have no signal.", "size": "medium"}
-BIGGER = {"title": "Bigger cards", "what": "Fill the screen on phones.", "why": "They're small on a phone.", "size": "small"}
+OFFLINE = {"title": "Offline mode", "gain": "Cards work on hikes with no signal.", "changes": ["The deck opens offline"],
+           "saw": "No service worker.", "tradeoff": "", "size": "medium", "plan": "Cache the deck in a service worker."}
+BIGGER = {"title": "Bigger cards", "gain": "Cards are readable on a phone.", "changes": ["Cards fill the screen"],
+          "saw": "They're 200px wide on a phone.", "tradeoff": "", "size": "small", "plan": "Fill the screen on phones."}
 
 
 def proposing(*made: dict, message: str = "Played a few rounds on a phone.") -> dict:
@@ -919,7 +921,8 @@ def test_with_nothing_else_to_do_golem_proposes_and_riggy_decides(golem):
         assert golem.workspace.issues[-1] == ("tree-cards", "Proposal: Offline mode") and offline.issue == len(golem.workspace.issues)
         said = golem.chat.sent[-1]
         assert said[0] == room and not said[2]  # it notifies him
-        assert said[1].startswith("I looked at its features and have a proposal for you:\n\nOffline mode\nCache the deck")
+        assert said[1].startswith("I looked at its features and have a proposal for you:\n\nOffline mode (medium)\nCards work on hikes with no signal.\n\n")
+        assert "service worker" not in said[1]  # the card's headline only: the rest is on its page
         assert said[1].endswith("Thumbs up or down (and why) on its page: https://golem.unlaunched.dev/p/tree-cards")
         assert golem.scheduler.propose() is None  # not due again for a day
 

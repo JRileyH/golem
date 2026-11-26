@@ -16,6 +16,11 @@ and the turn skips the ones he turned off. The worker sees every earlier proposa
 Riggy decided and why: to keep from repeating them and to learn what he values, not as a
 template.
 
+Each proposal is a card he can decide on in seconds: a title, what it gets him, up to four
+lines on what changes, what golem saw, what it costs and how big it is, with the plan the
+worker who builds it starts from folded away (SCHEMA). Its body is all of that as plain
+text, for its issue and the change job it becomes; his chat gets only its headline.
+
 He gives each a thumbs up or down on the project's page, with a reason if he likes. A thumbs
 up becomes a change job (the fallback workflow for changes), as soon as the project has no other change
 under way, and that job's PR closes the proposal's issue; a thumbs down closes it with his
@@ -29,6 +34,8 @@ next at the following turn, not straight away, and turns missed while he was awa
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -66,7 +73,13 @@ LENSES = (
     Lens("developer experience", "How quickly a worker can understand, run, change and deploy it: AGENTS.md, scripts, docs, CI time, error messages."),
 )  # fmt: skip
 
-# The propose step's verdict: a step verdict, and when it's done, the proposals.
+MAX_CHANGES = 4  # lines of what changes on a proposal's card
+# Each field's most characters kept: the card's are a line or two on a phone, the plan is folded away.
+CAPS = {"title": 100, "gain": 240, "saw": 360, "change": 140, "tradeoff": 200, "plan": 4000}
+
+# The propose step's verdict: a step verdict, and when it's done, the proposals. Each is a card he
+# decides from at a glance (title, gain, changes, saw, tradeoff, size) and, folded, the plan the
+# worker who builds it starts from.
 SCHEMA = {
     **VERDICT_SCHEMA,
     "properties": {
@@ -77,12 +90,20 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "The proposal in a few words"},
-                    "what": {"type": "string", "description": "What to change, concretely enough to build from"},
-                    "why": {"type": "string", "description": "What it gets him, and what you saw that made you propose it"},
+                    "title": {"type": "string", "description": "The change in at most 8 words, starting with a verb"},
+                    "gain": {"type": "string", "description": "What it gets him or its users, in one sentence of at most 20 words"},
+                    "changes": {
+                        "type": "array",
+                        "maxItems": MAX_CHANGES,
+                        "items": {"type": "string"},
+                        "description": "What will be different, as he'd notice it: one to four lines of at most 12 words",
+                    },
+                    "saw": {"type": "string", "description": "What you found in this project that prompted it, with a file, screen or number: one sentence"},
+                    "tradeoff": {"type": "string", "description": "The main cost or risk in a few words; empty if none is worth his attention"},
                     "size": {"enum": list(SIZES)},
+                    "plan": {"type": "string", "description": "For the worker who builds it, not him: files, approach, how to check it works"},
                 },
-                "required": ["title", "what", "why", "size"],
+                "required": ["title", "gain", "changes", "saw", "tradeoff", "size", "plan"],
                 "additionalProperties": False,
             },
         },
@@ -151,19 +172,46 @@ def start(store: Store, project: Project) -> Job:
     return store.update_job(job.id, workflow="proposals", mode=project.mode)
 
 
-def collect(raw: object) -> list[tuple[str, str]]:
-    """The (title, body) of each proposal a worker returned, up to MAX_PER_RUN."""
+def collect(raw: object) -> list[tuple[str, str, dict]]:
+    """The (title, body, card) of each proposal a worker returned, up to MAX_PER_RUN: its card's
+    fields in a line each, and its body the whole as plain text (`text`)."""
     found = []
     for item in raw if isinstance(raw, list) else []:
         if not isinstance(item, dict) or len(found) == MAX_PER_RUN:
             continue
-        title, what, why = (" ".join(str(item.get(k) or "").split()) for k in ("title", "what", "why"))
-        if not title or not what:
+        title, gain, saw, tradeoff = (_line(item.get(k))[: CAPS[k]] for k in ("title", "gain", "saw", "tradeoff"))
+        listed = item.get("changes") if isinstance(item.get("changes"), list) else []
+        changes = [c for c in (_line(x)[: CAPS["change"]] for x in listed) if c][:MAX_CHANGES]
+        if not title or not (gain or changes):
             continue
+        plan = re.sub(r"\n{3,}", "\n\n", str(item.get("plan") or "").replace("\r", "").strip())[: CAPS["plan"]]
         size = item.get("size") if item.get("size") in SIZES else ""
-        body = "\n\n".join(p for p in (what[:1500], f"Why: {why[:800]}" if why else "", f"Size: {size}." if size else "") if p)
-        found.append((title[:100], body))
+        made = {"gain": gain, "changes": changes, "saw": saw, "tradeoff": tradeoff, "size": size, "plan": plan}
+        found.append((title, text(made), made))
     return found
+
+
+def _line(value: object) -> str:
+    return " ".join(str(value or "").split())
+
+
+def text(made: dict) -> str:
+    """A proposal's card and plan as plain text: what its issue and the change job it becomes say."""
+    facts = (f"Seen: {made['saw']}" if made.get("saw") else "", f"Trade-off: {made['tradeoff']}" if made.get("tradeoff") else "",
+             f"Size: {made['size']}." if made.get("size") else "")  # fmt: skip
+    return "\n\n".join(p for p in (
+        made.get("gain", ""), "\n".join(f"- {c}" for c in made.get("changes") or []), "\n".join(f for f in facts if f),
+        f"Plan:\n{made['plan']}" if made.get("plan") else "",
+    ) if p)  # fmt: skip
+
+
+def card(p: Proposal) -> dict:
+    """The proposal's card (`collect`), or {} for one from before cards, which only has its body."""
+    try:
+        found = json.loads(p.card or "{}")
+    except ValueError:
+        return {}
+    return found if isinstance(found, dict) else {}
 
 
 def past(proposals: list[Proposal]) -> str:
@@ -201,7 +249,13 @@ def announcement(name: str, made: list[Proposal], page: str) -> str:
     """The proposal in the project's conversation (several only from a job that ran before one a
     turn), with where to decide on it."""
     if len(made) == 1:
-        some, items = "a proposal", f"{made[0].title}\n{made[0].body}"
+        some, items = "a proposal", headline(made[0])
     else:
-        some, items = f"{len(made)} proposals", "\n\n".join(f"{i}. {p.title}\n{p.body}" for i, p in enumerate(made, start=1))
+        some, items = f"{len(made)} proposals", "\n\n".join(f"{i}. {headline(p)}" for i, p in enumerate(made, start=1))
     return f"I looked at its {name} and have {some} for you:\n\n{items}\n\nThumbs up or down (and why) on its page: {page}"
+
+
+def headline(p: Proposal) -> str:
+    """The proposal in two lines: its title and size, and what it gets him. The rest is on its card."""
+    c = card(p)
+    return f"{p.title}" + (f" ({c['size']})" if c.get("size") else "") + f"\n{c.get('gain') or p.body}"

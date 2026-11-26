@@ -505,11 +505,20 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     golem.store.update_job(page.job.id, state="done")
     looked = golem.store.add_job("trees", "change", "Look at its features for things to propose", "proposals")
     golem.store.update_job(looked.id, state="done")
-    offline, bigger = golem.store.add_proposals("trees", looked.id, "features", [("Offline <mode>", "Cache it.\n\nWhy: hikes."), ("Bigger cards", "Fill the screen.")])
+    card = {"gain": "Works on hikes.", "changes": ["Opens offline", "Says when it's <stale>"], "saw": "No service worker.",
+            "tradeoff": "", "size": "medium", "plan": "Cache it.\nTest it."}
+    offline, bigger = golem.store.add_proposals("trees", looked.id, "features", [
+        ("Offline <mode>", "Works on hikes.", card),
+        ("Bigger cards", "Fill the screen.\n\nWhy: small."),  # from before cards: only its body
+    ])  # fmt: skip
     assert "golem proposes" not in page.get("/p/trees").text  # signed out: not shown
     sign_in(page)
     html = page.get("/p/trees").text
-    assert "golem proposes" in html and "Offline &lt;mode&gt;" in html and "Cache it.<br><br>Why: hikes." in html
+    assert "golem proposes" in html and "Offline &lt;mode&gt;" in html and "Fill the screen.<br><br>Why: small." in html
+    assert "<p class=chips><span class=chip>features</span><span class=chip>medium</span></p><p class=gain>Works on hikes.</p>" in html
+    assert "<ul class=changes><li>Opens offline</li><li>Says when it&#x27;s &lt;stale&gt;</li></ul>" in html
+    assert "<p class=fact><b>Seen</b> No service worker.</p>" in html and "Trade-off" not in html  # none worth saying
+    assert "<summary>How it'd be built</summary><p>Cache it.<br>Test it.</p></details>" in html
     assert html.index("Offline &lt;mode&gt;") < html.index("Bigger cards")  # oldest first
     assert html.count("name=value value=accept") == 2 and "name=proposal value='1'" in html
 
