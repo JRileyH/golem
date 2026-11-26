@@ -8,6 +8,8 @@ its cost by model, what went round again (fixes after failed CI or deploys), and
 checklist mode, its items: how many, how many passed first time, went again, went to the
 Build's model, or were given up on, and what the planning cost against the items.
 
+compare.py lays any two projects' jobs side by side in a CSV, with these and more.
+
 Golem keeps no judgement of how good the work is: that's Riggy's to look at, on the sites.
 
 Pure.
@@ -53,7 +55,7 @@ def row(job: Job, steps: list[Step], runs: list[dict], now: datetime | None = No
         r.cost += cost
         r.tokens_in += run["input_tokens"] or 0
         r.tokens_out += run["output_tokens"] or 0
-        r.agent_seconds += _seconds(run["started_at"], run["ended_at"])
+        r.agent_seconds += seconds(run["started_at"], run["ended_at"])
         model = (run["model"] or "").split("/")[0]
         r.by_model[model] = r.by_model.get(model, 0.0) + cost
         step = by_id.get(run["step_id"])
@@ -67,8 +69,8 @@ def row(job: Job, steps: list[Step], runs: list[dict], now: datetime | None = No
     ended = [s.ended_at for s in steps if s.ended_at]
     if started:
         last = (now or datetime.now(UTC)).isoformat(timespec="seconds") if job.state in ACTIVE else max(ended or started)
-        r.wall_seconds = _seconds(min(started), last)
-    r.waiting_seconds = sum(_seconds(s.started_at, s.ended_at) for s in steps if s.kind in plan.ASKS)
+        r.wall_seconds = seconds(min(started), last)
+    r.waiting_seconds = sum(seconds(s.started_at, s.ended_at) for s in steps if s.kind in plan.ASKS)
     r.fixes = sum(1 for s in steps if s.kind == "agent" and s.name == "fix" and s.started_at)
     checks: dict[tuple[int, int], list[Step]] = {}
     for s in steps:
@@ -93,7 +95,7 @@ def _planners(steps: list[Step]) -> set[str]:
     return {s.name for s in steps if s.id in plans}
 
 
-def _seconds(start: str | None, end: str | None) -> float:
+def seconds(start: str | None, end: str | None) -> float:
     if not start or not end:
         return 0.0
     return max((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds(), 0.0)
