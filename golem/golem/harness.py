@@ -54,6 +54,14 @@ def wrapup_schema(step_schema: dict | None) -> dict:
     return {**WRAPUP_SCHEMA, "properties": {**WRAPUP_SCHEMA["properties"], **extra}}
 
 
+VERDICT_TOOL = "StructuredOutput"  # how Claude Code takes a run's verdict, as a tool call
+# Seconds a run may go on once Claude Code has taken its verdict, before golem ends it. A run
+# normally ends straight after; one that doesn't is waiting on something it left going (a watch
+# on a background command woke it again and again to re-send the same verdict, for minutes).
+VERDICT_GRACE = 60
+# Tools a worker doesn't get: Monitor's watches keep a headless run alive after its verdict.
+DISALLOWED_TOOLS = ("Monitor",)
+
 # How Claude Code reports running out of subscription usage. Matched loosely on purpose:
 # a false positive only parks a job for a while; a miss burns retries.
 LIMIT_RE = re.compile(r"usage limit|limit reached|limit will reset|resets at|rate.?limit|out of (extra )?usage", re.I)
@@ -86,8 +94,9 @@ class Harness(Protocol):
 
 
 class ClaudeHarness:
-    def __init__(self, binary: str = "claude"):
+    def __init__(self, binary: str = "claude", grace: float = VERDICT_GRACE):
         self.binary = binary
+        self.grace = grace
 
     async def run(self, *, cwd, prompt, model, max_turns, log_path, env, effort=None, resume=None, schema=None, label=""):
         args = [
@@ -100,6 +109,7 @@ class ClaudeHarness:
             # Nobody is there to approve anything; the golem container is the sandbox.
             "--permission-mode", "bypassPermissions",
             "--json-schema", json.dumps(schema or VERDICT_SCHEMA),
+            "--disallowedTools", ",".join(DISALLOWED_TOOLS),
         ]  # fmt: skip
         if effort:
             args += ["--effort", effort]
@@ -124,13 +134,24 @@ class ClaudeHarness:
     async def _talk(self, proc, prompt: str, log_path: Path, resume: str | None, schema: dict | None) -> RunResult:
         result: dict | None = None
         session_id = resume
+        taken = Taken()
         try:
             proc.stdin.write(prompt.encode())
             await proc.stdin.drain()
             proc.stdin.close()
             stderr_task = asyncio.create_task(proc.stderr.read())
             with gzip.open(log_path, "wt") as out:
-                async for raw in proc.stdout:
+                while True:
+                    try:  # once its verdict is in, a run has `grace` seconds to end
+                        raw = await asyncio.wait_for(proc.stdout.readline(), self.grace if taken.verdict is not None else None)
+                    except TimeoutError:
+                        if result is None:  # Claude Code hasn't said what the run cost: what golem saw stands in
+                            log.warning("run %s went on %ss after its verdict: ended it (its cost is unknown)", session_id, self.grace)
+                            result = taken.result(session_id)
+                        await _end(proc)
+                        break
+                    if not raw:
+                        break
                     line = raw.decode(errors="replace")
                     out.write(line)
                     out.flush()  # so the live tail can read a run while it goes
@@ -139,17 +160,57 @@ class ClaudeHarness:
                         session_id = event["session_id"]
                     if event.get("type") == "result":
                         result = event
+                    taken.read(event)
             await proc.wait()
-            stderr = (await stderr_task).decode(errors="replace")
+            try:  # what it started may hold stderr open: it's stopped once the run's over (stop_leftovers)
+                stderr = (await asyncio.wait_for(stderr_task, 10)).decode(errors="replace")
+            except TimeoutError:
+                stderr_task.cancel()
+                stderr = ""
         except asyncio.CancelledError:
             if proc.returncode is None:
-                proc.terminate()
-                try:
-                    await asyncio.wait_for(proc.wait(), 10)
-                except TimeoutError:
-                    proc.kill()
+                await _end(proc)
             raise
         return interpret(result, session_id, proc.returncode, stderr, verdict_expected=schema is None)
+
+
+async def _end(proc) -> None:
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), 10)
+    except TimeoutError:
+        proc.kill()
+
+
+@dataclass
+class Taken:
+    """A run's verdict once Claude Code has taken it (its StructuredOutput call answered without an
+    error), and its turns and tokens so far: enough to stand in for the `result` event when golem
+    ends a run that went on after its verdict."""
+
+    verdict: dict | None = None
+    calls: dict[str, dict] = field(default_factory=dict)  # verdicts sent, not yet answered: by call id
+    usage: dict[str, dict] = field(default_factory=dict)  # each model turn's usage: by message id
+
+    def read(self, event: dict) -> None:
+        message = event.get("message") or {}
+        content = message.get("content")
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        if event.get("type") == "assistant" and not event.get("parent_tool_use_id"):
+            if message.get("id") and isinstance(message.get("usage"), dict):
+                self.usage[message["id"]] = message["usage"]
+            for b in blocks:
+                if b.get("type") == "tool_use" and b.get("name") == VERDICT_TOOL and isinstance(b.get("input"), dict):
+                    self.calls[str(b.get("id"))] = b["input"]
+        elif event.get("type") == "user":
+            for b in blocks:
+                if b.get("type") == "tool_result" and str(b.get("tool_use_id")) in self.calls and not b.get("is_error"):
+                    self.verdict = self.calls.pop(str(b.get("tool_use_id")))
+
+    def result(self, session_id: str | None) -> dict:
+        totals = {k: sum(int(u.get(k) or 0) for u in self.usage.values()) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")}
+        return {"type": "result", "subtype": "success", "is_error": False, "session_id": session_id, "num_turns": len(self.usage),
+                "total_cost_usd": None, "usage": totals, "structured_output": self.verdict}  # fmt: skip
 
 
 def stop_leftovers(group: int, tmp: str) -> None:

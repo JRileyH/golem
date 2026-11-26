@@ -632,6 +632,47 @@ def test_what_a_run_leaves_running_is_stopped_when_it_ends(tmp_path):
     raise AssertionError("the process the run left behind is still running")
 
 
+GOES_ON_AFTER_ITS_VERDICT = """#!{python}
+import json, sys, time
+sys.stdin.read()
+def say(event):
+    print(json.dumps(event), flush=True)
+say({{"type": "system", "subtype": "init", "session_id": "sess-2"}})
+say({{"type": "assistant", "message": {{"id": "m1", "usage": {{"input_tokens": 5, "cache_read_input_tokens": 95, "output_tokens": 3}},
+     "content": [{{"type": "tool_use", "id": "v1", "name": "StructuredOutput", "input": {{"verdict": "blocked", "message": "first"}}}}]}}}})
+say({{"type": "user", "message": {{"content": [{{"type": "tool_result", "tool_use_id": "v1", "is_error": True, "content": "bad"}}]}}}})
+say({{"type": "assistant", "message": {{"id": "m2", "usage": {{"input_tokens": 1, "output_tokens": 4}},
+     "content": [{{"type": "tool_use", "id": "v2", "name": "StructuredOutput", "input": {{"verdict": "done", "message": "built it"}}}}]}}}})
+say({{"type": "user", "message": {{"content": [{{"type": "tool_result", "tool_use_id": "v2", "content": "Structured output provided successfully"}}]}}}})
+time.sleep(300)  # a watch it started, still pending: Claude Code waits on it before its result
+"""
+
+
+def test_a_run_that_goes_on_after_its_verdict_is_ended(tmp_path):
+    binary = tmp_path / "claude"
+    binary.write_text(GOES_ON_AFTER_ITS_VERDICT.format(python=sys.executable))
+    binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    started = time.monotonic()
+    r = asyncio.run(
+        ClaudeHarness(str(binary), grace=0.3).run(
+            cwd=tmp_path, prompt="build it", model="haiku", max_turns=5, log_path=tmp_path / "log.jsonl.gz", env={"PATH": os.environ["PATH"]}
+        )
+    )
+    assert time.monotonic() - started < 15
+    assert (r.outcome, r.verdict, r.session_id) == ("verdict", {"verdict": "done", "message": "built it"}, "sess-2")  # the one it took
+    assert r.usage == {"num_turns": 2, "cost_usd": None, "input_tokens": 101, "output_tokens": 7}  # no cost: Claude Code never said
+
+
+def test_workers_get_no_monitor(tmp_path):
+    binary = tmp_path / "claude"
+    binary.write_text(FAKE_CLAUDE.format(python=sys.executable))
+    binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    r = asyncio.run(
+        ClaudeHarness(str(binary)).run(cwd=tmp_path, prompt="x", model="haiku", max_turns=5, log_path=tmp_path / "log.jsonl.gz", env={})
+    )
+    assert "--disallowedTools Monitor" in r.verdict["message"]  # its watches keep a headless run alive after its verdict
+
+
 # --- deployer client ----------------------------------------------------------
 
 

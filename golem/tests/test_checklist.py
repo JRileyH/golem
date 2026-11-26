@@ -190,6 +190,7 @@ def test_built_both_ways_each_runs_in_a_vacuum_as_on_a_fresh_golem(golem):
         config = golem.settings.job_claude(usual.id)
         assert spec.env["CLAUDE_CONFIG_DIR"] == str(config) and config.is_dir()  # a Claude Code of its own, as freshly installed
         assert spec.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
+        assert spec.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1" and spec.env["BASH_DEFAULT_TIMEOUT_MS"] == "300000"
         assert golem.settings.lessons().read_text() == "- golem's lesson from before\n"  # golem's own, untouched
         golem.store.update_job(usual.id, state="done")
         await golem.scheduler.tidy()

@@ -1601,6 +1601,12 @@ class Scheduler:
             # What a worker knows is its repo and golem's lessons (lessons_path): Claude Code's own
             # memory, shared by every job on a repo and kept where golem can't see it, stays off.
             CLAUDE_CODE_DISABLE_AUTO_MEMORY="1",
+            # Nothing in the background: a command it moved there (Claude Code does, past its
+            # timeout) had the worker polling it, and kept the run going after its verdict. A long
+            # command (a whole test suite) gets five minutes to finish instead, ten if it asks.
+            CLAUDE_CODE_DISABLE_BACKGROUND_TASKS="1",
+            BASH_DEFAULT_TIMEOUT_MS="300000",
+            BASH_MAX_TIMEOUT_MS="600000",
         )
         if project.vacuum:  # a Claude Code of the job's own, as freshly installed: it signs in with the token in the environment
             config = self.settings.job_claude(job.id)
