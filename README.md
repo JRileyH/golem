@@ -116,10 +116,11 @@ phone.
   history). Each job's page says what it cost (usage at API prices, tokens,
   how long its agents ran, cost by model, fixes, and a checklist's items):
   open the two in two tabs. For a model to compare them, `just compare <slug>
-  cl-<slug>` (any two projects will do) writes one CSV to `var/compare/`: a row
-  per project, job and step, with everything golem has on each (cost, tokens
-  cached and not, tool calls and errors, a checklist's items and checks, the
-  size of each checkout), and `columns.txt` saying what each column means.
+  cl-<slug>` (any two projects will do) writes one CSV to `compare/` in the
+  checkout: a row per project, job and step, with everything golem has on each
+  (cost, tokens cached and not, tool calls and errors, a checklist's items and
+  checks, the size of each checkout), and `columns.txt` saying what each
+  column means.
   Golem records no judgement of quality; you look at the sites.
 - **Settings,** per project, on its Settings tab:
   - **Default mode:** what its requests run in unless they pick another: the

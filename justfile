@@ -57,17 +57,17 @@ hello-local:
     docker build -q -t "ghcr.io/$GITHUB_ORG/hello:$sha" examples/hello >/dev/null
     just deploy hello "$sha"
 
-# Two projects side by side in one CSV for a model to compare (an idea built both ways: slug cl-slug), in var/compare/
+# Two projects side by side in one CSV for a model to compare (an idea built both ways: slug cl-slug), in compare/
 compare a b:
     #!/usr/bin/env bash
     set -euo pipefail
-    mkdir -p var/compare
-    out="var/compare/{{a}}-vs-{{b}}.csv"
+    mkdir -p compare
+    out="compare/{{a}}-vs-{{b}}.csv"
     trap 'rm -f "$out.part"' EXIT
     docker compose run --rm --no-deps -T golem python -m golem.compare "{{a}}" "{{b}}" > "$out.part"
     mv "$out.part" "$out"
-    docker compose run --rm --no-deps -T golem python -m golem.compare --columns > var/compare/columns.txt
-    echo "Wrote $out, and var/compare/columns.txt saying what each column means: give the model both."
+    docker compose run --rm --no-deps -T golem python -m golem.compare --columns > compare/columns.txt
+    echo "Wrote $out, and compare/columns.txt saying what each column means: give the model both."
 
 # Delete every project and start from zero (says what will go, asks first)
 nuke:

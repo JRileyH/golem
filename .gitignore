@@ -16,3 +16,6 @@ __pycache__/
 
 # runtime data from local mode
 /var/
+
+# comparison CSVs (just compare)
+/compare/

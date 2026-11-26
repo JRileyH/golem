@@ -3,7 +3,7 @@
     python -m golem.compare A B [-o FILE]   the CSV
     python -m golem.compare --columns       what each column means, a line each
 
-`just compare A B` runs both on the server and writes them to var/compare/. Built both ways
+`just compare A B` runs both on the server and writes them to compare/. Built both ways
 (checklist.py), an idea is two projects, `<slug>` and `cl-<slug>`, but any two will do.
 
 There's a row per project, per job and per step (`level`), in that order for A, then for B. A
