@@ -21,8 +21,9 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import brand, options, plan, progress, pwa, stages
+from . import brand, glance, options, plan, progress, pwa, stages
 from .control import SKIPPED
+from .glance import Glance, merged
 from .insights import Eta, Report, Tally, estimate
 from .live import Line, view
 from .store import ACTIVE, EFFORTS, LOOKS, MODELS, OPEN, Job, Project, Step
@@ -74,6 +75,7 @@ class LaneData:
     etas: dict[int, Eta] = field(default_factory=dict)  # by step position
     tallies: dict[int, Tally] = field(default_factory=dict)  # each agent step's runs, by step id
     known: dict[str, float] = field(default_factory=dict)  # seconds each kind of step usually takes
+    glances: dict[int, Glance] = field(default_factory=dict)  # each agent step's runs at a glance, by step id (glance.py)
 
 
 @dataclass
@@ -412,6 +414,8 @@ def sheet(d: SheetData, signed_in: bool, now: datetime) -> str:
         body += f"<p class=summary>{escape(s.summary)}</p>"
     if s.error:
         body += f"<p class=muted>Last try: {escape(_short(s.error, 400))}</p>"
+    if s.kind == "agent":  # its runs at a glance: where the time went, what it's on, what went wrong
+        body += glance_html(lane.glances.get(s.id), signed_in)
     body += _links(s.links)
     made, shown = options.shown(lane.steps, s)
     if shown:
@@ -622,19 +626,25 @@ def route_list(lane: LaneData, chips: list, signed_in: bool, now: datetime) -> s
         said = next((s.summary for s in reversed(ran) if s.summary), "")
         if c.state == "failed" and ran and ran[-1].error:
             said = ran[-1].error.strip().splitlines()[0]
+        items = any(s.item for s in c.steps)  # a checklist: a row an item, not a chip a step
         inner = ""
-        if c.container:
+        if items:
+            inner = checklist_rows(lane, c.steps, signed_in, now)
+            said = ""  # its rows say it
+        elif c.container:
             inner = "<span class=chips>" + "".join(
                 f"<a class='chip {s.state}' href='{escape(step_href(job, s))}' data-sheet>{ICONS.get(s.state, '')} {escape(plan.label(s))}</a>"
                 for s in c.steps
             ) + "</span>"
+        elif agent := next((s for s in reversed(ran) if s.kind == "agent"), None):
+            inner = glance_html(lane.glances.get(agent.id), signed_in)
         button = ""
         if signed_in and (s := next((s for s in c.steps if s.position in lane.skippable), None)):
             button = skip_button(job, s, back=back)
         elif signed_in and (s := next((s for s in c.steps if s.position in lane.restorable), None)):
             button = action_form("restore", "Undo skip", job=job.id, step=s.id, position=s.position, back=back)
         optional = "<span class=opt>optional</span>" if not c.container and c.steps[0].optional and c.state == "todo" else ""
-        links = "".join(_links(s.links) for s in ran if s.state in ("done", "failed"))
+        links = "" if items else "".join(_links(s.links) for s in ran if s.state in ("done", "failed"))  # an item's are on its row
         rows.append(
             f"<li class='rl {c.state}{' box' if c.container else ''}'><div class=what>"
             f"<a href='{escape(step_href(job, c.last))}' data-sheet><i aria-hidden=true>{ROUTE_MARKS.get(c.state, '')}</i><b>{escape(c.label)}</b>{again}</a>"
@@ -643,6 +653,75 @@ def route_list(lane: LaneData, chips: list, signed_in: bool, now: datetime) -> s
             + inner + links + "</li>"
         )
     return f"<ol class=route-list>{''.join(rows)}</ol>" if rows else ""
+
+
+def checklist_rows(lane: LaneData, steps: list[Step], signed_in: bool, now: datetime) -> str:
+    """A checklist's items (checklist.py), a row each: its place and title, how it went (its
+    build and check, and any tries after), and for the one under way where its time is going and
+    what it's on. A finished item says more only if something went wrong (glance.py)."""
+    job = lane.job
+    groups: dict[tuple, list[Step]] = {}
+    for s in steps:
+        groups.setdefault((s.item.get("plan"), s.item.get("n")), []).append(s)
+    rows = []
+    for group in groups.values():
+        item = group[-1].item
+        builds = [s for s in group if s.kind == "agent"]
+        built = [s for s in builds if s.id and s.state != "pending"]
+        checked = [s for s in group if s.kind == "check" and s.state in ("done", "failed")]
+        live = next((s for s in group if s.state in ("running", "waiting")), None)
+        tries = max((int(s.item.get("try") or 1) for s in built), default=1)
+        if live:
+            state = "now"
+        elif checked and checked[-1].state == "done":
+            state = "done"
+        elif checked and not any(s.state == "pending" for s in group):
+            state = "failed"
+        else:
+            state = "next" if built else "todo"
+        took = sum(_took(lane, s) for s in group if s.id and s.state in ("done", "failed"))
+        meta = {
+            "done": " · ".join(([span(timedelta(seconds=took))] if took >= 1 else []) + ([f"{tries} tries"] if tries > 1 else [])),
+            "failed": f"gave up after {tries} tries",
+            "next": f"try {tries + 1} next" if checked and checked[-1].state == "failed" else "checking next",
+        }.get(state, "")
+        if live:
+            if live.kind == "check":
+                meta = "checking"
+            else:
+                usual = estimate(lane.known, live)
+                about = f", usually {span(timedelta(seconds=usual))}" if plan.label(live) in lane.known else ""
+                meta = (f"try {tries} · " if tries > 1 else "") + (f"{span(now - _dt(live.started_at))} in{about}" if live.started_at else "starting")
+        g = merged([lane.glances[s.id] for s in builds if s.id in lane.glances])
+        detail = glance_html(g, signed_in) if live else glance_html(g, signed_in, times=False)
+        failed_check = checked[-1] if checked and checked[-1].state == "failed" and state != "now" else None
+        target = (built or builds or group)[-1]
+        rows.append(
+            f"<li class='it {state}'><div class=row><i aria-hidden=true>{ROUTE_MARKS.get(state, '')}</i>"
+            f"<a href='{escape(step_href(job, target))}' data-sheet><b>{escape(str(item.get('n')))}</b> {escape(str(item.get('title', '')))}</a>"
+            f"<span class=meta>{escape(meta)}</span>"
+            + (f"<a class=log href='{escape(step_href(job, failed_check))}' data-sheet>why ↗</a>" if failed_check else "")
+            + f"</div>{detail}</li>"
+        )
+    return f"<ol class=items>{''.join(rows)}</ol>"
+
+
+def glance_html(g: Glance | None, signed_in: bool, times: bool = True) -> str:
+    """An agent step's runs at a glance (glance.py): where its time went, what it's on while it
+    runs, its slowest call, and what went wrong. `times`: the time and slowest lines too, else
+    only what went wrong."""
+    if g is None:
+        return ""
+    out = ""
+    if times and (line := glance.times(g)):
+        out += f"<p class=glance>{escape(line)}</p>"
+    if doing := glance.doing(g, signed_in):
+        out += f"<p class=glance>{escape(doing)}</p>"
+    elif times and (slow := glance.slowest(g, signed_in)):
+        out += f"<p class=glance>{escape(slow)}</p>"
+    if found := glance.warnings(g):
+        out += f"<p class=warn>⚠ {escape(' · '.join(found))}</p>"
+    return out
 
 
 def _chip_meta(lane: LaneData, c, now: datetime) -> str:
@@ -660,6 +739,9 @@ def _chip_meta(lane: LaneData, c, now: datetime) -> str:
             return "your turn"
         case "now":
             live = next((s for s in ran if s.state == "running"), c.last)
+            if c.container and any(s.item for s in c.steps):  # a checklist: how far through, its rows say the rest
+                passed = sum(1 for s in c.steps if s.kind == "check" and s.state == "done")
+                return f"{passed} of {max(int(s.item.get('of') or 0) for s in c.steps)} done"
             if c.container or live.kind != "agent":
                 return escape(_doing(lane, live, now))
             if not live.started_at:
@@ -1251,6 +1333,17 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .rl .what form { margin-left:auto; } .rl button { min-height:30px; padding:.1rem .7rem .25rem; font-size:.8rem; }
 .rl > p { margin:.2rem 0 0 1.55rem; color:var(--muted); font-size:.88rem; }
 .rl > .chips, .rl > .links { margin:.3rem 0 0 1.55rem; }
+.rl > .glance, .rl > .warn { margin:.15rem 0 0 1.55rem; font-size:.82rem; }
+.glance { color:var(--muted); } .warn { color:var(--bad-fg); }
+.items { list-style:none; padding:0; margin:.35rem 0 0 1.55rem; }
+.it { padding:.12rem 0; font-size:.88rem; }
+.it .row { display:flex; gap:.4rem; align-items:baseline; flex-wrap:wrap; }
+.it .row i { font-style:normal; font-weight:700; width:1rem; text-align:center; font-size:.78rem; flex:none; }
+.it .row a { color:var(--ink); text-decoration:none; } .it .row b { font-weight:600; }
+.it .meta { color:var(--muted); font-size:.8rem; } .it .log { font-size:.8rem; color:var(--muted); }
+.it .glance, .it .warn { margin:.1rem 0 0 1.4rem; font-size:.8rem; }
+.it.done i { color:var(--fin-fg); } .it.failed i { color:var(--bad-fg); }
+.it.now .row a, .it.now i { color:var(--accent); } .it.todo .row a { color:var(--muted); }
 .rl.done .what > a i { color:var(--fin-fg); } .rl.failed .what > a i { color:var(--bad-fg); }
 .rl.now .what > a b, .rl.waiting .what > a b { color:var(--accent); }
 .rl.todo .what > a b { font-weight:500; color:var(--muted); } .rl.skipped .what > a b { text-decoration:line-through; color:var(--muted); }

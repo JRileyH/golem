@@ -43,6 +43,7 @@ from . import about, jobhistory, newproject, projectpage, reports, reportspage, 
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
+from .glance import Glance, merged
 from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
@@ -131,10 +132,11 @@ def create_app(
         steps = plan.planned(settings, store, job) if job else []
         current = plan.current(steps)
         lines, notes = [], []
+        runs = store.runs(job.id) if job else []
+        going = runs[-1] if runs and runs[-1]["outcome"] is None and job.state == "running" else None
         if job and current and current.kind == "agent" and job.state == "running":
-            runs = store.runs(job.id)
-            if runs and runs[-1]["outcome"] is None:
-                lines = live.lines(runs[-1])
+            if going:
+                lines = live.lines(going)
             notes = pages.read_notes(scheduler.progress_path(job))
         active = job is not None and job.state in ACTIVE
         return LaneData(
@@ -153,7 +155,17 @@ def create_app(
             etas=ctx["etas"].get(job.id, {}) if job else {},
             tallies=insights.per_step(store, job.id) if job else {},
             known=ctx["known"],
+            glances=glances(runs, going),
         )
+
+    def glances(runs: list[dict], going: dict | None) -> dict[int, Glance]:
+        """Each step's runs at a glance (glance.py): kept once a run ended, read as it goes while it runs."""
+        found: dict[int, list[Glance]] = {}
+        for r in runs:
+            g = live.glance(r, datetime.now(UTC)) if r is going else Glance.from_json(r.get("glance"))
+            if r["step_id"] and g is not None:
+                found.setdefault(r["step_id"], []).append(g)
+        return {step_id: merged(gs) for step_id, gs in found.items()}
 
     def queue_order() -> list[Job]:
         """Unfinished jobs in the order the workers will take them, the running ones first."""

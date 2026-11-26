@@ -9,7 +9,9 @@ import os
 from test_flow import by_label, idle_project, verdict
 from test_web import app, new, sign_in  # noqa: F401  (app: the web app fixture)
 
-from golem import checklist, plan, route
+from golem import checklist, plan, progress, route
+from golem.glance import Glance
+from golem.store import Step
 
 
 def run(coro):
@@ -126,6 +128,19 @@ def test_an_item_asks_nobody_its_check_decides_and_its_next_try_hears_what_it_sa
         assert not any("Question:" in t for t in golem.chat.texts("tree-cards"))
 
     run(go())
+
+
+def test_the_headline_is_on_the_item_under_way_not_a_check_that_failed_before():
+    def item(n: int, kind: str, state: str, pos: int) -> Step:
+        return Step(pos, 1, pos, kind, kind, state=state, item={"plan": 9, "n": n, "of": 4, "title": f"Item {n}"})
+
+    steps = [item(2, "agent", "done", 1), item(2, "check", "failed", 2), item(2, "agent", "done", 3), item(2, "check", "done", 4),
+             item(3, "agent", "running", 5), item(3, "check", "pending", 6)]  # fmt: skip
+    now = progress.current(progress.pieces(steps))
+    assert now.step.id == 5 and now.name == "Item 3 (item 3 of 4)"
+    steps[4] = item(3, "agent", "pending", 5)  # between items: the next, not the old failure
+    assert progress.current(progress.pieces(steps)).step.id == 5
+    assert progress.current(progress.pieces(steps[:2] + [item(2, "agent", "pending", 3)])).name == "Check Item 2 (item 2 of 4)"  # just failed
 
 
 def test_a_plan_with_no_usable_items_is_tried_again(golem):
@@ -271,3 +286,23 @@ def test_the_ledger_says_what_a_checklist_job_cost_and_how_its_items_went(golem,
     assert "<p class=costs><b>Cost:</b> $1.95 at API prices · 7k in / 700 out · agents" in html
     assert "2 items: 1 first time, 1 again (1 on its Build&#x27;s model) · planning $1.00, items $0.40" in html
     assert app.get("/insights/jobs").status_code == 404  # no page comparing them: two tabs do
+
+
+def test_a_checklist_shows_a_row_an_item_and_what_went_wrong_in_its_runs(golem, app):
+    async def go():
+        job = await checklist_job(golem)
+        golem.harness.script = by_label({"change": [planner(ITEMS, ["tests/items.txt"])], "item": [builds("a.txt"), builds(), builds("b.txt")]})
+        await golem.finish()
+        return job
+
+    job = run(go())
+    second = [r for r in golem.store.runs(job.id) if r["phase"] == "item"][1]  # item 2's first try
+    golem.store.db.execute("UPDATE runs SET glance = ? WHERE id = ?", (Glance(work=120, after=292, missing=["pkill", "ps"]).to_json(), second["id"]))
+    sign_in(app)
+    html = app.get(f"/p/tree-cards/jobs/{job.id}").text
+    rows = html[html.index("<ol class=items>") : html.index("</ol>", html.index("<ol class=items>"))]
+    assert rows.count("<li class='it done'>") == 2 and "> item<" not in rows  # named, not "item" and "check"
+    assert "<b>1</b> File A</a><span class=meta>" in rows and "<b>2</b> File B</a><span class=meta>" in rows
+    assert "2 tries</span>" in rows.split("<b>2</b>")[1] and "tries" not in rows.split("<b>2</b>")[0]
+    assert "⚠ went on 4m after its verdict · not installed: pkill, ps" in rows  # a finished item says only what went wrong
+    assert "work 2m" not in rows

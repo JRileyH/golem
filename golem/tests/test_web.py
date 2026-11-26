@@ -102,6 +102,8 @@ def test_the_running_step_shows_its_live_tail_without_secrets(golem, page):
         {"type": "assistant", "timestamp": "2026-10-23T10:02:00Z", "message": {"content": [
             {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": f"curl -H 'token {SECRET}' x", "description": "Check the API"}}]}},
         {"type": "user", "timestamp": "2026-10-23T10:03:00Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": f"echo {SECRET}"}]}},
+        {"type": "assistant", "timestamp": "2026-10-23T10:04:00Z", "message": {"content": [
+            {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "npx playwright test", "description": "Run the e2e tests"}}]}},
     ]  # fmt: skip
     with gzip.open(log, "wt") as f:
         f.writelines(json.dumps(e) + "\n" for e in events)
@@ -116,11 +118,15 @@ def test_the_running_step_shows_its_live_tail_without_secrets(golem, page):
     assert "1:00</time><span>💬 Reading the brief." in html
     assert "→ Bash Check the API" in html  # what it's doing, but not the command or its output
     assert "curl" not in html and SECRET not in html and "echo" not in html
+    assert "<p class=glance>now: Bash Run the e2e tests for " in html and "npx" not in html  # at a glance, on its row (glance.py)
+    assert "<p class=glance>tests " in html
 
     sign_in(page)
     html = page.get("/p/trees").text
     assert "→ Bash curl -H &#x27;token •••&#x27; x" in html and "← echo •••" in html  # in full, secrets masked
     assert SECRET not in html
+    assert "<p class=glance>now: npx playwright test for " in html
+    assert "<p class=glance>now: npx playwright test for " in page.get(sheet_of(job, spec)).text  # and on its sheet
 
 
 def test_a_job_goes_by_its_title_and_its_page_keeps_the_request(golem, page):
