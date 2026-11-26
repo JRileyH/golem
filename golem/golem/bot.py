@@ -20,7 +20,7 @@ import asyncio
 import logging
 import os
 
-from . import adopt, intake, options, plan, teardown
+from . import adopt, checklist, intake, options, plan, teardown
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
@@ -82,6 +82,21 @@ class Bot:
             job = self.start_job(project, wf, plan.mode_for(project, mode or ""), idea.strip(), title, kind="new")
             await self.chat.heard(slug, idea.strip(), job=job.id)
             return job
+
+    async def new_twins(self, name: str, idea: str, *, slug: str, workflow: str = "", tag: str = "", model: str = "",
+                        effort: str = "") -> tuple[Job, Job]:  # fmt: skip
+        """The same idea built both ways, to compare them (checklist.py): a project the usual way at
+        `slug`, and its twin in checklist mode at `<slug>-list`, each knowing the other. Raises
+        ValueError if either address can't be had."""
+        twin = checklist.twin_slug(slug)
+        if not intake.valid_slug(twin) or await self.slug_taken(twin):
+            raise ValueError(f"{twin} can't be had.")
+        usual = await self.new_project(name, idea, slug=slug, workflow=workflow, mode="", tag=tag, model=model, effort=effort)
+        listed = await self.new_project(f"{name} (checklist)"[:60], idea, slug=twin, workflow=workflow, mode=checklist.MODE, tag=tag,
+                                        model=model, effort=effort)  # fmt: skip
+        self.store.update_project(slug, twin=twin)
+        self.store.update_project(twin, twin=slug)
+        return usual, listed
 
     async def summarize(self, name: str, idea: str) -> intake.Summary:
         if self.settings.harness == "fake":

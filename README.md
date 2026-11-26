@@ -108,7 +108,9 @@ phone.
   check whose tests it writes); golem builds each item on the `item` default
   (haiku at medium effort) and runs its check, trying a failed item again (its
   last try on the Build's model) before carrying on without it. Pick it for a
-  new project, a request, or a project's default.
+  new project, a request, or a project's default. **Build it both ways** on the
+  New project form makes two projects from one idea, the usual way and its
+  checklist twin at the address with `-list`, linked on their pages, to compare.
 - **Settings,** per project, on its Settings tab:
   - **Default mode:** what its requests run in unless they pick another: the
     usual way, or checklist. Only you set it.

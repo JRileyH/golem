@@ -56,6 +56,8 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
     """The page around its parts. `focus`: which side a phone shows, "list" or "job"; `links`:
     where it's live and its repo, by name."""
     out = "".join(f"<a href='{escape(url)}' target=_blank rel=noopener>{escape(name)} ↗</a>" for name, url in links.items())
+    if project.twin:  # the same idea, built the other way (checklist.py)
+        out += f"<a href='/p/{escape(project.twin)}' class=twin>Built both ways: its twin ›</a>"
     left = (
         "<section class=jobs-pane aria-label=Jobs>"
         f"<header class=project-head><p>{escape(project.summary)}</p><p class=out>{out}</p></header>"

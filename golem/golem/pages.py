@@ -1261,6 +1261,7 @@ main:has(> .panes) { max-width:min(100%, 96rem); }
 .slug-row { display:flex; flex-wrap:wrap; align-items:center; gap:.3rem .6rem; } .slug-row input { max-width:18rem; } .slug-row .muted { font-size:.82rem; }
 .new-row { display:flex; flex-wrap:wrap; gap:.75rem; } .new-row .field { flex:1 1 10rem; } .new-row select { max-width:none; width:100%; }
 .new-more > summary { cursor:pointer; color:var(--muted); font-size:.9rem; } .new-more .new-row { margin-top:.6rem; }
+.check-row { display:flex; align-items:baseline; gap:.45rem; margin:.7rem 0; font-weight:600; } .check-row .muted { font-weight:400; font-size:.88rem; }
 .new-form .error { color:var(--critical); font-weight:600; margin:0; font-size:.85rem; }
 .card.adopt > summary { cursor:pointer; font-weight:700; } .card.adopt .new-form { margin-top:.75rem; }
 /* Stage blocks (stages.py): what one is told, and Settings → Blocks */

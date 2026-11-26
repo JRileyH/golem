@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS projects (
     proposals TEXT NOT NULL DEFAULT 'off',  -- how often golem looks for improvements to propose (EVERY)
     proposals_max INTEGER NOT NULL DEFAULT 5,  -- proposals awaiting Riggy before golem stops making more
     proposals_off TEXT NOT NULL DEFAULT '',  -- kinds of proposal (proposals.LENSES) he turned off, comma-separated
-    parallel_jobs INTEGER NOT NULL DEFAULT 1  -- changes that may be under way at once, taking turns (turns.py)
+    parallel_jobs INTEGER NOT NULL DEFAULT 1, -- changes that may be under way at once, taking turns (turns.py)
+    twin TEXT NOT NULL DEFAULT ''    -- the project built from the same idea the other way, to compare (checklist.py); '' for none
 );
 -- The few big-picture sorts of project ("Game"), shown on the projects page in their color.
 CREATE TABLE IF NOT EXISTS tags (
@@ -229,6 +230,7 @@ MIGRATIONS = {
         "proposals_max": "INTEGER NOT NULL DEFAULT 5",
         "proposals_off": "TEXT NOT NULL DEFAULT ''",
         "parallel_jobs": "INTEGER NOT NULL DEFAULT 1",
+        "twin": "TEXT NOT NULL DEFAULT ''",
     },
     # Jobs from before trees have 0 and finish in the project's checkout, where their work is.
     "jobs": {
@@ -316,6 +318,7 @@ class Project:
     proposals_off: str = ""
     # Changes that may be under way at once; they take turns at building and ship together (turns.py, shipments.py).
     parallel_jobs: int = 1
+    twin: str = ""  # the project built from the same idea the other way, to compare (checklist.py); "" for none
 
 
 @dataclass
@@ -582,7 +585,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str | int) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs"}, fields
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs", "twin"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -592,11 +595,12 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs"
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, twin)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, twin"
                 " FROM projects WHERE slug = ?",
                 (new, old),
             )
+            self.db.execute("UPDATE projects SET twin = ? WHERE twin = ?", (new, old))
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE proposals SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE shipments SET slug = ? WHERE slug = ?", (new, old))
@@ -620,6 +624,7 @@ class Store:
             self.db.execute("DELETE FROM cards WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM messages WHERE channel = ?", (slug,))
             self.db.execute("DELETE FROM projects WHERE slug = ?", (slug,))
+            self.db.execute("UPDATE projects SET twin = '' WHERE twin = ?", (slug,))
         return ids
 
     def import_jobs(self, jobs: list[tuple[Job, list[Step]]]) -> list[int]:

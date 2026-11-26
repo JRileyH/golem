@@ -6,6 +6,7 @@ import asyncio
 import json
 
 from test_flow import by_label, idle_project, verdict
+from test_web import app, new, sign_in  # noqa: F401  (app: the web app fixture)
 
 from golem import checklist, plan, route
 
@@ -148,3 +149,25 @@ def test_riggy_picks_checklist_mode_for_a_request_or_a_new_project(golem):
         assert (await golem.ask("tree-cards", "why is it slow?", workflow="question", mode="")).mode == ""
 
     run(go())
+
+
+def test_an_idea_built_both_ways_is_two_projects_that_know_each_other(golem, app):
+    from test_flow import TREES
+
+    sign_in(app)
+    assert "name=both value=1" in app.get("/new").text
+    golem.harness.script = [TREES, TREES]
+    r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for trees", workflow="web_app", both="1", tag="")
+    usual, twin = golem.store.project("trees"), golem.store.project("trees-list")
+    assert (usual.twin, twin.twin, twin.name) == ("trees-list", "trees", "Tree Cards (checklist)")
+    jobs = {j.slug: j for j in golem.store.jobs()}
+    assert (jobs["trees"].mode, jobs["trees-list"].mode) == ("", "checklist") and jobs["trees"].request == jobs["trees-list"].request
+    assert "both%20ways" in r.headers["location"]
+    assert "href='/p/trees-list' class=twin>" in app.get("/p/trees").text
+    golem.workspace.repos.add("fish-list")
+    html = new(app, name="Fish", slug="fish", idea="fish", both="1").text
+    assert "its twin would be at fish-list, and that&#x27;s taken" in html and golem.store.project("fish") is None
+    golem.store.move_project("trees", "leaves")
+    assert golem.store.project("trees-list").twin == "leaves"
+    golem.store.delete_project("leaves")
+    assert golem.store.project("trees-list").twin == ""

@@ -60,6 +60,11 @@ SCHEMA = {
 }
 
 
+def twin_slug(slug: str) -> str:
+    """Where a project built both ways has its checklist twin."""
+    return f"{slug}-list"
+
+
 def planning(job_mode: str, block: dict, step: Step) -> bool:
     """Whether a step plans a checklist: a Build stage block's, in a job in checklist mode."""
     return job_mode == MODE and block.get("stage") == "build" and not step.item
