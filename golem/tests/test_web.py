@@ -521,7 +521,7 @@ def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
     assert "<summary>How it'd be built</summary><p>Cache it.<br>Test it.</p></details>" in html
     assert html.index("Offline &lt;mode&gt;") < html.index("Bigger cards")  # oldest first
     assert html.count("name=value value=accept") == 2 and "name=proposal value='1'" in html
-    assert html.count("name=value value=dismiss class='quiet dismiss'") == 2 and "Dismiss clears one away and tells golem nothing." in html
+    assert html.count("name=value value=dismiss class='quiet dismiss'") == 2 and "Dismiss takes one off your list and tells golem nothing." in html
 
     assert "Thumbs%20up%20or%20down" in act(page, action="proposal", proposal=offline.id, value="maybe")
     assert "golem%20takes%20that%20into%20account" in act(page, action="proposal", proposal=offline.id, value="reject", reason="always online")

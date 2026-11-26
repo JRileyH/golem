@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     title TEXT NOT NULL,
     body TEXT NOT NULL,              -- the whole of it as plain text: what, why, how big, how to build it
     card TEXT NOT NULL DEFAULT '{}', -- JSON: its fields for the card he decides from (proposals.collect); {} before cards
-    state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected | dismissed (cleared away, no verdict either way)
+    state TEXT NOT NULL DEFAULT 'open',  -- open | accepted | rejected | dismissed (off his list with no feedback: workers never see it)
     reason TEXT NOT NULL DEFAULT '', -- Riggy's why, if he gave one
     built_by INTEGER,                -- the change job an accepted one became, once it's queued
     created_at TEXT NOT NULL,
@@ -334,7 +334,7 @@ class Proposal:
     lens: str
     title: str
     body: str
-    state: str  # open | accepted | rejected | dismissed (cleared away, no verdict either way)
+    state: str  # open | accepted | rejected | dismissed (off his list with no feedback: workers never see it)
     reason: str
     built_by: int | None  # the change job building it, once accepted and queued
     created_at: str
@@ -1091,7 +1091,7 @@ class Store:
 
     def proposals(self, slug: str, states: tuple[str, ...] | None = None, limit: int = 200) -> list[Proposal]:
         """A project's proposals, newest first; only those in `states` if given."""
-        states = states or ("open", "accepted", "rejected", "dismissed")
+        states = states or ("open", "accepted", "rejected")  # not those he dismissed: as if never proposed
         marks = ", ".join("?" * len(states))
         rows = self.db.execute(
             f"SELECT * FROM proposals WHERE slug = ? AND state IN ({marks}) ORDER BY id DESC LIMIT ?", (slug, *states, limit)
@@ -1119,7 +1119,7 @@ class Store:
         return self.proposal(proposal_id)
 
     def dismiss_proposal(self, proposal_id: int) -> Proposal:
-        """Riggy cleared it away without a verdict: no reason, and nothing for golem to learn from."""
+        """Riggy cleared it away without a verdict. Kept as a record, but listed only when asked for by state."""
         self.db.execute("UPDATE proposals SET state = 'dismissed', reason = '', decided_at = ? WHERE id = ?", (now(), proposal_id))
         return self.proposal(proposal_id)
 

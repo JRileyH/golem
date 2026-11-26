@@ -380,8 +380,8 @@ class Control:
         return f"Accepted “{p.title}”: it's built once {project.name}'s current job is done."
 
     async def dismiss(self, proposal_id: int) -> str:
-        """Riggy clears a proposal away without a thumbs up or down: it stops waiting on him, and
-        golem keeps it only so as not to propose it again, as no verdict either way."""
+        """Riggy clears a proposal off his list without a thumbs up or down: it stops waiting on
+        him, and workers never see it, so it tells golem nothing and the idea is free to come back."""
         p = self.store.proposal(proposal_id)
         if p is None or p.state != "open":
             raise ControlError("That proposal has been decided already.")
@@ -389,7 +389,7 @@ class Control:
             raise ControlError("Take golem's fixes to itself or turn them down, saying why.")
         p = self.store.dismiss_proposal(p.id)
         await self.scheduler.record_decision(p)
-        return f"Dismissed “{p.title}”: no verdict either way, and golem won't propose it again."
+        return f"Dismissed “{p.title}”, with no feedback: golem may propose it again."
 
     def upgrade(self) -> str:
         message = self.scheduler.upgrades.request()

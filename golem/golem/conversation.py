@@ -39,12 +39,12 @@ def proposals_card(waiting: list[Proposal], back: str) -> str:
         f"<input name=reason placeholder='Why? (optional)' aria-label='Why, for {escape(p.title)}' maxlength=1000>"
         "<div class=row-form><button name=value value=accept class=primary>👍 Build it</button>"
         "<button name=value value=reject>👎 Not this</button>"
-        "<button name=value value=dismiss class='quiet dismiss' title='Clear it away with no verdict either way'>Dismiss</button></div></form></li>"
+        "<button name=value value=dismiss class='quiet dismiss' title='Off your list with no feedback: golem may suggest it again'>Dismiss</button></div></form></li>"
         for p in reversed(waiting)
     )
     return (
         "<section class='card proposals'><h2>golem proposes</h2><p class=sub>A thumbs up builds it. "
-        "Saying why, either way, steers what golem proposes next. Dismiss clears one away and tells golem nothing."
+        "Saying why, either way, steers what golem proposes next. Dismiss takes one off your list and tells golem nothing."
         f"</p><ol>{items}</ol></section>"
     )
 

@@ -982,12 +982,12 @@ def test_riggy_dismisses_a_proposal_with_no_verdict_either_way(golem):
         said = len(golem.store.messages(room))
 
         control = Control(golem.store, golem.scheduler)
-        assert await control.dismiss(offline.id) == "Dismissed “Offline mode”: no verdict either way, and golem won't propose it again."
+        assert await control.dismiss(offline.id) == "Dismissed “Offline mode”, with no feedback: golem may propose it again."
         p = golem.store.proposal(offline.id)
         assert (p.state, p.reason, p.built_by) == ("dismissed", "", None) and p.decided_at
         assert golem.store.active_job("tree-cards") is None  # nothing built
         assert len(golem.store.messages(room)) == said  # no 👎 in the conversation for workers to read
-        assert golem.workspace.comments[-1] == ("tree-cards", offline.issue, "Dismissed, with no verdict either way.", True)
+        assert golem.workspace.comments[-1] == ("tree-cards", offline.issue, "Dismissed, with no feedback: golem may propose it again.", True)
         with pytest.raises(ControlError, match="decided already"):
             await control.dismiss(offline.id)
         with pytest.raises(ControlError, match="decided already"):
@@ -997,8 +997,8 @@ def test_riggy_dismisses_a_proposal_with_no_verdict_either_way(golem):
         assert golem.scheduler.propose() is not None
         await golem.finish()
         call = [c for c in golem.harness.calls if c.label == "propose"][-1]
-        assert "- [features] Offline mode — dismissed, no verdict either way\n" in call.prompt  # not proposed again, not a no
-        assert "dismissed it or" in call.prompt and "don't read it as a no" in call.prompt
+        assert "Offline mode" not in call.prompt and "(none yet: these are the first)" in call.prompt  # as if never proposed: free to come back
+        assert [p.title for p in golem.store.proposals("tree-cards", ("dismissed",))] == ["Offline mode"]  # but kept, as a record
 
         golem.store.internal_project()  # golem's fixes to itself are taken or turned down, saying why
         triaged = golem.store.add_job(INTERNAL, "change", "Triage golem's reports up to #1", "triage")
