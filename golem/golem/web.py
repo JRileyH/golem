@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import blockspage, brand, checklist, config, conversation, gallery, home, insights, intake, options, pages, plan, pwa, turns
+from . import blockspage, brand, checklist, config, conversation, gallery, home, insights, intake, ledger, ledgerpage, options, pages, plan, pwa, turns
 from . import now as now_page
 from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
 from .cards import fallback
@@ -367,6 +367,23 @@ def create_app(
         report = insights.report(store, since)
         body = pages.insights(report, insights.findings(report), days)
         return respond(request, "Insights", body, signed, here="insights", up=("/settings", "Settings"))
+
+    def ledger_window(request: Request) -> tuple[int | None, str]:
+        raw = request.query_params.get("days", "30")
+        days = int(raw) if raw.isdigit() and 0 < int(raw) <= 3650 else None
+        return days, (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds") if days else ""
+
+    async def ledger_page(request: Request) -> Response:
+        """Insights → Each job's cost (ledger.py, ledgerpage.py): the usual way against checklist mode."""
+        days, since = ledger_window(request)
+        body = ledgerpage.page(ledger.rows(store, since), days)
+        return respond(request, "Each job's cost", body, signed_in(request), here="insights", up=("/insights", "Insights"))
+
+    async def ledger_csv(request: Request) -> Response:
+        days, since = ledger_window(request)
+        name = f"golem-jobs-{days or 'all'}d.csv" if days else "golem-jobs-all.csv"
+        return Response(ledger.to_csv(ledger.rows(store, since)), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename={name}", "Cache-Control": "no-store"})  # fmt: skip
 
     async def reports_page(request: Request) -> Response:
         """Reports about golem itself, from its workers and its own incidents (reportspage.py)."""
@@ -873,7 +890,7 @@ def create_app(
             Route("/jobs/{job_id:int}/planned/{position:int}", planned_page),
             Route("/jobs/{job_id:int}/options/{name}", option_image),
             Route("/steps/{step_id:int}", step_page),
-            Route("/insights", insights_page),
+            Route("/insights", insights_page), Route("/insights/jobs", ledger_page), Route("/insights/jobs.csv", ledger_csv),
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
             Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page),

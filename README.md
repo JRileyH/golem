@@ -112,7 +112,11 @@ phone.
   New project form makes two projects from one idea, the usual way and its
   checklist twin at the address with `-list`, linked on their pages, to compare.
   Neither learns from the other: each gets its own copy of golem's lessons file,
-  and Claude Code's own memory is off for every worker.
+  and Claude Code's own memory is off for every worker. **Insights → Each job's
+  cost** compares them: what finished jobs of each kind usually cost in each
+  mode, each pair built both ways side by side, and every job's cost, tokens,
+  agent time, cost by model, fixes and items, with a CSV of it all. It's costs
+  only: how good the work is, you judge on the sites.
 - **Settings,** per project, on its Settings tab:
   - **Default mode:** what its requests run in unless they pick another: the
     usual way, or checklist. Only you set it.

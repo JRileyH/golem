@@ -192,3 +192,65 @@ def test_twins_run_in_a_vacuum_each_with_lessons_of_its_own(golem):
         assert golem.settings.lessons().read_text() == "- golem's lesson from before\n"  # golem's own, untouched
 
     run(go())
+
+
+# --- the jobs' ledger (ledger.py) ---------------------------------------------------------------
+
+from golem import ledger  # noqa: E402
+from golem.harness import RunResult  # noqa: E402
+
+COSTS = {"change": 1.0, "item": 0.1, "review": 0.5}  # at API prices, by kind of run
+
+
+def costed(answers: dict[str, list]):
+    """by_label, with each run's usage: its cost by label, and some tokens."""
+    inner = by_label(answers)
+
+    def answer(call):
+        r = inner(call)
+        return RunResult(r.outcome, r.verdict, r.session_id, usage={"num_turns": 3, "cost_usd": COSTS.get(call.label, 0.05),
+                                                                    "input_tokens": 1000, "output_tokens": 100})  # fmt: skip
+
+    return answer
+
+
+def test_the_ledger_says_what_a_checklist_job_cost_and_how_its_items_went(golem, app):
+    async def go():
+        job = await checklist_job(golem)
+        golem.harness.script = costed({
+            "change": [planner(ITEMS, ["tests/items.txt"])],
+            "item": [builds("a.txt"), builds(), builds(), builds("b.txt")],
+        })  # fmt: skip
+        await golem.finish()
+        return job
+
+    job = run(go())
+    [r] = [r for r in ledger.rows(golem.store) if r.job.id == job.id]
+    assert (r.kind, r.mode, r.done) == ("change", "checklist", True)
+    assert (r.items, r.first_try, r.again, r.escalated, r.gave_up) == (2, 1, 1, 1, 0)
+    assert round(r.planning_cost, 2) == 1.0 and round(r.items_cost, 2) == 0.4 and r.runs == 7  # plan, 4 builds, review, docs
+    assert round(r.cost, 2) == 1.95 and r.tokens_in == 7000 and round(r.by_model["haiku"], 2) == 0.3
+    html = app.get("/insights/jobs?days=all").text
+    assert "The usual way against checklist mode" in html and f"#{job.id}</a>" in html and "2: 1 first time, 1 again (1 on its Build" in html
+    assert "/insights/jobs.csv?days=all" in html and "Each job's cost ›</a>" in app.get("/insights").text
+    csv = app.get("/insights/jobs.csv?days=all")
+    assert csv.headers["content-type"].startswith("text/csv") and "attachment" in csv.headers["content-disposition"]
+    header, *lines = csv.text.strip().splitlines()
+    assert header.startswith("job,project,twin,kind,workflow,mode") and any(line.startswith(f"{job.id},tree-cards,,change,change,checklist") for line in lines)
+
+
+def test_twins_are_compared_side_by_side_and_modes_by_their_usual_cost():
+    from golem.store import Job, Project
+
+    def a(slug, twin, mode, cost, start="new", state="done", n=1):
+        job = Job(n, slug, "new", "an idea", "", 0, state, 0, None, 0, None, None, "2026-11-25T10:00:00", "", start=start, mode=mode)
+        project = Project(slug, slug, "", "", "", "", False, "", twin=twin)
+        return ledger.row(job, project, [], [{"cost_usd": cost, "input_tokens": 1, "output_tokens": 1, "model": "opus/high",
+                                              "started_at": "2026-11-25T10:00:00", "ended_at": "2026-11-25T10:10:00", "step_id": None}])  # fmt: skip
+
+    usual, twin = a("trees", "trees-list", "", 4.0, n=1), a("trees-list", "trees", "checklist", 2.5, n=2)
+    other = a("birds", "", "", 6.0, n=3)
+    assert ledger.twins([usual, twin, other]) == [(usual, twin)]
+    [u, c] = ledger.groups([usual, twin, other])
+    assert (u.kind, u.mode, len(u.rows), u.cost) == ("new project", "usual", 2, 5.0) and (c.mode, c.cost) == ("checklist", 2.5)
+    assert ledger.saved(4.0, 2.5) == "38% less" and ledger.saved(2.0, 2.5) == "25% more" and ledger.saved(2.0, 2.0) == "the same"

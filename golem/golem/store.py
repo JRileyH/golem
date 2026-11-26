@@ -826,6 +826,12 @@ class Store:
             rows = self.db.execute("SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT ?", (limit,))
         return [Job(**r) for r in rows]
 
+    def jobs_begun(self, since: str = "") -> list[Job]:
+        """Every job begun at or after `since` (an ISO time), the latest first, without its graph
+        and vars (LISTED): for the jobs' ledger (ledger.py)."""
+        rows = self.db.execute(f"SELECT {LISTED} FROM jobs WHERE created_at >= ? ORDER BY created_at DESC, id DESC", (since,))
+        return [Job(**r) for r in rows]
+
     def project_jobs(self, slug: str, limit: int = 1000) -> list[Job]:
         """A project's jobs, the latest first (by when they began, as `jobs`)."""
         rows = self.db.execute("SELECT * FROM jobs WHERE slug = ? ORDER BY created_at DESC, id DESC LIMIT ?", (slug, limit))

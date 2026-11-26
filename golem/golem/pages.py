@@ -484,6 +484,7 @@ def insights(r: Report, found: list[str], days: int | None) -> str:
         f"<div class=tile><span>Tokens</span><b>{_count(t.tokens)}</b></div>"
         f"<div class=tile><span>Agent runs</span><b>{t.runs}</b></div></div>"
     )
+    windows += "<a href=/insights/jobs class=more>Each job's cost ›</a>"
     if not t.seconds and not t.runs:
         return f"<section class=insights><nav class=windows>{windows}</nav><p class=empty>Nothing has run in this window yet.</p></section>"
     found_html = "<ul class=findings>" + "".join(f"<li>{escape(f)}</li>" for f in found) + "</ul>" if found else ""
@@ -1398,7 +1399,7 @@ dialog#sheet .close { position:sticky; float:right; top:.4rem; right:.4rem; z-in
 .windows { display:flex; gap:.3rem; margin-bottom:.75rem; }
 .windows a { padding:.3rem .75rem .45rem; border-radius:var(--radius); background:var(--stone); color:var(--ink); font-size:.88rem; font-weight:600;
   box-shadow:inset 0 -3px 0 var(--lip); }
-.windows a.on { background:var(--ink); color:var(--card); }
+.windows a.on { background:var(--ink); color:var(--card); } .windows a.more { margin-left:auto; background:none; color:var(--accent); }
 .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(8rem, 1fr)); gap:.6rem; margin-bottom:.75rem; }
 .tile { background:var(--card); border-radius:var(--radius); padding:.7rem .85rem; box-shadow:0 2px 0 var(--edge); }
 .tile span { display:block; color:var(--muted); font-size:.8rem; } .tile b { font:700 1.5rem/1.2 var(--display); }
