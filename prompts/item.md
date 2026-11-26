@@ -10,9 +10,12 @@ $do
    is built, run and tested.
 2. Build this item, and only this one: the items after it are other workers'
    (the whole list is below, so you can see where yours fits).
-3. Run its check yourself until it passes, and keep the project's other tests
-   passing (`bin/test`). Don't change the check's files ($checks): golem puts
-   them back as they were before it checks.
+3. Run its check yourself until it passes, and the tests of anything you
+   changed that earlier items built. Don't run the whole suite (`bin/test`): the
+   checks of the items after yours are in the repo already and fail until
+   they're built, and the whole suite runs before anything ships. Don't change
+   the check's files ($checks): golem puts them back as they were before it
+   checks.
 4. If it changes what's on screen, look at it in the browser at phone size
    (skills/browser.md), and fix what looks wrong or clumsy.
 

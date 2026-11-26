@@ -51,7 +51,9 @@ Your plan is all they have, so make it good.
    to 10 items, never more than 16; small work can be one.
 3. Give each item a check: a command golem runs in the checkout that exits 0
    once the item works, and not before (unit tests for logic, Playwright for
-   what's on screen). Write the tests the checks run now, and commit them; if the
+   what's on screen). Keep it to the item's own tests (its spec file, not the
+   whole suite), so it runs in a minute or two: the items after it fail theirs
+   until they're built. Write the tests the checks run now, and commit them; if the
    project has no test setup yet, set it up first (skills/new-repo.md). Run each
    check once: it should fail because its item isn't built yet, not because the
    check is broken. Workers can't change the check files: golem puts them back
