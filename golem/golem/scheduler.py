@@ -651,10 +651,11 @@ class Scheduler:
         elif job.start == TRIAGE:
             prompt, resume = self.triage_prompt(job, project), None
         else:
-            lessons = self.lessons_path.read_text() if self.lessons_path.exists() else ""
+            lessons_path = self.lessons_path(project)
+            lessons = lessons_path.read_text() if lessons_path.exists() else ""
             steps = plan.shown(self.store.steps(job.id))
             prompt, resume = self.prompts.step(project, job, intro, instructions, step, steps, branch, feedback, lessons, outputs,
-                                               self.after(job, step, outputs)), None  # fmt: skip
+                                               self.after(job, step, outputs), lessons_path), None  # fmt: skip
 
         contract = block.get("contract") or ""
         schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
@@ -1558,9 +1559,10 @@ class Scheduler:
     def commit_url(self, project: Project, sha: str) -> str:
         return f"{self.settings.repo_url(project.slug)}/commit/{sha}"
 
-    @property
-    def lessons_path(self) -> Path:
-        return self.settings.state_dir / "lessons.md"
+    def lessons_path(self, project: Project) -> Path:
+        """The lessons file the project's workers read and add to: its own, for a twin built both
+        ways (each started as a copy of golem's when the pair was made), else golem's."""
+        return self.settings.lessons(project.slug if project.twin else "")
 
     def error_log(self, job: Job, step: Step) -> Path:
         """Where all that a step's failed commands printed is kept, each try after the last."""
@@ -1596,6 +1598,9 @@ class Scheduler:
             GOLEM_PORT=str(PORTS + PORTS_PER_SLOT * slot),
             GOLEM_TMP=tmp,
             TMPDIR=tmp,
+            # What a worker knows is its repo and golem's lessons (lessons_path): Claude Code's own
+            # memory, shared by every job on a repo and kept where golem can't see it, stays off.
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY="1",
         )
         return env
 

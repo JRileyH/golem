@@ -75,6 +75,11 @@ class Settings:
     def repo_url(self, slug: str) -> str:
         return f"https://github.com/{self.org}/{slug}"
 
+    def lessons(self, slug: str = "") -> Path:
+        """The lessons file workers read and add to: golem's, or a project's own (a twin built both
+        ways has one, so neither run learns from the other: checklist.py)."""
+        return self.state_dir / "lessons" / f"{slug}.md" if slug else self.state_dir / "lessons.md"
+
     def job_logs(self, job_id: int) -> Path:
         """Where a job's runs are logged, one compressed event stream per run."""
         return self.state_dir / "jobs" / str(job_id)

@@ -171,3 +171,24 @@ def test_an_idea_built_both_ways_is_two_projects_that_know_each_other(golem, app
     assert golem.store.project("trees-list").twin == "leaves"
     golem.store.delete_project("leaves")
     assert golem.store.project("trees-list").twin == ""
+
+
+def test_twins_run_in_a_vacuum_each_with_lessons_of_its_own(golem):
+    from test_flow import TREES
+
+    async def go():
+        golem.settings.lessons().write_text("- golem's lesson from before\n")
+        golem.harness.script = [TREES, TREES]
+        usual, twin = await golem.bot.new_twins("Trees", "a flashcard game for trees", slug="trees")
+        for slug in ("trees", "trees-list"):
+            assert golem.settings.lessons(slug).read_text() == "- golem's lesson from before\n"
+        golem.settings.lessons("trees-list").write_text("- golem's lesson from before\n- learnt by the checklist twin\n")
+        await golem.until("spec")
+        await golem.step()
+        spec = golem.harness.calls[-1]
+        assert "golem's lesson from before" in spec.prompt and "learnt by the checklist twin" not in spec.prompt
+        assert str(golem.settings.lessons("trees")) in spec.prompt and str(golem.settings.lessons()) not in spec.prompt
+        assert spec.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"  # nor does Claude Code's own memory carry anything over
+        assert golem.settings.lessons().read_text() == "- golem's lesson from before\n"  # golem's own, untouched
+
+    run(go())

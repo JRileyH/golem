@@ -111,6 +111,8 @@ phone.
   new project, a request, or a project's default. **Build it both ways** on the
   New project form makes two projects from one idea, the usual way and its
   checklist twin at the address with `-list`, linked on their pages, to compare.
+  Neither learns from the other: each gets its own copy of golem's lessons file,
+  and Claude Code's own memory is off for every worker.
 - **Settings,** per project, on its Settings tab:
   - **Default mode:** what its requests run in unless they pick another: the
     usual way, or checklist. Only you set it.

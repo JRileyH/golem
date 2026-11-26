@@ -33,3 +33,4 @@ async def forget_project(project: Project, settings: Settings, store: Store, wor
         await asyncio.to_thread(shutil.rmtree, settings.job_logs(job_id), ignore_errors=True)
     if card and card.image:  # its screenshot on the projects page
         (settings.state_dir / "cards" / card.image).unlink(missing_ok=True)
+    settings.lessons(project.slug).unlink(missing_ok=True)  # a twin's own lessons (checklist.py)

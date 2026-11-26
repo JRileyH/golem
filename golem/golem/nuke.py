@@ -34,7 +34,7 @@ def leftovers(settings: Settings) -> list[Path]:
     """What golem keeps besides its database: checkouts, run and triage logs, lessons, proposals."""
     paths = sorted(settings.workspace_dir.iterdir()) if settings.workspace_dir.is_dir() else []
     state = settings.state_dir
-    return paths + [p for p in (state / "jobs", state / "triage", state / "proposals", state / "lessons.md") if p.exists()]
+    return paths + [p for p in (state / "jobs", state / "triage", state / "proposals", state / "lessons.md", state / "lessons") if p.exists()]
 
 
 async def plan(settings: Settings, store: Store, deployer: Deployer) -> str:

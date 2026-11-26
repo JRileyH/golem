@@ -91,6 +91,10 @@ class Bot:
         twin = checklist.twin_slug(slug)
         if not intake.valid_slug(twin) or await self.slug_taken(twin):
             raise ValueError(f"{twin} can't be had.")
+        for each in (slug, twin):  # what golem has learnt so far, the same for both, and from now on each its own
+            own = self.settings.lessons(each)
+            own.parent.mkdir(parents=True, exist_ok=True)
+            own.write_text(self.settings.lessons().read_text() if self.settings.lessons().exists() else "")
         usual = await self.new_project(name, idea, slug=slug, workflow=workflow, mode="", tag=tag, model=model, effort=effort)
         listed = await self.new_project(f"{name} (checklist)"[:60], idea, slug=twin, workflow=workflow, mode=checklist.MODE, tag=tag,
                                         model=model, effort=effort)  # fmt: skip
@@ -209,6 +213,8 @@ class Bot:
             return f"Couldn't move the repo: {e}"
         await self.deployer.stop(old)
         project = self.store.move_project(old, new)
+        if (lessons := self.settings.lessons(old)).exists():  # a twin's own lessons go with it
+            lessons.rename(self.settings.lessons(new))
         url, repo = self.settings.project_url(new), self.settings.repo_url(new)
 
         request = (

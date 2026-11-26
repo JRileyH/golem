@@ -40,6 +40,7 @@ class Prompts:
         lessons: str,
         outputs: list[dict] = (),
         after: str = "",
+        lessons_path: Path | None = None,
     ) -> str:
         """An agent step: its block's instructions (with what the blocks before found, Scheduler.instructions)
         in golem's frame. A block with several outputs ends with the one it takes instead of done."""
@@ -75,7 +76,7 @@ class Prompts:
             earlier=earlier,
             feedback=format_feedback(feedback),
             lessons=lessons.strip() or "(none yet)",
-            lessons_path=s.state_dir / "lessons.md",
+            lessons_path=lessons_path or s.lessons(),
             report=self.snippet("report"),
             skills=s.process_dir / "skills",
         )
