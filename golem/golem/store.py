@@ -63,7 +63,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     mode TEXT NOT NULL DEFAULT '',       -- unused: the mode it ran in, when golem had modes ('checklist': cl-trees' jobs)
     graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
-    vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    vars TEXT NOT NULL DEFAULT '{}',     -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    agent TEXT NOT NULL DEFAULT '',      -- who does its agent steps (AGENTS): '' for Claude Code
+    model TEXT NOT NULL DEFAULT '',      -- the model every agent step of it runs, over every other choice (plan.engine); '' for each step's
+    effort TEXT NOT NULL DEFAULT ''      -- and the effort
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -243,6 +246,9 @@ MIGRATIONS = {
         "graph": "TEXT NOT NULL DEFAULT ''",
         "graph_hash": "TEXT NOT NULL DEFAULT ''",
         "vars": "TEXT NOT NULL DEFAULT '{}'",
+        "agent": "TEXT NOT NULL DEFAULT ''",
+        "model": "TEXT NOT NULL DEFAULT ''",
+        "effort": "TEXT NOT NULL DEFAULT ''",
     },
     "proposals": {"issue": "INTEGER", "card": "TEXT NOT NULL DEFAULT '{}'"},
     "runs": {"step_id": "INTEGER", "glance": "TEXT NOT NULL DEFAULT ''"},  # glance: where its time went (glance.py), once it ended
@@ -291,6 +297,9 @@ MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
 CHANGES_AT_ONCE = (1, 2, 3, 4)  # what a project's parallel_jobs can be
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Who can do a job's agent steps besides Claude Code (Job.agent): OpenCode (opencode.py), whose
+# models are its providers', named provider/model.
+AGENTS = ("opencode",)
 
 
 def now() -> str:
@@ -450,6 +459,9 @@ class Job:
     graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    agent: str = ""  # who does its agent steps (AGENTS): "" for Claude Code
+    model: str = ""  # the model every agent step of it runs, over every other choice (plan.engine): an arm of a trial's
+    effort: str = ""
 
 
 # A job's columns but those only its own page needs (its graph and vars, which can be large): for listing many.
@@ -770,15 +782,17 @@ class Store:
     # --- jobs -----------------------------------------------------------------
 
     def add_job(
-        self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "", start: str = ""
+        self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "", start: str = "",
+        agent: str = "", model: str = "", effort: str = "",
     ) -> Job:
-        """A new job, which works in a tree of its own (Job.worktree)."""
+        """A new job, which works in a tree of its own (Job.worktree): by Claude Code, or `agent` (AGENTS)."""
         start = start or start_of(kind, playbook)
         assert start in (*STARTS, TRIAGE), start
+        assert agent in ("", *AGENTS), agent
         cur = self.db.execute(
-            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
-            (slug, kind, request, playbook, priority, now(), now(), title, start),
+            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start, agent, model, effort)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            (slug, kind, request, playbook, priority, now(), now(), title, start, agent, model, effort),
         )
         return self.job(cur.lastrowid)
 

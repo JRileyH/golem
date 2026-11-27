@@ -145,11 +145,13 @@ class Scheduler:
         workspace: Workspace,
         prompts: Prompts,
         deployer: Deployer,
+        agents: dict[str, Harness] | None = None,
     ):
         self.settings = settings
         self.store = store
         self.chat = chat
-        self.harness = harness
+        self.harness = harness  # Claude Code: workers, and golem's own reading (cards, replies)
+        self.agents = agents or {}  # who else can do a job's agent steps, by name (store.AGENTS)
         self.workspace = workspace
         self.prompts = prompts
         self.deployer = deployer
@@ -804,7 +806,12 @@ class Scheduler:
         as a step of its own name, or of `kind` (a vet step's survey)."""
         project = self.store.project(project.slug)
         current = self.store.step(step.id) or step
-        chosen = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current, block)
+        chosen = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current, block, job)
+        harness = self.agents.get(job.agent) if job.agent else self.harness
+        if harness is None:
+            return RunResult("error", error=f"golem has no {job.agent} worker")
+        if job.agent == "opencode" and "/" not in chosen.model:  # Claude Code's names mean nothing to it
+            return RunResult("error", error=f"an OpenCode job runs a provider/model, not {chosen.model}")
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{label}.jsonl.gz"
         self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)
         run_id = self.store.start_run(job.id, label, str(chosen), str(log_path), step.id)
@@ -813,7 +820,7 @@ class Scheduler:
         filed = self.reports_path(job)
         filed_before = filed.stat().st_size if filed.exists() else 0  # earlier runs' reports were read then
         run = asyncio.create_task(
-            self.harness.run(
+            harness.run(
                 cwd=self.checkout(project, job),
                 prompt=prompt,
                 model=chosen.model,

@@ -260,7 +260,7 @@ class Control:
         else:  # still to come: kept for its block, and given to it when it's written
             self._block_settings(job, step, **{name: value or None})
             step = replace(step, **{name: value or None})
-        engine = plan.engine(self.scheduler.settings, self.store, project, step, plan.node(self.store.job(job.id), step))
+        engine = plan.engine(self.scheduler.settings, self.store, project, step, plan.node(self.store.job(job.id), step), job)
         await self.scheduler.say(project, f"{step.name} will run on {engine}, from the status page.", notice=True, job=job, step=step.id or None)
         return f"{step.name} will run on {engine}."
 

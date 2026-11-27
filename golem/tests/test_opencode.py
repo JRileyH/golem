@@ -130,3 +130,29 @@ def test_the_object_a_reply_ends_with():
     assert last_object('ok\n```json\n{"a": {"b": 1}}\n```\n') == {"a": {"b": 1}}  # the outer one, fenced
     assert last_object('{"verdict": "done"} and then more words') is None
     assert last_object("no json here") is None
+
+
+def test_a_job_with_an_agent_of_its_own_runs_every_agent_step_on_it(golem):
+    from golem.harness import FakeHarness
+
+    async def go():
+        opencode = FakeHarness()
+        golem.scheduler.agents = {"opencode": opencode}
+        golem.harness.script = [{"name": "Tree Cards", "slug": "tree-cards", "summary": "Tree flashcards.", "title": "Tree Cards"}]
+        job = await golem.new_project("a flashcard game for trees")
+        golem.store.update_job(job.id, agent="opencode", model="opencode/mimo-free", effort="high")
+        await golem.until("spec")
+        before = len(golem.harness.calls)
+        await golem.step()
+        assert len(golem.harness.calls) == before  # not Claude Code
+        assert (opencode.calls[-1].model, opencode.calls[-1].effort) == ("opencode/mimo-free", "high")
+        assert golem.store.runs(job.id)[-1]["model"] == "opencode/mimo-free/high"
+
+        golem.store.update_job(job.id, model="")  # each step's default is one of Claude Code's models
+        await golem.until("scaffold")
+        calls = len(opencode.calls)
+        await golem.step()
+        assert len(opencode.calls) == calls  # never sent
+        assert any("provider/model" in (s.error or "") for s in golem.store.steps(job.id))
+
+    asyncio.run(go())

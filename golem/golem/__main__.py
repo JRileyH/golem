@@ -13,6 +13,7 @@ from .bot import Bot
 from .config import Settings
 from .deployer_client import DeployerClient, OfflineDeployer
 from .harness import ClaudeHarness, FakeHarness
+from .opencode import OpenCodeHarness
 from .prompts import Prompts
 from .push import Push
 from .scheduler import Scheduler
@@ -35,8 +36,10 @@ async def main() -> None:
 
     if settings.harness == "fake":
         harness, workspace = FakeHarness(), LocalWorkspace(settings.workspace_dir)
+        agents = {"opencode": harness}
     else:
         harness, workspace = ClaudeHarness(), GitHubWorkspace(settings.workspace_dir, settings.org)
+        agents = {"opencode": OpenCodeHarness()}
         await configure_git(f"golem@{settings.base_domain}")
 
     push = Push(settings, store)
@@ -47,7 +50,7 @@ async def main() -> None:
     )
     # With the fake harness there's no real code to deploy: the pretend GitHub's commits don't exist.
     deploys = OfflineDeployer(settings.project_url("{slug}")) if settings.harness == "fake" else deployer
-    scheduler = Scheduler(settings, store, chat, harness, workspace, prompts, deploys)
+    scheduler = Scheduler(settings, store, chat, harness, workspace, prompts, deploys, agents)
     scheduler.library.seed()  # the stage blocks' texts, brought up to date with golem's
     bot = Bot(settings, store, chat, scheduler, harness, workspace, prompts, deployer)
 

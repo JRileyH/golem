@@ -198,8 +198,8 @@ def create_app(
         engine = inherited = None
         block = plan.block_of(settings, store, job, step)
         if step.kind == "agent":
-            engine = plan.engine(settings, store, project, step, block)
-            inherited = plan.engine(settings, store, project, replace(step, model=None, effort=None), block)
+            engine = plan.engine(settings, store, project, step, block, job)
+            inherited = plan.engine(settings, store, project, replace(step, model=None, effort=None), block, job)
         if step.kind == "agent":
             does = step.problem.splitlines()[0] if step.name in ("fix", "resolve") and step.problem else ""
             if not does and block:

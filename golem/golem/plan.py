@@ -204,8 +204,8 @@ class Engine:
         return f"{self.model}/{self.effort}"
 
 
-def engine(settings: Settings, store: Store, project: Project, step: Step, block: dict | None = None) -> Engine:
-    """The most specific choice wins: this step's, the project's, the workflow block's own, the
+def engine(settings: Settings, store: Store, project: Project, step: Step, block: dict | None = None, job: Job | None = None) -> Engine:
+    """The most specific choice wins: the job's (a trial's arm runs every step on its own), this step's, the project's, the workflow block's own, the
     default for steps like it (by name: docs, spec, fix…), then for its stage's blocks, the
     default for every step, then GOLEM_MODEL and GOLEM_EFFORT."""
     defaults = store.defaults()
@@ -216,6 +216,7 @@ def engine(settings: Settings, store: Store, project: Project, step: Step, block
     found = []
     for i, fallback in enumerate((settings.default_model, settings.default_effort)):
         choices = [
+            ((job.model if i == 0 else job.effort) if job else "", "this job"),
             (step.model if i == 0 else step.effort, "this step"),
             (project.model if i == 0 else project.effort, "the project"),
             (block.get("model" if i == 0 else "effort") or "", "its workflow"),
