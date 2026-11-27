@@ -64,7 +64,6 @@ def new_form(c: Choices, f: Filled) -> str:
         + _field("Tag", "<select name=tag><option value=''>None</option>" + "".join(
             f"<option{' selected' if f.get('tag') == t else ''}>{escape(t)}</option>" for t in c.tags) + "</select>", f, "tag")  # fmt: skip
         + "</div>"
-        + _both(c, f)
         + "<details class=new-more><summary>More</summary><div class=new-row>"
         + _field("Model", _pick("model", MODELS, f.get("model")), f, "model")
         + _field("Effort", _pick("effort", EFFORTS, f.get("effort")), f, "effort")
@@ -99,18 +98,6 @@ def _modes(c: Choices, f: Filled) -> str:
     items = [("", "Usual"), *((m, m.capitalize()) for m in c.modes)]
     select = "<select name=mode>" + "".join(f"<option value='{escape(v)}'{' selected' if current == v else ''}>{escape(label)}</option>" for v, label in items) + "</select>"
     return _field("Mode", select, f, "mode")
-
-
-def _both(c: Choices, f: Filled) -> str:
-    """Build it both ways: the usual way and as a checklist, two projects, to compare (checklist.py)."""
-    if "checklist" not in c.modes:
-        return ""
-    on = " checked" if f.get("both") else ""
-    return (
-        f"<label class=check-row><input type=checkbox name=both value=1{on}> Build it both ways "
-        "<span class=muted>(two projects from this idea, each in a vacuum as on a fresh golem: the usual way at its address, "
-        "and as a checklist at cl- and its address)</span></label>"
-    )
 
 
 def _pick(name: str, values: tuple[str, ...], current: str) -> str:

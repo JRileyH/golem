@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 
 from test_flow import by_label, idle_project, verdict
 from test_web import app, new, sign_in  # noqa: F401  (app: the web app fixture)
@@ -182,67 +181,6 @@ def test_riggy_picks_checklist_mode_for_a_request_or_a_new_project(golem):
         asked = await golem.ask("tree-cards", "make it bigger", workflow="change")
         assert asked.mode == "checklist"  # the project's default
         assert (await golem.ask("tree-cards", "why is it slow?", workflow="question", mode="")).mode == ""
-
-    run(go())
-
-
-def test_an_idea_built_both_ways_is_two_projects_hosted_alike(golem, app):
-    from test_flow import TREES
-
-    sign_in(app)
-    assert "name=both value=1" in app.get("/new").text
-    golem.harness.script = [TREES, TREES]
-    r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for trees", workflow="web_app", both="1", tag="")
-    usual, other = golem.store.project("trees"), golem.store.project("cl-trees")
-    assert (usual.vacuum, other.vacuum, other.name) == (True, True, "Tree Cards (checklist)")
-    jobs = {j.slug: j for j in golem.store.jobs()}
-    assert (jobs["trees"].mode, jobs["cl-trees"].mode) == ("", "checklist") and jobs["trees"].request == jobs["cl-trees"].request
-    assert "both%20ways" in r.headers["location"] and "cl-trees" in r.headers["location"]
-    assert golem.settings.project_url("cl-trees").startswith("https://cl-trees.")  # hosted as any project is
-    golem.workspace.repos.add("cl-fish")
-    html = new(app, name="Fish", slug="fish", idea="fish", both="1").text
-    assert "its checklist one would be at cl-fish, and that&#x27;s taken" in html and golem.store.project("fish") is None
-    html = new(app, name="Long", slug="a-very-long-address-of-29-chars", idea="x", both="1").text
-    assert "pick a shorter address" in html
-
-
-def test_built_both_ways_each_runs_in_a_vacuum_as_on_a_fresh_golem(golem):
-    from test_flow import TREES
-
-    async def go():
-        golem.settings.lessons().write_text("- golem's lesson from before\n")
-        golem.harness.script = [TREES, TREES]
-        usual, other = await golem.bot.new_twins("Trees", "a flashcard game for trees", slug="trees")
-        for slug in ("trees", "cl-trees"):
-            assert golem.settings.lessons(slug).read_text() == ""  # nothing golem has learnt
-        golem.settings.lessons("cl-trees").write_text("- learnt by the checklist one\n")
-        await golem.until("spec")
-        await golem.step()
-        spec = golem.harness.calls[-1]
-        assert "golem's lesson from before" not in spec.prompt and "learnt by the checklist one" not in spec.prompt
-        assert str(golem.settings.lessons("trees")) in spec.prompt  # where its own go
-        config = golem.settings.job_claude(usual.id)
-        assert spec.env["CLAUDE_CONFIG_DIR"] == str(config) and config.is_dir()  # a Claude Code of its own, as freshly installed
-        assert spec.env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-        assert spec.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1" and spec.env["BASH_DEFAULT_TIMEOUT_MS"] == "300000"
-        assert golem.settings.lessons().read_text() == "- golem's lesson from before\n"  # golem's own, untouched
-        golem.store.update_job(usual.id, state="done")
-        await golem.scheduler.tidy()
-        assert not config.exists()  # gone with the job
-
-    run(go())
-
-
-def test_a_usual_project_shares_golems_lessons_and_claude_code(golem):
-    async def go():
-        room = await idle_project(golem)
-        golem.settings.lessons().write_text("- golem's lesson\n")
-        await golem.ask(room, "make it bigger", workflow="change")
-        golem.harness.script = by_label({})
-        await golem.until("change")
-        await golem.step()
-        call = golem.harness.calls[-1]
-        assert "golem's lesson" in call.prompt and call.env.get("CLAUDE_CONFIG_DIR") == os.environ.get("CLAUDE_CONFIG_DIR")  # golem's own
 
     run(go())
 

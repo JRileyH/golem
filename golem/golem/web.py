@@ -37,7 +37,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import blockspage, brand, checklist, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
+from . import blockspage, brand, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
 from . import now as now_page
 from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
 from .cards import fallback
@@ -613,25 +613,14 @@ def create_app(
         model, effort = form.get("model", ""), form.get("effort", "")
         if model and model not in MODELS or effort and effort not in EFFORTS:
             errors[""] = "Pick a model and effort from the lists."
-        both = form.get("both") == "1" and checklist.MODE in plan.MODES
-        if both and slug and not errors.get("slug"):
-            twin = checklist.twin_slug(slug)
-            if not intake.valid_slug(twin):
-                errors["slug"] = f"Built both ways, its checklist one would be at {twin}: pick a shorter address."
-            elif await bot.slug_taken(twin):
-                errors["slug"] = f"Built both ways, its checklist one would be at {twin}, and that's taken: pick another address."
         if errors:
             return new_page(request, newproject.Filled(form, errors), status=400)
         args = {"slug": slug, "workflow": form.get("workflow", ""), "tag": form.get("tag", ""), "model": model, "effort": effort}
         try:
-            if both:
-                job, _ = await bot.new_twins(name, idea, **args)
-            else:
-                job = await bot.new_project(name, idea, mode=mode, **args)
+            job = await bot.new_project(name, idea, mode=mode, **args)
         except ValueError:
             return new_page(request, newproject.Filled(form, {"slug": f"{slug} was just taken. Try another."}), status=400)
-        said = f"Started {name} both ways: here, and as a checklist at {checklist.twin_slug(slug)}." if both else f"Started {name}: {plan.title(job)}."
-        return _back({"back": projectpage.href(job)}, said)
+        return _back({"back": projectpage.href(job)}, f"Started {name}: {plan.title(job)}.")
 
     async def new_adopt(request: Request) -> Response:
         """Adopting a repo golem didn't make (bot.adopt): what's in the way, if anything, comes back here."""

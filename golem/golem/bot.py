@@ -20,7 +20,7 @@ import asyncio
 import logging
 import os
 
-from . import adopt, checklist, intake, options, plan, teardown
+from . import adopt, intake, options, plan, teardown
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
@@ -78,30 +78,15 @@ class Bot:
             project = self.store.add_project(slug, name.strip()[:60], about.summary, mode="", model=model, effort=effort)
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
-            if vacuum:
+            if vacuum:  # lessons of its own, from nothing (Settings.lessons)
                 project = self.store.update_project(slug, vacuum=1)
+                own = self.settings.lessons(slug)
+                own.parent.mkdir(parents=True, exist_ok=True)
+                own.write_text("")
             title = about.title or project.name  # without a model: what he called it, not his first line cut short
             job = self.start_job(project, wf, plan.mode_for(project, mode or ""), idea.strip(), title, kind="new")
             await self.chat.heard(slug, idea.strip(), job=job.id)
             return job
-
-    async def new_twins(self, name: str, idea: str, *, slug: str, workflow: str = "", tag: str = "", model: str = "",
-                        effort: str = "") -> tuple[Job, Job]:  # fmt: skip
-        """The same idea built both ways, to compare them (checklist.py): a project the usual way at
-        `slug`, and one in checklist mode at `cl-<slug>`, hosted alike. Both run in a vacuum, as on
-        a fresh golem: nothing golem has learnt, and nothing from each other. Raises ValueError if
-        either address can't be had."""
-        twin = checklist.twin_slug(slug)
-        if not intake.valid_slug(twin) or await self.slug_taken(twin):
-            raise ValueError(f"{twin} can't be had.")
-        made = []
-        for each, mode, label in ((slug, "", name), (twin, checklist.MODE, f"{name} (checklist)"[:60])):
-            own = self.settings.lessons(each)  # lessons of its own, from nothing
-            own.parent.mkdir(parents=True, exist_ok=True)
-            own.write_text("")
-            made.append(await self.new_project(label, idea, slug=each, workflow=workflow, mode=mode, tag=tag, model=model, effort=effort,
-                                               vacuum=True))  # fmt: skip
-        return made[0], made[1]
 
     async def summarize(self, name: str, idea: str) -> intake.Summary:
         if self.settings.harness == "fake":
