@@ -6,11 +6,13 @@
 `just compare A B` runs both on the server and writes them to compare/. Built both ways
 (checklist.py), an idea is two projects, `<slug>` and `cl-<slug>`, but any two will do.
 
-There's a row per project, per job and per step (`level`), in that order for A, then for B. A
-step's agent runs are added up on its row, a job's on its row and a project's on its row. Besides
-what golem keeps on each run (cost at API prices, turns, tokens), each run's log says what the
-runs table doesn't: input from the cache and not, time waiting on the API, the tools it called and
-how many came back as errors, and the models Claude Code itself used. A job's row has its ledger
+There's a row per project, job, step, agent run and message (`level`), A's then B's: each job, then
+each of its steps followed by its runs and what golem and Riggy said about it. A step's runs are
+added up on its row, a job's on its row and a project's on its row. Besides what golem keeps on
+each run (cost at API prices, turns, tokens), each run's log says what the runs table doesn't, or
+has wrong: every stretch of a run that went on after background tasks (harness.merge_results),
+input from the cache and not, time waiting on the API, the tools it called and how many came back
+as errors, and the models Claude Code itself used. A job's row has its ledger
 (ledger.py): fixes, time waiting on Riggy, a checklist's planning against its items and how the
 items went. Each project's checkout gives the size of what it built.
 
@@ -24,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import os
 import re
 import subprocess
 import sys
@@ -31,35 +34,39 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import checklist, ledger, plan
+from . import checklist, glance, ledger, plan, reports
 from .config import Settings
-from .store import Job, Step, Store
+from .harness import merge_results
+from .store import Job, Said, Step, Store
 from .watch import Tail
 
 MODELS = ("haiku", "sonnet", "opus", "fable")  # golem's choices, a cost column each
 
 COLUMNS = {
-    "level": "project, job or step: what the row is about",
+    "level": "project, job, step, run or message: what the row is about. A step's row adds up its runs, a job's all of its "
+    "runs, a project's all of its jobs': add up the rows of one level only",
     "side": "A or B: which of the two projects, as given",
     "project": "the project's slug (its address)",
     "job_n": "the job's place among its project's jobs, oldest first: to pair it with the other side's",
     "job": "golem's job id",
     "step_n": "the step's place in its job",
     "step": "golem's step id",
-    "name": "project: its name; job: its title; step: its name (a stage, or one of golem's own steps)",
+    "run": "golem's run id",
+    "name": "project: its name; job: its title; step: its name (a stage, or one of golem's own steps); run: its label; "
+    "message: who said it, golem or riggy",
     "kind": "project: its tag; job: where it came from (new, change, look = a question, propose, adopt); "
     "step: agent, check, or one of golem's own (setup, push, PR, CI, merge, deploy, checkin, choose…)",
     "role": "step: plan (a Build that planned a checklist), item (an item's build), check (golem running "
     "an item's check), ask (waiting on Riggy); blank for any other",
     "mode": "usual or checklist (project: the mode its requests run in unless they ask for another)",
     "vacuum": "project: 1 if it runs as on a fresh golem (lessons of its own starting empty, an empty Claude Code per job)",
-    "state": "project: paused or blank; job: done, killed, running, waiting…; step: done, failed, skipped…",
-    "started": "ISO time: project made; job's first step began; step began",
-    "ended": "ISO time: job's last step ended; step ended",
-    "wall_minutes": "job, step: from started to ended (a job still under way: to now)",
+    "state": "project: paused or blank; job: done, killed, running, waiting…; step: done, failed, skipped…; run: its outcome",
+    "started": "ISO time: project made; job's first step began; step or run began; message said",
+    "ended": "ISO time: job's last step ended; step or run ended",
+    "wall_minutes": "job, step, run: from started to ended (a job still under way: to now)",
     "waiting_minutes": "project, job: of the wall time, waiting on Riggy (check-ins and picks)",
     "model": "project: its model/effort for every step ('' for each step's default); "
-    "step: golem's choice of model/effort for each of its runs, in order",
+    "step: golem's choice of model/effort for each of its runs, in order; run: for it",
     "workflow": "job: the workflow it ran",
     "node": "step: the block of the job's workflow it's a visit to",
     "visit": "step: which visit to its block (loops come back)",
@@ -69,14 +76,26 @@ COLUMNS = {
     "outcomes": "step: each run's outcome, in order: verdict (finished), max_turns, limit, error, or running",
     "runs": "agent runs (headless Claude Code)",
     "cost_usd": "what Claude Code says the runs would have cost at API prices",
-    "turns": "Claude Code turns, added up",
-    "tokens_in": "input tokens, cached or not",
+    "turns": "Claude Code turns, from every result line in the run logs (see result_lines)",
+    "tokens_in": "input tokens, cached or not, from every result line in the run logs",
     "fresh_tokens_in": "input tokens not from the cache (from the run logs)",
     "cache_write_tokens": "input tokens written to the cache (from the run logs)",
     "cache_read_tokens": "input tokens read from the cache (from the run logs)",
-    "tokens_out": "output tokens",
+    "tokens_out": "output tokens, from every result line in the run logs",
     "agent_minutes": "how long the runs ran",
     "api_minutes": "of that, waiting on the model's API (from the run logs)",
+    "result_lines": "result lines in the run logs: more than runs means a run went on after it stopped, woken by a "
+    "background task it had started. Turns and tokens are each stretch's own, so they're added up; cost is a running "
+    "total, so the last line's",
+    "past_max_turns": "runs that hit their turn cap, then went on past it when a background task woke them",
+    "tests_minutes": "of agent_minutes, running tests: bin/test, Playwright, a test runner (glance.py, from the run logs)",
+    "idle_minutes": "of agent_minutes, sleeping, or watching or polling something it left running",
+    "after_verdict_minutes": "of agent_minutes, going on after Claude Code took its verdict",
+    "work_minutes": "of agent_minutes, everything else: reading, writing, building, thinking",
+    "test_runs": "times the runs ran tests",
+    "slowest_call": "the runs' longest tool call, and how many seconds it took (secrets taken out)",
+    "warnings": "what went wrong that shouldn't have: went on after its verdict, ran out of turns, commands that hit the "
+    "time limit, tools not installed, usage limits, context compacted",
     **{f"cost_{m}": f"cost_usd of runs golem gave {m}" for m in MODELS},
     "cost_other": "cost_usd of runs on any other model",
     "claude_models": "cost by the models Claude Code says it used, a run's chores on a small model too (from the run logs)",
@@ -109,7 +128,7 @@ COLUMNS = {
     "repo_commits": "project: commits on its main",
     "repo_types": "project: tracked files by extension, most first",
     "url": "project: where it's hosted",
-    "text": "project: its summary; job: Riggy's request; step: what it did, or what it's waiting for",
+    "text": "project: its summary; job: Riggy's request; step: what it did, or what it's waiting for; message: what was said",
     "problem": "step: what a fix step was to fix, or what failed on an item's try before",
     "error": "step: why its last attempt failed",
 }  # fmt: skip
@@ -132,24 +151,33 @@ BINARY = {
 
 @dataclass
 class Log:
-    """What a run's log says that the runs table doesn't: Claude Code's result line, and its calls."""
+    """What a run's log says that the runs table doesn't, or has wrong. A run that starts background
+    tasks writes a result line each time it stops (harness.merge_results): golem kept only the last
+    line's turns and tokens before it added them up, so for those runs the log is the one to go by."""
 
+    results: int = 0  # result lines: more than one, it went on when a background task finished
+    past_cap: bool = False  # it hit its turn cap, and a background task woke it to go on past it
+    turns: int = 0
     fresh_in: int = 0
     cache_write: int = 0
     cache_read: int = 0
+    tokens_out: int = 0
     api_ms: int = 0
-    claude: Counter[str] = field(default_factory=Counter)  # cost by the model Claude Code used
+    claude: dict[str, float] = field(default_factory=dict)  # cost by the model Claude Code used
     calls: Counter[str] = field(default_factory=Counter)  # tool calls by tool
     failed: int = 0  # tool results that were errors
     version: str = ""
+    glance: glance.Glance | None = None  # where its time went and what went wrong
 
 
 def read_log(path: str | None) -> Log:
     """A run's compressed event stream (ClaudeHarness), read once it's over or as far as it's got."""
-    log = Log()
+    log, results = Log(), []
     if not path or not Path(path).is_file():
         return log
-    for event in Tail(Path(path)).events():
+    events = Tail(Path(path)).events()
+    log.glance = glance.of(events, lambda text: reports.redact(text, os.environ))  # as the scheduler keeps it
+    for event in events:
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init":
             log.version = str(event.get("claude_code_version") or "")
@@ -162,14 +190,19 @@ def read_log(path: str | None) -> Log:
             elif kind == "user" and block.get("type") == "tool_result" and block.get("is_error"):
                 log.failed += 1
         if kind == "result":
-            usage = event.get("usage") or {}
-            log.fresh_in = int(usage.get("input_tokens") or 0)
-            log.cache_write = int(usage.get("cache_creation_input_tokens") or 0)
-            log.cache_read = int(usage.get("cache_read_input_tokens") or 0)
-            log.api_ms = int(event.get("duration_api_ms") or 0)
-            for model, used in (event.get("modelUsage") or {}).items():
-                if isinstance(used, dict):
-                    log.claude[model] += float(used.get("costUSD") or 0.0)
+            results.append(event)
+    merged = merge_results(results)
+    if merged is None:
+        return log
+    usage = merged.get("usage") or {}
+    log.results, log.turns = len(results), int(merged.get("num_turns") or 0)
+    log.past_cap = any(r.get("subtype") == "error_max_turns" for r in results[:-1])
+    log.fresh_in = int(usage.get("input_tokens") or 0)
+    log.cache_write = int(usage.get("cache_creation_input_tokens") or 0)
+    log.cache_read = int(usage.get("cache_read_input_tokens") or 0)
+    log.tokens_out = int(usage.get("output_tokens") or 0)
+    log.api_ms = int(merged.get("duration_api_ms") or 0)  # a running total, as the cost is
+    log.claude = {m: float(u.get("costUSD") or 0.0) for m, u in (merged.get("modelUsage") or {}).items() if isinstance(u, dict)}
     return log
 
 
@@ -178,7 +211,7 @@ def read_log(path: str | None) -> Log:
 
 @dataclass
 class Sums:
-    """What some agent runs came to: a step's, a job's or a project's."""
+    """What some agent runs came to: a run's, a step's, a job's or a project's."""
 
     runs: int = 0
     cost: float = 0.0
@@ -190,6 +223,8 @@ class Sums:
     cache_read: int = 0
     agent_seconds: float = 0.0
     api_ms: int = 0
+    results: int = 0
+    past_cap: int = 0
     by_model: Counter[str] = field(default_factory=Counter)  # cost by golem's choice (haiku, opus…)
     claude: Counter[str] = field(default_factory=Counter)
     calls: Counter[str] = field(default_factory=Counter)
@@ -197,14 +232,20 @@ class Sums:
     outcomes: list[str] = field(default_factory=list)
     engines: list[str] = field(default_factory=list)  # golem's choice for each run: "haiku/medium"
     versions: set[str] = field(default_factory=set)
+    glances: list[glance.Glance] = field(default_factory=list)
 
     def add(self, run: dict, log: Log) -> None:
         cost = run["cost_usd"] or 0.0
         self.runs += 1
         self.cost += cost
-        self.turns += run["num_turns"] or 0
-        self.tokens_in += run["input_tokens"] or 0
-        self.tokens_out += run["output_tokens"] or 0
+        if log.results:  # turns and tokens from every result line
+            self.turns += log.turns
+            self.tokens_in += log.fresh_in + log.cache_write + log.cache_read
+            self.tokens_out += log.tokens_out
+        else:  # no log to go by: what golem kept
+            self.turns += run["num_turns"] or 0
+            self.tokens_in += run["input_tokens"] or 0
+            self.tokens_out += run["output_tokens"] or 0
         self.agent_seconds += ledger.seconds(run["started_at"], run["ended_at"])
         self.by_model[(run["model"] or "").split("/")[0]] += cost
         self.outcomes.append(run["outcome"] or "running")
@@ -213,22 +254,34 @@ class Sums:
         self.cache_write += log.cache_write
         self.cache_read += log.cache_read
         self.api_ms += log.api_ms
+        self.results += log.results
+        self.past_cap += log.past_cap
         self.claude.update(log.claude)
         self.calls.update(log.calls)
         self.failed += log.failed
         if log.version:
             self.versions.add(log.version)
+        if log.glance:
+            self.glances.append(log.glance)
 
     def columns(self) -> dict[str, object]:
         other = sum(c for m, c in self.by_model.items() if m not in MODELS)
+        g = glance.merged(self.glances)
+        seen = {
+            "tests_minutes": _minutes(g.tests), "idle_minutes": _minutes(g.waiting), "after_verdict_minutes": _minutes(g.after),
+            "work_minutes": _minutes(g.work), "test_runs": g.test_runs,
+            "slowest_call": f"{_flat(g.slowest)} ({round(g.slowest_seconds)}s)" if g.slowest else "", "warnings": "; ".join(glance.warnings(g)),
+        } if g else {}  # fmt: skip
         return {
             "runs": self.runs, "cost_usd": _money(self.cost), "turns": self.turns, "tokens_in": self.tokens_in,
             "fresh_tokens_in": self.fresh_in, "cache_write_tokens": self.cache_write, "cache_read_tokens": self.cache_read,
             "tokens_out": self.tokens_out, "agent_minutes": _minutes(self.agent_seconds), "api_minutes": _minutes(self.api_ms / 1000),
             **{f"cost_{m}": _money(self.by_model.get(m, 0.0)) for m in MODELS}, "cost_other": _money(other),
             "claude_models": ", ".join(f"{m} {_money(c)}" for m, c in self.claude.most_common() if c),
+            "result_lines": self.results, "past_max_turns": self.past_cap,
             "tool_calls": sum(self.calls.values()), "tool_errors": self.failed,
             "tools": ", ".join(f"{t} {n}" for t, n in self.calls.most_common()), "claude_code": ", ".join(sorted(self.versions)),
+            **seen,
         }  # fmt: skip
 
 
@@ -296,7 +349,8 @@ def _git(path: Path, *args: str, stdin: bytes | None = None) -> bytes | None:
 
 
 def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[str, object]]:
-    """A project's rows: its own, then each job's (oldest first) followed by its steps'."""
+    """A project's rows: its own, then each job's (oldest first), followed by each of its steps with
+    that step's runs and what was said about it, and last what was said about the job as a whole."""
     project = store.project(slug)
     if project is None:
         raise KeyError(slug)
@@ -309,6 +363,7 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         for r in runs:
             sums.add(r, logs[r["id"]])
             total.add(r, logs[r["id"]])
+        said = store.job_messages(job.id, limit=100_000)
         led = ledger.row(job, steps, runs)
         job_asks = sum(1 for s in steps if s.kind in plan.ASKS and s.started_at)
         leds.append(led)
@@ -316,11 +371,15 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         out.append(_job_row(side, slug, n, job, steps, sums, led, job_asks))
         planners = {s.item.get("plan") for s in steps if s.item}
         for step in steps:
-            mine = Sums()
-            for r in runs:
-                if r["step_id"] == step.id:
-                    mine.add(r, logs[r["id"]])
+            mine, theirs = Sums(), [r for r in runs if r["step_id"] == step.id]
+            for r in theirs:
+                mine.add(r, logs[r["id"]])
             out.append(_step_row(side, slug, n, job, step, mine, planners))
+            out += [_run_row(side, slug, n, job, step, r, logs[r["id"]]) for r in theirs]
+            out += [_said_row(side, slug, n, job, step, m) for m in said if m.step_id == step.id]
+        ids = {s.id for s in steps}
+        out += [_run_row(side, slug, n, job, None, r, logs[r["id"]]) for r in runs if r["step_id"] not in ids]
+        out += [_said_row(side, slug, n, job, None, m) for m in said if m.step_id not in ids]
     head = {
         "level": "project", "side": side, "project": slug, "name": project.name, "kind": project.tag,
         "mode": project.mode or "usual", "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
@@ -362,6 +421,25 @@ def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, pl
             "item_title": _flat(item.get("title")), "item_do": _flat(item.get("do")),
             "item_files": " ".join(item.get("files") or []), "item_check": _flat(item.get("check"))} if item else {}),
         "text": _flat(step.summary), "problem": _flat(step.problem or item.get("problem")), "error": _flat(step.error),
+    }  # fmt: skip
+
+
+def _run_row(side: str, slug: str, n: int, job: Job, step: Step | None, run: dict, log: Log) -> dict:
+    sums = Sums()
+    sums.add(run, log)
+    return {
+        "level": "run", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position if step else "",
+        "step": step.id if step else "", "run": run["id"], "name": run["phase"], "mode": job.mode or "usual",
+        "state": run["outcome"] or "running", "started": run["started_at"], "ended": run["ended_at"] or "",
+        "wall_minutes": _minutes(sums.agent_seconds) if run["ended_at"] else "", "model": run["model"] or "",
+        "max_turns": (step.max_turns or "") if step else "", "outcomes": run["outcome"] or "running", **sums.columns(),
+    }  # fmt: skip
+
+
+def _said_row(side: str, slug: str, n: int, job: Job, step: Step | None, said: Said) -> dict:
+    return {
+        "level": "message", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position if step else "",
+        "step": step.id if step else "", "name": said.who, "mode": job.mode or "usual", "started": said.at, "text": _flat(said.text),
     }  # fmt: skip
 
 

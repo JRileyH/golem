@@ -18,7 +18,7 @@ from conftest import REPO
 from golem import config, deploy_cli, intake, options, plan, workflows
 from golem.config import Settings
 from golem.deployer_client import DeployerClient, DeployerError
-from golem.harness import ClaudeHarness, interpret
+from golem.harness import ClaudeHarness, interpret, merge_results
 from golem.store import EFFORTS, MODELS, Step, Store
 from golem.workspace import About
 
@@ -565,6 +565,19 @@ def test_interpret_verdict():
 )
 def test_interpret_failures(fields, outcome):
     assert interpret(result(**fields), None, 1).outcome == outcome
+
+
+def test_a_run_that_goes_on_after_background_tasks_counts_every_stretch():
+    """As cl-trees' review did (job 84): it hit its turn cap, a background task woke it, and it went on
+    to finish. Each result line has its own stretch's turns and tokens; cost and API time run on."""
+    capped = result(subtype="error_max_turns", is_error=True, num_turns=151, total_cost_usd=9.22, duration_api_ms=755231,
+                    usage={"input_tokens": 308, "cache_creation_input_tokens": 297066, "cache_read_input_tokens": 28092208, "output_tokens": 61135})
+    done = result(num_turns=19, total_cost_usd=10.47, duration_api_ms=837854, structured_output={"verdict": "done", "message": "ok"},
+                  usage={"input_tokens": 34, "cache_creation_input_tokens": 18535, "cache_read_input_tokens": 4911688, "output_tokens": 5846})
+    r = interpret(merge_results([capped, done]), None, 0)
+    assert (r.outcome, r.verdict["verdict"]) == ("verdict", "done")  # judged by how it ended
+    assert r.usage == {"num_turns": 170, "cost_usd": 10.47, "input_tokens": 308 + 297066 + 28092208 + 34 + 18535 + 4911688, "output_tokens": 61135 + 5846}
+    assert merge_results([done]) is done and merge_results([]) is None
 
 
 def test_interpret_without_a_result():

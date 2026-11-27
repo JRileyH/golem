@@ -18,15 +18,24 @@ from test_flow import TREES
 from golem import compare
 from golem.store import Store
 
-LOG = [  # a run's events, as Claude Code streams them
+# A run's events, as Claude Code streams them: it hits its turn cap, a background task it started
+# wakes it up, and it goes on to finish. Each result line has its own stretch's turns and tokens,
+# but the cost and API time are running totals (as in cl-trees' review, job 84).
+LOG = [
     {"type": "system", "subtype": "init", "claude_code_version": "2.9.1", "session_id": "s"},
-    {"type": "assistant", "message": {"content": [{"type": "text", "text": "Looking."}, {"type": "tool_use", "name": "Bash", "input": {}}]}},
-    {"type": "user", "message": {"content": [{"type": "tool_result", "content": "no such file", "is_error": True}]}},
+    {"type": "assistant", "timestamp": "2026-11-26T10:00:00+00:00",
+     "message": {"content": [{"type": "text", "text": "Looking."}, {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "bin/test"}}]}},
+    {"type": "user", "timestamp": "2026-11-26T10:02:00+00:00",
+     "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "content": "1 failed", "is_error": True}]}},
+    {"type": "result", "subtype": "error_max_turns", "num_turns": 5, "total_cost_usd": 0.6, "duration_api_ms": 60000,
+     "usage": {"input_tokens": 40, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 600, "output_tokens": 80},
+     "modelUsage": {"claude-opus-5-5": {"costUSD": 0.6}}},
+    {"type": "system", "subtype": "task_notification"},
     {"type": "assistant", "parent_tool_use_id": "t1", "message": {"content": [{"type": "tool_use", "name": "Edit"}, {"type": "tool_use", "name": "Bash"}]}},
     {"type": "user", "message": {"content": "a plain prompt"}},
     {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "StructuredOutput", "input": {}}]}},
-    {"type": "result", "subtype": "success", "duration_api_ms": 90000,
-     "usage": {"input_tokens": 50, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 750, "output_tokens": 100},
+    {"type": "result", "subtype": "success", "num_turns": 2, "total_cost_usd": 1.0, "duration_api_ms": 90000,
+     "usage": {"input_tokens": 10, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 150, "output_tokens": 20},
      "modelUsage": {"claude-opus-5-5": {"costUSD": 0.9}, "claude-haiku-5-5": {"costUSD": 0.1}}},
 ]  # fmt: skip
 
@@ -81,7 +90,7 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     text = compare.table(golem.store, golem.settings, "tree-cards", "fish")
     rows = list(csv.DictReader(io.StringIO(text)))
     assert list(rows[0]) == list(compare.COLUMNS) and text.count("\n") == len(rows) + 1  # a line a row
-    assert [(r["level"], r["side"], r["project"], r["job_n"]) for r in rows if r["level"] != "step"] == [
+    assert [(r["level"], r["side"], r["project"], r["job_n"]) for r in rows if r["level"] in ("project", "job")] == [
         ("project", "A", "tree-cards", ""), ("job", "A", "tree-cards", "1"), ("job", "A", "tree-cards", "2"),
         ("project", "B", "fish", ""), ("job", "B", "fish", "1"), ("job", "B", "fish", "2"),
     ]  # fmt: skip
@@ -106,9 +115,24 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
 
     # The usual change: what its run's log says that the runs table doesn't.
     change = next(r for r in rows if r["level"] == "step" and r["side"] == "B" and r["name"] == "change")
+    # Turns and tokens from both stretches (golem kept 3 turns and 1000 tokens), cost and API time the last line's running totals.
+    assert (change["turns"], change["tokens_in"], change["tokens_out"], change["result_lines"], change["past_max_turns"]) == ("7", "1000", "100", "2", "1")
     assert (change["fresh_tokens_in"], change["cache_write_tokens"], change["cache_read_tokens"], change["api_minutes"]) == ("50", "200", "750", "1.5")
     assert (change["tool_calls"], change["tool_errors"], change["tools"]) == ("3", "1", "Bash 2, Edit 1")  # a subagent's too, the verdict aside
     assert (change["claude_models"], change["claude_code"]) == ("claude-opus-5-5 0.9000, claude-haiku-5-5 0.1000", "2.9.1")
+    assert (change["tests_minutes"], change["test_runs"], change["warnings"]) == ("2.0", "1", "ran out of turns")  # where its time went (glance.py)
+    assert "bin/test" in change["slowest_call"] and change["slowest_call"].endswith("(120s)")
+
+    # Each step's runs follow it, and what golem said about it.
+    at = rows.index(change)
+    run_row = rows[at + 1]
+    assert (run_row["level"], run_row["step"], run_row["run"], run_row["name"], run_row["state"]) == ("run", change["step"], str(run["id"]), "change", "verdict")
+    assert (run_row["turns"], run_row["cost_usd"], run_row["model"]) == ("7", "1.0000", run["model"])
+    said = [r for r in rows if r["level"] == "message" and r["job"] == str(fish.id)]
+    assert said and all(r["name"] in ("golem", "riggy") and r["started"] and r["text"] for r in said)
+    assert any(r["step"] == change["step"] for r in said)  # its "✓ change" news, after the step
+    steps_and_runs = [r for r in rows if r["level"] in ("step", "run") and r["side"] == "A"]
+    assert sum(float(r["cost_usd"] or 0) for r in steps_and_runs if r["level"] == "run") == float(job["cost_usd"])
 
     # The projects: everything added up, and what each checkout holds.
     a, b = (r for r in rows if r["level"] == "project")
@@ -128,7 +152,7 @@ def test_the_command_says_what_its_columns_mean_and_what_it_cant_find(golem, tmp
     assert out.read_text() == compare.table(golem.store, golem.settings, "tree-cards", "fish")
     assert compare.main(["--columns"]) == 0
     said = capsys.readouterr().out.splitlines()
-    assert len(said) == len(compare.COLUMNS) and said[0] == "level: project, job or step: what the row is about"
+    assert len(said) == len(compare.COLUMNS) and said[0].startswith("level: project, job, step, run or message: what the row is about")
 
 
 def test_it_reads_golems_database_as_it_is_and_never_writes_to_it(golem):

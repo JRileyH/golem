@@ -132,7 +132,7 @@ class ClaudeHarness:
             stop_leftovers(proc.pid, env.get("GOLEM_TMP", ""))
 
     async def _talk(self, proc, prompt: str, log_path: Path, resume: str | None, schema: dict | None) -> RunResult:
-        result: dict | None = None
+        results: list[dict] = []
         session_id = resume
         taken = Taken()
         try:
@@ -145,9 +145,9 @@ class ClaudeHarness:
                     try:  # once its verdict is in, a run has `grace` seconds to end
                         raw = await asyncio.wait_for(proc.stdout.readline(), self.grace if taken.verdict is not None else None)
                     except TimeoutError:
-                        if result is None:  # Claude Code hasn't said what the run cost: what golem saw stands in
+                        if not results:  # Claude Code hasn't said what the run cost: what golem saw stands in
                             log.warning("run %s went on %ss after its verdict: ended it (its cost is unknown)", session_id, self.grace)
-                            result = taken.result(session_id)
+                            results.append(taken.result(session_id))
                         await _end(proc)
                         break
                     if not raw:
@@ -159,7 +159,7 @@ class ClaudeHarness:
                     if event.get("session_id"):
                         session_id = event["session_id"]
                     if event.get("type") == "result":
-                        result = event
+                        results.append(event)
                     taken.read(event)
             await proc.wait()
             try:  # what it started may hold stderr open: it's stopped once the run's over (stop_leftovers)
@@ -171,7 +171,7 @@ class ClaudeHarness:
             if proc.returncode is None:
                 await _end(proc)
             raise
-        return interpret(result, session_id, proc.returncode, stderr, verdict_expected=schema is None)
+        return interpret(merge_results(results), session_id, proc.returncode, stderr, verdict_expected=schema is None)
 
 
 async def _end(proc) -> None:
@@ -230,6 +230,24 @@ def stop_leftovers(group: int, tmp: str) -> None:
                 os.kill(int(proc.name), signal.SIGTERM)
         except (OSError, ValueError):
             continue
+
+
+def merge_results(results: list[dict]) -> dict | None:
+    """A run's result lines as one. A run that went on after it stopped (a background task woke it,
+    as before runs ended at their verdict) wrote a result line each time: its cost (total_cost_usd,
+    modelUsage) and API time are running totals, so the last line has them, but turns and tokens
+    are each stretch's own, so they're added up. The outcome is the last line's: a run past its
+    turn cap that went on is judged by how it ended. compare.py reads older runs' logs this way."""
+    if len(results) < 2:
+        return results[0] if results else None
+    last = results[-1]
+    usage = dict(last.get("usage") or {})
+    for key in TOKEN_KEYS:
+        usage[key] = sum(int((r.get("usage") or {}).get(key) or 0) for r in results)
+    return {**last, "num_turns": sum(int(r.get("num_turns") or 0) for r in results), "usage": usage}
+
+
+TOKEN_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
 
 
 def interpret(
