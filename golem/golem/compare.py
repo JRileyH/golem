@@ -32,6 +32,7 @@ import subprocess
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 
 from . import checklist, glance, ledger, plan, reports
@@ -64,7 +65,9 @@ COLUMNS = {
     "started": "ISO time: project made; job's first step began; step or run began; message said",
     "ended": "ISO time: job's last step ended; step or run ended",
     "wall_minutes": "job, step, run: from started to ended (a job still under way: to now)",
-    "waiting_minutes": "project, job: of the wall time, waiting on Riggy (check-ins and picks)",
+    "waiting_minutes": "project, job: of the wall time, waiting on Riggy at a check-in or pick",
+    "between_runs_minutes": "project, job, step: of the wall time, steps sitting between one run and the next: waiting on "
+    "Riggy's answer to a question a run asked (not in waiting_minutes), a usage limit, or a retry after a failure",
     "model": "project: its model/effort for every step ('' for each step's default); "
     "step: golem's choice of model/effort for each of its runs, in order; run: for it",
     "workflow": "job: the workflow it ran",
@@ -354,7 +357,7 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
     project = store.project(slug)
     if project is None:
         raise KeyError(slug)
-    total, leds, asks, out = Sums(), [], 0, []
+    total, leds, asks, out, idle = Sums(), [], 0, [], 0.0
     jobs = list(reversed(store.project_jobs(slug)))
     for n, job in enumerate(jobs, 1):
         steps, runs = store.steps(job.id), store.runs(job.id)
@@ -368,13 +371,15 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         job_asks = sum(1 for s in steps if s.kind in plan.ASKS and s.started_at)
         leds.append(led)
         asks += job_asks
-        out.append(_job_row(side, slug, n, job, steps, sums, led, job_asks))
+        between = {s.id: _between([r for r in runs if r["step_id"] == s.id]) for s in steps}
+        idle += sum(between.values())
+        out.append(_job_row(side, slug, n, job, steps, sums, led, job_asks, sum(between.values())))
         planners = {s.item.get("plan") for s in steps if s.item}
         for step in steps:
             mine, theirs = Sums(), [r for r in runs if r["step_id"] == step.id]
             for r in theirs:
                 mine.add(r, logs[r["id"]])
-            out.append(_step_row(side, slug, n, job, step, mine, planners))
+            out.append(_step_row(side, slug, n, job, step, mine, planners, between[step.id]))
             out += [_run_row(side, slug, n, job, step, r, logs[r["id"]]) for r in theirs]
             out += [_said_row(side, slug, n, job, step, m) for m in said if m.step_id == step.id]
         ids = {s.id for s in steps}
@@ -383,7 +388,7 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
     head = {
         "level": "project", "side": side, "project": slug, "name": project.name, "kind": project.tag,
         "mode": project.mode or "usual", "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
-        "started": project.created_at, "waiting_minutes": _minutes(sum(r.waiting_seconds for r in leds)),
+        "started": project.created_at, "waiting_minutes": _minutes(sum(r.waiting_seconds for r in leds)), "between_runs_minutes": _minutes(idle),
         "model": "/".join(x for x in (project.model, project.effort) if x), **total.columns(), "jobs": len(jobs),
         "fixes": sum(r.fixes for r in leds), "asks": asks, **_items(leds), **repo(settings.workspace_dir / slug),
         "url": settings.project_url(slug), "text": _flat(project.summary),
@@ -391,18 +396,19 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
     return [head, *out]
 
 
-def _job_row(side: str, slug: str, n: int, job: Job, steps: list[Step], sums: Sums, led: ledger.Row, asks: int) -> dict:
+def _job_row(side: str, slug: str, n: int, job: Job, steps: list[Step], sums: Sums, led: ledger.Row, asks: int, between: float) -> dict:
     started = [s.started_at for s in steps if s.started_at]
     ended = [s.ended_at for s in steps if s.ended_at]
     return {
         "level": "job", "side": side, "project": slug, "job_n": n, "job": job.id, "name": plan.title(job), "kind": job.start,
         "mode": job.mode or "usual", "state": job.state, "started": min(started, default=""), "ended": max(ended, default=""),
-        "wall_minutes": _minutes(led.wall_seconds), "waiting_minutes": _minutes(led.waiting_seconds), "workflow": job.workflow,
+        "wall_minutes": _minutes(led.wall_seconds), "waiting_minutes": _minutes(led.waiting_seconds),
+        "between_runs_minutes": _minutes(between), "workflow": job.workflow,
         **sums.columns(), "fixes": led.fixes, "asks": asks, **_items([led]), "text": _flat(job.request),
     }  # fmt: skip
 
 
-def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, planners: set) -> dict:
+def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, planners: set, between: float) -> dict:
     item = step.item or {}
     if step.id in planners:
         role = "plan"
@@ -415,6 +421,7 @@ def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, pl
         "level": "step", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position, "step": step.id,
         "name": step.name, "kind": step.kind, "role": role, "mode": job.mode or "usual", "state": step.state,
         "started": step.started_at or "", "ended": step.ended_at or "", "wall_minutes": _minutes(took) if step.ended_at else "",
+        "between_runs_minutes": _minutes(between) if sums.runs > 1 else "",
         "model": " ".join(sums.engines), "node": step.node_id, "visit": step.visit or "", "turn": step.turn, "port": step.port,
         "max_turns": step.max_turns or "", "outcomes": " ".join(sums.outcomes), **(sums.columns() if sums.runs else {}),
         **({"item_n": item.get("n", ""), "item_of": item.get("of", ""), "item_try": item.get("try", ""),
@@ -422,6 +429,11 @@ def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, pl
             "item_files": " ".join(item.get("files") or []), "item_check": _flat(item.get("check"))} if item else {}),
         "text": _flat(step.summary), "problem": _flat(step.problem or item.get("problem")), "error": _flat(step.error),
     }  # fmt: skip
+
+
+def _between(runs: list[dict]) -> float:
+    """Seconds a step sat between one of its runs ending and the next starting."""
+    return sum(ledger.seconds(a["ended_at"], b["started_at"]) for a, b in pairwise(runs))
 
 
 def _run_row(side: str, slug: str, n: int, job: Job, step: Step | None, run: dict, log: Log) -> dict:

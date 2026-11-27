@@ -69,6 +69,11 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     run = next(r for r in golem.store.runs(fish.id) if r["phase"] == "change")
     with gzip.open(run["log_path"], "wt") as out:  # what a real run would have logged
         out.writelines(json.dumps(e) + "\n" for e in LOG)
+    # It asked a question, and its session carried on 50 minutes later with his answer.
+    again = golem.store.start_run(fish.id, "change", run["model"], "", run["step_id"])
+    golem.store.finish_run(again, "verdict", num_turns=2, cost_usd=0.2, input_tokens=10, output_tokens=5)
+    for run_id, began, ended in ((run["id"], "10:00", "10:10"), (again, "11:00", "11:05")):
+        golem.store.db.execute("UPDATE runs SET started_at = ?, ended_at = ? WHERE id = ?", (f"2026-11-26T{began}:00+00:00", f"2026-11-26T{ended}:00+00:00", run_id))
     checkout = golem.settings.workspace_dir / "fish"
     checkout.mkdir(parents=True, exist_ok=True)
     git(checkout, "init", "-q", "-b", "main")
@@ -115,13 +120,19 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
 
     # The usual change: what its run's log says that the runs table doesn't.
     change = next(r for r in rows if r["level"] == "step" and r["side"] == "B" and r["name"] == "change")
-    # Turns and tokens from both stretches (golem kept 3 turns and 1000 tokens), cost and API time the last line's running totals.
-    assert (change["turns"], change["tokens_in"], change["tokens_out"], change["result_lines"], change["past_max_turns"]) == ("7", "1000", "100", "2", "1")
+    # The first run's turns and tokens from both its stretches (golem kept 3 turns and 1000 tokens), its cost and API time
+    # the last line's running totals; the second run has no log, so golem's record of it stands.
+    assert (change["turns"], change["tokens_in"], change["tokens_out"], change["result_lines"], change["past_max_turns"]) == ("9", "1010", "105", "2", "1")
     assert (change["fresh_tokens_in"], change["cache_write_tokens"], change["cache_read_tokens"], change["api_minutes"]) == ("50", "200", "750", "1.5")
     assert (change["tool_calls"], change["tool_errors"], change["tools"]) == ("3", "1", "Bash 2, Edit 1")  # a subagent's too, the verdict aside
     assert (change["claude_models"], change["claude_code"]) == ("claude-opus-5-5 0.9000, claude-haiku-5-5 0.1000", "2.9.1")
     assert (change["tests_minutes"], change["test_runs"], change["warnings"]) == ("2.0", "1", "ran out of turns")  # where its time went (glance.py)
     assert "bin/test" in change["slowest_call"] and change["slowest_call"].endswith("(120s)")
+
+    assert (change["runs"], change["between_runs_minutes"], change["outcomes"]) == ("2", "50.0", "verdict verdict")
+    fish_job = next(r for r in rows if r["level"] == "job" and r["job"] == str(fish.id))
+    assert fish_job["between_runs_minutes"] == "50.0" and next(r for r in rows if r["level"] == "project" and r["side"] == "B")["between_runs_minutes"] == "50.0"
+    assert plan_row["between_runs_minutes"] == ""  # one run: nothing between
 
     # Each step's runs follow it, and what golem said about it.
     at = rows.index(change)
