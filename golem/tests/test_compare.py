@@ -62,7 +62,11 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
         out.writelines(json.dumps(e) + "\n" for e in LOG)
     checkout = golem.settings.workspace_dir / "fish"
     checkout.mkdir(parents=True, exist_ok=True)
-    git(checkout, "init", "-q")
+    git(checkout, "init", "-q", "-b", "main")
+    (checkout / "README.md").write_text("# Fish\n")
+    git(checkout, "add", "README.md")
+    git(checkout, "commit", "-qm", "first")  # where the checkout stays: the jobs merge on GitHub
+    git(checkout, "checkout", "-q", "-b", "work")
     (checkout / "app.py").write_text("a\nb\nc\n")
     (checkout / "tests").mkdir(exist_ok=True)
     (checkout / "tests" / "test_app.py").write_text("x\ny")
@@ -70,7 +74,9 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     (checkout / "logo.png").write_bytes(b"\x89PNG\0\0\n\n")
     os.symlink("/etc/hosts", checkout / "hosts")  # never followed
     git(checkout, "add", "app.py", "tests/test_app.py", "package-lock.json", "logo.png", "hosts")
-    git(checkout, "commit", "-qm", "first")
+    git(checkout, "commit", "-qm", "the work")
+    git(checkout, "update-ref", "refs/remotes/origin/main", "work")  # as a job's fetch leaves it
+    git(checkout, "checkout", "-q", "main")
 
     text = compare.table(golem.store, golem.settings, "tree-cards", "fish")
     rows = list(csv.DictReader(io.StringIO(text)))
@@ -109,8 +115,8 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     assert (a["name"], a["mode"], a["jobs"], a["items"], a["planning_cost_usd"], a["repo_files"]) == ("Tree Cards", "usual", "2", "2", "1.0000", "")
     assert float(a["cost_usd"]) == sum(float(r["cost_usd"]) for r in rows if r["level"] == "job" and r["side"] == "A")
     assert (b["name"], b["tool_calls"], b["items"], b["url"]) == ("Fish", "3", "", golem.settings.project_url("fish"))
-    assert (b["repo_files"], b["repo_lines"], b["repo_test_files"], b["repo_test_lines"], b["repo_commits"]) == ("5", "5", "1", "2", "1")
-    assert b["repo_types"].startswith(".py 2, ")
+    assert (b["repo_files"], b["repo_lines"], b["repo_test_files"], b["repo_test_lines"], b["repo_commits"]) == ("6", "6", "1", "2", "2")
+    assert b["repo_types"].startswith(".py 2, ") and b["repo_mb"] == "0.0"
 
 
 def test_the_command_says_what_its_columns_mean_and_what_it_cant_find(golem, tmp_path, capsys):

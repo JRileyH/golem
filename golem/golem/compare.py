@@ -101,11 +101,12 @@ COLUMNS = {
     "item_do": "step: what to do",
     "item_files": "step: the files to touch or read first",
     "item_check": "step: the command that exits 0 once the item works",
-    "repo_files": "project: files tracked in its checkout",
+    "repo_files": "project: files on its main (origin/main, as golem last fetched it)",
+    "repo_mb": "project: their size in MB, photos and all",
     "repo_lines": "project: lines in them, lockfiles and binary files aside",
     "repo_test_files": "project: tracked files that look like tests",
     "repo_test_lines": "project: lines in those",
-    "repo_commits": "project: commits on its checkout's branch",
+    "repo_commits": "project: commits on its main",
     "repo_types": "project: tracked files by extension, most first",
     "url": "project: where it's hosted",
     "text": "project: its summary; job: Riggy's request; step: what it did, or what it's waiting for",
@@ -119,6 +120,11 @@ LOCKFILES = {
 }  # fmt: skip
 TESTS = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)/|(^|/)test_[^/]*$|[._-](test|spec)\.[^/]+$")
 BIGGEST = 5 * 1024 * 1024  # a file this big isn't read for its lines
+# Not read for their lines: a project's photos alone can come to hundreds of MB.
+BINARY = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp", ".tif", ".tiff", ".heic", ".woff", ".woff2", ".ttf",
+    ".otf", ".eot", ".mp3", ".mp4", ".webm", ".ogg", ".wav", ".pdf", ".zip", ".gz", ".tgz", ".wasm",
+}  # fmt: skip
 
 
 # --- a run's log ---------------------------------------------------------------------------------
@@ -230,39 +236,60 @@ class Sums:
 
 
 def repo(path: Path) -> dict[str, object]:
-    """The size of what's in a project's checkout: its tracked files and their lines, those that look
-    like tests, its commits and its kinds of file. Nothing if there's no checkout or git can't read it.
-    Workers wrote these files, so a link is never followed and a huge file isn't read."""
+    """The size of what a project has built: the files on its `main` and their lines, those that look
+    like tests, its commits and its kinds of file. Read from git, at origin/main as the jobs last
+    fetched it: they work in trees of their own and merge on GitHub, so the checkout's own files can
+    be as old as its first commit. Nothing if there's no checkout or git can't read it."""
     if not (path / ".git").exists():
         return {}  # not a checkout: git would find whatever repo is around it
-    try:
-        listed = subprocess.run(["git", "-C", str(path), "ls-files", "-z"], capture_output=True, check=True, timeout=60).stdout
-        commits = subprocess.run(["git", "-C", str(path), "rev-list", "--count", "HEAD"], capture_output=True, check=False, timeout=60).stdout
-    except (OSError, subprocess.SubprocessError):
+    ref = "origin/main" if _git(path, "rev-parse", "--verify", "--quiet", "origin/main^{commit}") is not None else "HEAD"
+    tree = _git(path, "ls-tree", "-r", "-z", "-l", ref)
+    if tree is None:
         return {}
-    names = [n for n in listed.decode(errors="replace").split("\0") if n]
-    lines = test_files = test_lines = 0
-    kinds: Counter[str] = Counter()
-    for name in names:
-        kinds[Path(name).suffix.lower() or Path(name).name] += 1
-        found = path / name
-        is_test = bool(TESTS.search(name))
-        test_files += is_test
-        try:
-            if Path(name).name in LOCKFILES or found.is_symlink() or not found.is_file() or found.stat().st_size > BIGGEST:
-                continue
-            data = found.read_bytes()
-        except OSError:
-            continue
-        if b"\0" in data[:8192]:
-            continue  # binary
-        n = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
-        lines += n
-        test_lines += n if is_test else 0
+    files = []  # (path, mode, blob, size)
+    for entry in tree.decode(errors="replace").split("\0"):
+        meta, _, name = entry.partition("\t")
+        parts = meta.split()
+        if len(parts) == 4 and parts[1] == "blob":
+            files.append((name, parts[0], parts[2], int(parts[3]) if parts[3].isdigit() else 0))
+    readable = [
+        (name, blob) for name, mode, blob, size in files
+        if mode != "120000" and Path(name).name not in LOCKFILES and Path(name).suffix.lower() not in BINARY and size <= BIGGEST
+    ]  # fmt: skip
+    lines_of = _lines(_git(path, "cat-file", "--batch", stdin="".join(f"{b}\n" for _, b in readable).encode()) or b"", readable)
+    tests = [name for name, *_ in files if TESTS.search(name)]
+    kinds = Counter(Path(name).suffix.lower() or Path(name).name for name, *_ in files)
+    commits = _git(path, "rev-list", "--count", ref) or b""
     return {
-        "repo_files": len(names), "repo_lines": lines, "repo_test_files": test_files, "repo_test_lines": test_lines,
+        "repo_files": len(files), "repo_mb": f"{sum(f[3] for f in files) / 1e6:.1f}", "repo_lines": sum(lines_of.values()),
+        "repo_test_files": len(tests), "repo_test_lines": sum(lines_of.get(t, 0) for t in tests),
         "repo_commits": commits.decode().strip(), "repo_types": ", ".join(f"{k} {n}" for k, n in kinds.most_common(15)),
     }  # fmt: skip
+
+
+def _lines(batch: bytes, asked: list[tuple[str, str]]) -> dict[str, int]:
+    """Each text file's lines, from `git cat-file --batch`'s answers in the order asked (binaries aside)."""
+    out, at = {}, 0
+    for name, _ in asked:
+        end = batch.find(b"\n", at)
+        head = batch[at:end].split()
+        if end < 0 or len(head) != 3:
+            break
+        size = int(head[2])
+        data = batch[end + 1 : end + 1 + size]
+        at = end + 1 + size + 1
+        if b"\0" not in data[:8192]:
+            out[name] = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+    return out
+
+
+def _git(path: Path, *args: str, stdin: bytes | None = None) -> bytes | None:
+    """What git printed, or None if it failed."""
+    try:
+        done = subprocess.run(["git", "-C", str(path), *args], input=stdin, capture_output=True, check=False, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
 
 
 # --- the rows ------------------------------------------------------------------------------------
