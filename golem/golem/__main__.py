@@ -8,7 +8,6 @@ import os
 
 import uvicorn
 
-from . import plan
 from .bot import Bot
 from .config import Settings
 from .deployer_client import DeployerClient, OfflineDeployer
@@ -32,7 +31,6 @@ async def main() -> None:
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     # A new install starts empty, and takes nothing from the org unasked: adopting brings a repo back.
     store = Store(settings.state_dir / "golem.db")
-    store.suggest_defaults(plan.SUGGESTED_KEY, plan.SUGGESTED)
 
     if settings.harness == "fake":
         harness, workspace = FakeHarness(), LocalWorkspace(settings.workspace_dir)
@@ -51,7 +49,6 @@ async def main() -> None:
     # With the fake harness there's no real code to deploy: the pretend GitHub's commits don't exist.
     deploys = OfflineDeployer(settings.project_url("{slug}")) if settings.harness == "fake" else deployer
     scheduler = Scheduler(settings, store, chat, harness, workspace, prompts, deploys, agents)
-    scheduler.library.seed()  # the stage blocks' texts, brought up to date with golem's
     bot = Bot(settings, store, chat, scheduler, harness, workspace, prompts, deployer)
 
     server = uvicorn.Server(uvicorn.Config(create_app(settings, store, scheduler, bot, push), host="0.0.0.0", port=8000, access_log=False))

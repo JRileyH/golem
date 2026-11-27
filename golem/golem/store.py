@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     summary TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT '',  -- unused: its default mode, when golem had modes (checklist mode, gone)
+    mode TEXT NOT NULL DEFAULT '',  -- the mode (modes.py) its requests run in unless they ask for another, '' for golem's: Riggy's setting
     model TEXT NOT NULL DEFAULT 'opus',
     effort TEXT NOT NULL DEFAULT 'high',
     paused INTEGER NOT NULL DEFAULT 0,
@@ -60,13 +60,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     worktree INTEGER NOT NULL DEFAULT 0, -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
     start TEXT NOT NULL DEFAULT 'change', -- where it came from and what it may do (STARTS)
     workflow TEXT NOT NULL DEFAULT '',   -- the workflow it runs, by key ('' from before workflows)
-    mode TEXT NOT NULL DEFAULT '',       -- unused: the mode it ran in, when golem had modes ('checklist': cl-trees' jobs)
+    mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in (modes.py): asked for, or settled when it starts; '' until then
     graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
-    vars TEXT NOT NULL DEFAULT '{}',     -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
-    agent TEXT NOT NULL DEFAULT '',      -- who does its agent steps (AGENTS): '' for Claude Code
-    model TEXT NOT NULL DEFAULT '',      -- the model every agent step of it runs, over every other choice (plan.engine); '' for each step's
-    effort TEXT NOT NULL DEFAULT ''      -- and the effort
+    vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -77,7 +74,8 @@ CREATE TABLE IF NOT EXISTS notes (
     step_id INTEGER,                 -- for one step rather than the next
     node_id TEXT NOT NULL DEFAULT '' -- for one block of the workflow rather than the next (a check-in's reply_to)
 );
--- The text of each part of a stage block (stages.py): golem's, or Riggy's once he's changed it.
+-- Unused since modes (modes.py): the stage blocks' texts as Riggy changed them in Settings → Blocks, kept for
+-- `python -m golem.modes export` to turn into a prompt set.
 CREATE TABLE IF NOT EXISTS stage_texts (
     stage TEXT NOT NULL,
     part TEXT NOT NULL,              -- base, plan, <setting>.<option> or care.<level>
@@ -161,8 +159,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     label TEXT NOT NULL DEFAULT '',  -- which device, from its browser
     created_at TEXT NOT NULL
 );
--- The model and effort for each kind of agent step (its name: spec, docs, fix…), set on
--- the status page. Empty means not set here. The name '*' is every other kind.
+-- Unused since modes (modes.py): each kind of agent step's model and effort as Settings had them, kept for
+-- `python -m golem.modes export` to turn into a model config. The name '*' is every other kind.
 CREATE TABLE IF NOT EXISTS defaults (
     name TEXT PRIMARY KEY,
     model TEXT NOT NULL DEFAULT '',
@@ -242,13 +240,10 @@ MIGRATIONS = {
         "worktree": "INTEGER NOT NULL DEFAULT 0",
         "start": "TEXT NOT NULL DEFAULT 'change'",
         "workflow": "TEXT NOT NULL DEFAULT ''",
-        "mode": "TEXT NOT NULL DEFAULT ''",  # unused (golem has no modes): kept with cl-trees' jobs
+        "mode": "TEXT NOT NULL DEFAULT ''",
         "graph": "TEXT NOT NULL DEFAULT ''",
         "graph_hash": "TEXT NOT NULL DEFAULT ''",
         "vars": "TEXT NOT NULL DEFAULT '{}'",
-        "agent": "TEXT NOT NULL DEFAULT ''",
-        "model": "TEXT NOT NULL DEFAULT ''",
-        "effort": "TEXT NOT NULL DEFAULT ''",
     },
     "proposals": {"issue": "INTEGER", "card": "TEXT NOT NULL DEFAULT '{}'"},
     "runs": {"step_id": "INTEGER", "glance": "TEXT NOT NULL DEFAULT ''"},  # glance: where its time went (glance.py), once it ended
@@ -297,9 +292,6 @@ MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
 CHANGES_AT_ONCE = (1, 2, 3, 4)  # what a project's parallel_jobs can be
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-# Who can do a job's agent steps besides Claude Code (Job.agent): OpenCode (opencode.py), whose
-# models are its providers', named provider/model.
-AGENTS = ("opencode",)
 
 
 def now() -> str:
@@ -315,6 +307,7 @@ class Project:
     slug: str
     name: str
     summary: str
+    mode: str
     model: str  # "" for each step's default (plan.engine)
     effort: str
     paused: bool
@@ -455,13 +448,10 @@ class Job:
     worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
     start: str = "change"  # where it came from (STARTS)
     workflow: str = ""  # the workflow it runs, by key; "" from before workflows
-    mode: str = ""  # unused: the mode it ran in, when golem had modes ("checklist": cl-trees' jobs)
+    mode: str = ""  # the mode it runs in (modes.py): asked for, or settled when it starts (Scheduler.pin)
     graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
-    agent: str = ""  # who does its agent steps (AGENTS): "" for Claude Code
-    model: str = ""  # the model every agent step of it runs, over every other choice (plan.engine): an arm of a trial's
-    effort: str = ""
 
 
 # A job's columns but those only its own page needs (its graph and vars, which can be large): for listing many.
@@ -555,8 +545,8 @@ class Store:
                 self.db.execute("DELETE FROM kv WHERE key = ?", (key,))
             self.put("workflow_files", "1")
         if self.get("golems_modes") is None:
-            # Modes were Riggy's to make, each a tab of a workflow; then golem's (checklist), now none:
-            # none of the old ones was among them.
+            # Modes were Riggy's to make, each a tab of a workflow; now they're golem's (plan.MODES),
+            # and none of the old ones is among them.
             self.db.execute("DROP TABLE IF EXISTS modes")
             self.db.execute("UPDATE projects SET mode = ''")
             self.put("golems_modes", "1")
@@ -579,11 +569,11 @@ class Store:
     # --- projects -------------------------------------------------------------
 
     def add_project(
-        self, slug: str, name: str, summary: str, model: str = "", effort: str = ""
+        self, slug: str, name: str, summary: str, mode: str = "", model: str = "", effort: str = ""
     ) -> Project:
         self.db.execute(
-            "INSERT INTO projects (slug, name, summary, model, effort, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (slug, name, summary, model, effort, now()),
+            "INSERT INTO projects (slug, name, summary, mode, model, effort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (slug, name, summary, mode, model, effort, now()),
         )
         return self.project(slug)
 
@@ -608,7 +598,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str | int) -> Project:
-        assert set(fields) <= {"name", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs", "vacuum"}, fields
+        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs", "vacuum"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -618,8 +608,8 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum)"
-                " SELECT ?, name, summary, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum"
+                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum)"
+                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum"
                 " FROM projects WHERE slug = ?",
                 (new, old),
             )
@@ -782,17 +772,15 @@ class Store:
     # --- jobs -----------------------------------------------------------------
 
     def add_job(
-        self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "", start: str = "",
-        agent: str = "", model: str = "", effort: str = "",
+        self, slug: str, kind: str, request: str, playbook: str, priority: int = 0, title: str = "", start: str = ""
     ) -> Job:
-        """A new job, which works in a tree of its own (Job.worktree): by Claude Code, or `agent` (AGENTS)."""
+        """A new job, which works in a tree of its own (Job.worktree)."""
         start = start or start_of(kind, playbook)
         assert start in (*STARTS, TRIAGE), start
-        assert agent in ("", *AGENTS), agent
         cur = self.db.execute(
-            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start, agent, model, effort)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
-            (slug, kind, request, playbook, priority, now(), now(), title, start, agent, model, effort),
+            "INSERT INTO jobs (slug, kind, request, playbook, priority, created_at, updated_at, title, worktree, start)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
+            (slug, kind, request, playbook, priority, now(), now(), title, start),
         )
         return self.job(cur.lastrowid)
 
@@ -1037,56 +1025,16 @@ class Store:
         self.db.execute("UPDATE shipments SET state = ?, ended_at = ? WHERE id = ?", (state, now(), shipment_id))
         return self.shipment(shipment_id)
 
-    # --- the stage blocks' texts (stages.py) -----------------------------------
+    # --- what Riggy set before modes (read by modes.py's export, to become a mode's files) -------
 
     def stage_texts(self) -> dict[tuple[str, str], dict]:
+        """The stage blocks' texts Riggy changed in Settings → Blocks, before prompt sets (modes.py)."""
         rows = self.db.execute("SELECT * FROM stage_texts").fetchall()
         return {(r["stage"], r["part"]): {**dict(r), "edited": bool(r["edited"])} for r in rows}
 
-    def put_stage_text(self, stage: str, part: str, text: str, seeded: str, edited: bool, upstream: str, sig: str) -> None:
-        self.db.execute(
-            "INSERT INTO stage_texts (stage, part, text, seeded, edited, upstream, sig, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-            " ON CONFLICT(stage, part) DO UPDATE SET text = excluded.text, seeded = excluded.seeded, edited = excluded.edited,"
-            " upstream = excluded.upstream, sig = excluded.sig, updated_at = excluded.updated_at",
-            (stage, part, text, seeded, int(edited), upstream, sig, now()),
-        )
-
-    def drop_stage_text(self, stage: str, part: str) -> None:
-        self.db.execute("DELETE FROM stage_texts WHERE stage = ? AND part = ?", (stage, part))
-
-    # --- defaults -------------------------------------------------------------
-
     def defaults(self) -> dict[str, tuple[str, str]]:
-        """{step name: (model, effort)}, "" where not set."""
+        """Each kind of step's model and effort, as Settings had them before model configs (modes.py)."""
         return {r["name"]: (r["model"], r["effort"]) for r in self.db.execute("SELECT * FROM defaults")}
-
-    def set_default(self, name: str, field: str, value: str) -> None:
-        assert field in ("model", "effort"), field
-        self.db.execute(
-            f"INSERT INTO defaults (name, {field}) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET {field} = excluded.{field}",
-            (name, value),
-        )
-
-    def suggest_defaults(self, key: str, suggested: dict[str, tuple[str, str]]) -> None:
-        """Golem's suggested defaults: the first time (per `key`) they fill what Riggy hasn't
-        set; after that, only kinds of step new since (with no row yet). What he changes or
-        unsets stays that way."""
-        first, have = self.get(key) is None, set(self.defaults())
-        for name, (model, effort) in suggested.items():
-            if not first and name in have:
-                continue
-            self.db.execute(
-                "INSERT INTO defaults (name, model, effort) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET "
-                "model = CASE WHEN model = '' THEN excluded.model ELSE model END, "
-                "effort = CASE WHEN effort = '' THEN excluded.effort ELSE effort END",
-                (name, model, effort),
-            )
-        self.put(key, "1")
-
-    def reset_defaults(self, suggested: dict[str, tuple[str, str]]) -> None:
-        """Every kind of step back to golem's suggestion, and "every step" unset."""
-        self.db.execute("DELETE FROM defaults")
-        self.db.executemany("INSERT INTO defaults (name, model, effort) VALUES (?, ?, ?)", [(n, *me) for n, me in suggested.items()])
 
     # --- proposals ------------------------------------------------------------
 

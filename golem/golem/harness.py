@@ -317,6 +317,10 @@ class FakeHarness:
         self.script = script
         self.calls: list[FakeCall] = []
 
+    async def free_models(self) -> list[str]:
+        """Standing in for OpenCode's (opencode.free_models)."""
+        return ["opencode/fake-free"]
+
     async def run(self, *, cwd, prompt, model, max_turns, log_path, env, effort=None, resume=None, schema=None, label=""):
         call = FakeCall(cwd, prompt, model, max_turns, resume, label, env, effort, schema)
         self.calls.append(call)

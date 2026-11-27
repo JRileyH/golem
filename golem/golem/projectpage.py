@@ -1,7 +1,7 @@
 """A project's page: its jobs on one side, the one being looked at on the other.
 
-On the left, the way to ask for something (always a job of its own, with its workflow picked
-or left to golem), golem's proposals for the project while there are some, and its latest
+On the left, the way to ask for something (always a job of its own, with its workflow and mode
+picked or left to golem), golem's proposals for the project while there are some, and its latest
 jobs and any still under way, newest first, each drawn by its route; the rest are on its All jobs
 page, to search (jobhistory.py). On the right, the job: where it is, what it's cost and what it
 needs from Riggy (answered right there), a note for its next step, its steps as a list, its
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 
-from . import plan, route
+from . import modes, plan, route
 from .conversation import proposals_card, thread
 from .ledger import Row
 from .pages import (LaneData, _count, _hidden, _money, action_form, ask_card, badge, headline, region, request_card, route_list,
@@ -33,6 +33,7 @@ class Picks:
     """What a request on the page can ask for, rather than leave to golem."""
 
     workflows: list[tuple[str, str]]  # (key, name): changes, then those that only look
+    modes: list[tuple[str, str]]  # (key, name): golem's modes (modes.py)
 
 
 def href(job: Job) -> str:
@@ -82,15 +83,18 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
 
 def ask_form(project: Project, picks: Picks) -> str:
     """A request: a job of its own. A workflow on Auto is golem's pick (the request call), as the
-    words say."""
+    words say; the mode on Auto, the project's default, else golem's (modes.py)."""
     flows = "".join(f"<option value='{escape(k)}'>{escape(n)}</option>" for k, n in picks.workflows)
+    modes = "".join(f"<option value='{escape(k)}'>{escape(name)}</option>" for k, name in picks.modes)
+    mode = f"<label>Mode <select name=mode><option value=auto>Auto</option>{modes}</select></label>" if modes else ""
     return (
         f"<form method=post action='/p/{escape(project.slug)}/ask' class='card ask-form' data-send>"
         "<label class=ask-label for=ask-text>Ask for…</label>"
         "<textarea id=ask-text name=text rows=2 required placeholder='A change, or a question about it…'></textarea>"
         "<div class=ask-row>"
         f"<label>Workflow <select name=workflow><option value=''>Auto</option>{flows}</select></label>"
-        "<button class=primary>Ask</button></div></form>"
+        + mode
+        + "<button class=primary>Ask</button></div></form>"
     )
 
 
@@ -126,12 +130,15 @@ def jobs_part(lanes: list[LaneData], selected: int | None, flows: dict[str, str]
 
 
 def what(lane: LaneData, flows: dict[str, str]) -> str:
-    return workflow_words(lane.job, flows)
+    return workflow_words(lane.job, lane.project, flows)
 
 
-def workflow_words(job: Job, flows: dict[str, str]) -> str:
-    """The job's workflow, in words."""
-    return escape(flows.get(plan.workflow_for(job)) or plan.what(job).capitalize())
+def workflow_words(job: Job, project: Project | None, flows: dict[str, str]) -> str:
+    """The job's workflow, and its mode unless it's golem's own default (modes.py), in words: "Change, OpenCode free"."""
+    key, mode = plan.workflow_for(job, project)
+    found = modes.load().get(mode)
+    named = found.name if found else mode  # a mode golem no longer has (cl-trees' "checklist") by its key
+    return escape(flows.get(key) or plan.what(job).capitalize()) + (f", {escape(named)}" if mode and mode != modes.DEFAULT else "")
 
 
 # --- the right: the job ------------------------------------------------------------------------

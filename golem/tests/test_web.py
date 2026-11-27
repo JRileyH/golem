@@ -387,11 +387,11 @@ def test_queue_order_settings_notes_pause_and_stop(golem, page):
     act(page, action="move", job=birds.id, value="last")
     assert golem.store.next_job(at="9999").id == trees.id
 
-    act(page, action="setting", slug="trees", name="model", value="sonnet")
-    assert golem.store.project("trees").model == "sonnet"
-    assert "can%27t%20be%20gpt" in act(page, action="setting", slug="trees", name="model", value="gpt")
-    act(page, action="setting", slug="trees", name="model", value="")
-    assert golem.store.project("trees").model == ""  # back to each step's default
+    act(page, action="setting", slug="trees", name="mode", value="opencode-free")
+    assert golem.store.project("trees").mode == "opencode-free"
+    assert "no%20setting%20model" in act(page, action="setting", slug="trees", name="model", value="sonnet")  # its mode says
+    act(page, action="setting", slug="trees", name="mode", value="")
+    assert golem.store.project("trees").mode == ""  # back to golem's default
 
     golem.store.update_job(trees.id, state="waiting")
     assert "Picking%20the%20job%20back%20up" in act(page, action="note", job=trees.id, value="use oak first")
@@ -426,7 +426,7 @@ def test_a_step_before_it_starts_can_get_its_own_model_effort_and_context(golem,
     job = page.job
     assert golem.store.steps(job.id) == []  # not started: its steps are planned, not stored
     html = page.get(f"/jobs/{job.id}/planned/2?part=sheet").text  # spec
-    assert "Runs on</dt><dd>opus/high" in html and "default: opus" in html
+    assert "Runs on</dt><dd>opus/xhigh" in html and "default: opus" in html  # Claude power's spec
     act(page, action="step-setting", job=job.id, position=2, name="model", value="haiku")
     spec = by_name(golem, job, "spec")  # still to come: its block keeps the setting
     assert spec.model == "haiku" and golem.store.steps(job.id) == []
@@ -458,17 +458,18 @@ def test_step_context_and_settings_reach_only_that_step(golem):
         scaffold = by_name(golem, job, "scaffold")
         await control.note(job.id, "use plain CSS", scaffold.id, scaffold.position)
         await control.step_setting(job.id, scaffold.id, scaffold.position, "model", "sonnet")
-        golem.store.set_default("spec", "effort", "low")
+        spec = by_name(golem, job, "spec")
+        await control.step_setting(job.id, spec.id, spec.position, "effort", "low")
         await golem.until("PR")
         spec_call, scaffold_call = golem.harness.calls[-2:]
         assert (spec_call.model, spec_call.effort) == ("opus", "low") and "use plain CSS" not in spec_call.prompt
-        assert (scaffold_call.model, scaffold_call.effort) == ("sonnet", "high") and "use plain CSS" in scaffold_call.prompt
-        assert [r["model"] for r in golem.store.runs(job.id)] == ["opus/low", "sonnet/high"]
+        assert (scaffold_call.model, scaffold_call.effort) == ("sonnet", "medium") and "use plain CSS" in scaffold_call.prompt
+        assert [r["model"] for r in golem.store.runs(job.id)] == ["opus/low", "sonnet/medium"]
 
     asyncio.run(go())
 
 
-def test_insights_and_defaults(golem, page):
+def test_insights_and_modes_in_settings(golem, page):
     job = page.job
     start(golem, job, "mvp")
     spec = by_name(golem, job, "spec")
@@ -486,25 +487,19 @@ def test_insights_and_defaults(golem, page):
                             "ended_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now', '-1 day', '+20 minutes')")
     golem.store.db.execute("UPDATE steps SET started_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now', '-1 day'), "
                             "ended_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now', '-1 day', '+5 minutes') WHERE started_at IS NOT NULL")
-    html = page.get("/settings").text  # the defaults, with how each kind of step has done this month
-    assert "spec</b> <span class=muted>20m a step · $1.50 a step" in html
-    assert "Sign in to change them" in html and "/act" not in html.split("id=defaults")[1]
+    html = page.get("/settings").text  # golem's modes, what each is made of
+    assert "<h2>Modes</h2>" in html and "<b>Claude power</b> <span class=badge>default</span>" in html
+    assert "OpenCode · models: OpenCode free · prompts: golem&#x27;s own" in html and "default-mode" not in html  # signed out
 
     sign_in(page)
-    assert "Every%20docs%20step" in act(page, action="default", kind="docs", name="model", value="haiku")
-    assert golem.store.defaults()["docs"] == ("haiku", "")
-    assert "No%20kind%20of%20step" in act(page, action="default", kind="nope", name="model", value="haiku")
-    act(page, action="default", kind="*", name="effort", value="medium")
     docs = by_name(golem, job, "docs")
-    assert "haiku/medium" in page.get(sheet_of(job, docs)).text
+    assert "sonnet/medium" in page.get(sheet_of(job, docs)).text  # Claude power's docs
+    assert "OpenCode%20free%20mode" in act(page, action="default-mode", value="opencode-free")
+    assert golem.store.get("default_mode") == "opencode-free"
     html = page.get("/settings").text
-    assert "docs</b> <span class=muted>not run yet · suggested sonnet/medium" in html and "reset-defaults" in html
-    assert "GOLEM_MODEL" not in html and "GOLEM_EFFORT" not in html  # every row's unset reads "default: …"
-
-    assert "back%20to%20golem" in act(page, action="reset-defaults")
-    assert golem.store.defaults()["docs"] == ("sonnet", "medium") and "*" not in golem.store.defaults()
-    assert "suggested sonnet" not in page.get("/settings").text  # each at its suggestion
-    assert "sonnet/medium" in page.get(sheet_of(job, docs)).text
+    assert "<option value='opencode-free' selected>OpenCode free</option>" in html and "<b>OpenCode free</b> <span class=badge>default</span>" in html
+    assert "no%20mode%20called%20nope" in act(page, action="default-mode", value="nope")
+    assert "Claude%20power%20mode" in act(page, action="default-mode", value="")
 
 
 def test_proposals_how_often_and_thumbs_up_or_down(golem, page):
@@ -796,7 +791,7 @@ def new(client, path="/new", **form):
     return r
 
 
-def test_a_new_project_is_named_on_its_form(golem, app):
+def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
     from test_flow import TREES
 
     assert "Sign%20in" in app.get("/new", follow_redirects=False).headers["location"]
@@ -807,23 +802,23 @@ def test_a_new_project_is_named_on_its_form(golem, app):
     html = app.get("/new").text
     assert "<option value='web_app' selected" in html and "<option>Game</option>" in html
     assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
-    assert "name=mode>" not in html  # golem has no modes: no Mode field
+    assert "<select name=mode><option value='' selected>golem&#x27;s default</option><option value='claude-power'>Claude power</option>" in html
 
-    r = new(app, name="", slug="Bad Slug!", idea="", model="gpt")  # what's wrong comes back with what he wrote
+    r = new(app, name="", slug="Bad Slug!", idea="", mode="nope")  # what's wrong comes back with what he wrote
     html = r.text
     assert r.status_code == 400 and "Name it." in html and "Say what it&#x27;s for." in html and "An address is 2 to 31" in html
-    assert "Pick a model and effort from the lists." in html and "value='Bad Slug!'" in html and golem.store.projects() == []
+    assert "There&#x27;s no mode called nope." in html and "value='Bad Slug!'" in html and golem.store.projects() == []
     golem.workspace.repos.add("tree-cards")
     html = new(app, name="Tree Cards", idea="trees").text
     assert "tree-cards is taken, by a project or a repo. tree-cards-2 is free." in html and "value='Tree Cards'" in html
 
     golem.harness.script = [TREES]
     r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for identifying northeastern us trees", workflow="web_app",
-            tag="Game", model="opus", effort="")  # fmt: skip
+            mode="opencode-free", tag="Game")  # fmt: skip
     job = golem.store.active_job("trees")
     assert r.headers["location"] == f"/p/trees/jobs/{job.id}?msg=" + quote("Started Tree Cards: Tree Flashcard Game.")  # on to its page
     project = golem.store.project("trees")
-    assert (project.name, project.tag, project.model, job.state) == ("Tree Cards", "Game", "opus", "queued")
+    assert (project.name, project.tag, job.mode, job.state) == ("Tree Cards", "Game", "opencode-free", "queued")
     assert app.get("/inbox", follow_redirects=False).headers["location"] == "/"  # golem's own conversation is no more
     assert "Ask%20on%20a%20project" in app.post("/say", data={"channel": "inbox", "text": "hi"}, follow_redirects=False).headers["location"]
 
@@ -837,7 +832,7 @@ def test_the_new_project_page_adopts_a_repo(golem, app):
     assert golem.store.projects() == []
     golem.workspace.existing["mimic"] = ABOUT
     golem.harness.script = [BRIEF]
-    r = new(app, "/new/adopt", repo="mimic", words="cards for my table", name="", tag="")
+    r = new(app, "/new/adopt", repo="mimic", words="cards for my table", name="", mode="auto", tag="")
     job = golem.store.active_job("mimic")
     assert r.headers["location"].startswith(f"/p/mimic/jobs/{job.id}?msg=Adopting%20Mimic") and job.request == "cards for my table"
 
@@ -860,23 +855,24 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert "class=project-grid" in html and "href='/p/tree-cards'" in html and "Tree Flashcard Game" in html and "class='route small'" in html
 
     # With a job under way, asking still starts one of its own: it waits its turn.
-    golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Bigger Cards"}]})
-    r = app.post("/p/tree-cards/ask", data={"text": "make the cards bigger", "workflow": ""}, follow_redirects=False)
+    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
+    r = app.post("/p/tree-cards/ask", data={"text": "make the cards bigger", "workflow": "", "mode": "auto"}, follow_redirects=False)
     bigger = golem.store.project_jobs("tree-cards")[0]
     assert r.headers["location"] == f"/p/tree-cards/jobs/{bigger.id}?msg=" + quote(f"Started job #{bigger.id}: Bigger Cards.")
     assert bigger.id != job.id and (bigger.workflow, bigger.state, bigger.request) == ("change", "queued", "make the cards bigger")
     assert [m.text for m in golem.store.job_messages(bigger.id)] == ["make the cards bigger"]  # its activity starts with what he asked
-    golem.harness.script = by_label({"request": [{"workflow": "change", "title": "A New Logo"}]})
-    app.post("/p/tree-cards/ask", data={"text": "a new logo", "workflow": "options"})
+    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "A New Logo"}]})
+    app.post("/p/tree-cards/ask", data={"text": "a new logo", "workflow": "options", "mode": ""})
     logo = golem.store.project_jobs("tree-cards")[0]
-    assert (logo.workflow, logo.title) == ("options", "A New Logo")  # his picks over the call's
-    golem.harness.script = by_label({"request": [{"workflow": "question", "title": "Why So Slow"}]})
-    app.post("/p/tree-cards/ask", data={"text": "why is it slow?", "workflow": ""})
+    assert (logo.workflow, logo.mode, logo.title) == ("options", "", "A New Logo")  # his picks over the call's
+    golem.harness.script = by_label({"request": [{"workflow": "question", "mode": "none", "title": "Why So Slow"}]})
+    app.post("/p/tree-cards/ask", data={"text": "why is it slow?", "workflow": "", "mode": "auto"})
     why = golem.store.project_jobs("tree-cards")[0]
     assert why.start == "look" and why.priority == QUESTION_PRIORITY  # a question goes ahead of other work
     assert "Sign%20in%20first" in app.post("/p/tree-cards/ask", data={"text": "x"}, headers={"origin": "https://evil.example"},
                                             follow_redirects=False).headers["location"]  # fmt: skip
     assert "Write%20something%20first" in app.post("/p/tree-cards/ask", data={"text": " "}, follow_redirects=False).headers["location"]
+    assert "no%20mode" in app.post("/p/tree-cards/ask", data={"text": "x", "mode": "nope"}, follow_redirects=False).headers["location"]
 
     golem.store.update_job(logo.id, state="waiting")  # a reply, from its pane or Now, picks it back up
     act(app, action="note", job=logo.id, value="B")
@@ -887,7 +883,8 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert "name=action value='rename'" in html and "name=action value='project-slug'" in html and "action=/say" not in html
     act(app, action="rename", slug="tree-cards", value="Leaf Cards")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
-    assert "mode%20can%27t%20be%20rigorous" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")  # golem has no modes
+    assert "no%20mode" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")
+    assert golem.store.project("tree-cards").mode == ""
     assert "type%20tree-cards%20exactly" in act(app, action="project-delete", slug="tree-cards", value="trees")
     location = act(app, action="project-slug", slug="tree-cards", value="leaf-cards", back="/p/tree-cards/settings")
     assert location.startswith("/p/leaf-cards/settings?msg=Moved%20Leaf%20Cards%20to%20leaf-cards")
@@ -1192,14 +1189,14 @@ def test_a_job_from_checklist_mode_still_shows_its_steps_and_golem_passes_over_a
         assert (outcome.state, outcome.summary) == ("skipped", "Checklist mode is gone: passed over")
 
 
-def test_there_is_no_workflow_editor_and_blocks_are_in_settings(golem, page):
+def test_there_is_no_workflow_editor_and_modes_are_in_settings(golem, page):
     sign_in(page)
     for path in ("/workflows", "/workflows/1", "/workflows/1.json", "/static/flow.js", "/static/editor.js"):
         assert page.get(path).status_code == 404, path
     assert page.post("/workflows/1/save", json={}).status_code in (404, 405)
     html = page.get("/settings").text
-    assert "href=/settings/blocks>Blocks</a>" in html and "/settings/modes" not in html and "href='/workflows'" not in html
-    assert page.get("/settings/modes").status_code == 404
+    assert "id=modes" in html and "/settings/blocks" not in html and "href='/workflows'" not in html
+    assert page.get("/settings/blocks").status_code == 404  # what blocks say is a mode's prompt set now
 
 
 def test_a_project_page_opens_on_what_needs_riggy_else_whats_running_else_the_latest_change(golem, page):
@@ -1271,19 +1268,3 @@ def test_a_project_page_lists_its_latest_jobs_and_all_of_them_are_a_search_away(
     assert page.get("/p/nope/jobs").status_code == 404
 
 
-def test_blocks_are_golems_stage_texts_to_read_and_change(golem, page):
-    assert page.get("/settings/blocks", follow_redirects=False).status_code == 303
-    sign_in(page)
-    html = page.get("/settings/blocks").text
-    assert "<a href='/settings/blocks/review'><b>Review</b></a>" in html and "what it does: fixes, reports" in html
-    assert "<a href='/settings' class='item on'" in html and page.get("/settings/blocks/dance").status_code == 404
-    html = page.get("/settings/blocks/docs").text
-    assert "<code>message.changed</code>" in html and "Tells Riggy: what changed" in html and "Use golem" not in html
-    location = act(page, action="block-text", stage="docs", part="message.changed", value="Message: what changed.", back="/settings/blocks/docs#message.changed")
-    assert location.startswith("/settings/blocks/docs?msg=Saved%20Docs") and location.endswith("#message.changed")
-    html = page.get("/settings/blocks/docs").text
-    assert "Message: what changed.</textarea>" in html and "<span class=badge>changed</span>" in html and "Use golem's</button>" in html
-    assert "1 changed" in page.get("/settings/blocks").text
-    assert "golem%27s%20again" in act(page, action="block-reset", stage="docs", part="message.changed")
-    assert "Write%20something" in act(page, action="block-text", stage="docs", part="message.changed", value=" ")
-    assert "no%20part" in act(page, action="block-text", stage="docs", part="nope", value="x")

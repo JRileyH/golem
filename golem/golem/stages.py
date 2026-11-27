@@ -16,24 +16,19 @@ reports`), `care`, `extra` (instructions of its own, added after golem's) and `a
 earlier block it's about, if not the one golem works out: about.py). `derive` writes the
 outputs or contract its settings give it, so the engine walks it like any agent block.
 
-Riggy can change any part's text (Settings → Blocks): `Blocks` keeps golem's text and his,
-signed like workflows are, and tells him when golem's has changed since. When a job starts, each
-of its stage blocks takes the parts it uses with it (`parts_for`), so changing a text never
-touches work under way; when its step runs, `compose` puts them together with what the step is
-about.
+golem's texts are the master prompt set: a mode's prompt set (modes.py) changes parts of them.
+When a job starts, each of its stage blocks takes the parts it uses with it, in its mode's set
+(workflows.parts_for), so changing a text never touches work under way; when its step runs,
+`compose` puts them together with what the step is about.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-
-from .store import Store
 
 FOLDER = Path(__file__).resolve().parents[2] / "workflows" / "stages"  # in a checkout; golem says where otherwise (use)
 CARE = ("quick", "usual", "thorough")
@@ -206,104 +201,3 @@ def compose(node: dict, parts: dict[str, str], about_text: str = "", variant: st
     if about_text.strip():
         pieces.append(f"{ABOUT_HEAD}\n\n{about_text.strip()}")
     return "\n\n".join(p.strip() for p in pieces if p and p.strip())
-
-
-# --- golem's texts and Riggy's (Settings → Blocks) ----------------------------------------
-
-
-@dataclass
-class Part:
-    stage: str
-    name: str
-    text: str  # what blocks use: Riggy's, if he's changed it (and it's signed), else golem's
-    golems: str
-    edited: bool
-    upstream: bool  # golem's text changed since he changed his
-    tampered: bool  # his was changed outside golem: golem's is used
-
-
-def digest(text: str) -> str:
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
-
-
-class Blocks:
-    """Each stage part's text: golem's, or Riggy's once he's changed it. Kept in the database,
-    signed with a key workers never get, so a text changed outside the web app isn't used."""
-
-    def __init__(self, store: Store, secret: str):
-        self.store = store
-        self.key = hashlib.sha256(f"golem blocks:{secret}".encode()).digest()
-
-    def sign(self, stage: str, part: str, text: str) -> str:
-        return hmac.new(self.key, f"{stage}\0{part}\0{text}".encode(), hashlib.sha256).hexdigest()
-
-    def seed(self) -> None:
-        """Golem's texts in the database: new parts added, ones Riggy hasn't changed brought up to
-        date, his marked when golem's has changed since, and parts golem dropped let go (his kept)."""
-        check = hmac.new(self.key, b"check", hashlib.sha256).hexdigest()
-        rekeyed = self.store.get("blocks_key") != check
-        stored = self.store.stage_texts()
-        for stage, parts in golems_text().items():
-            for name, text in parts.items():
-                row = stored.pop((stage, name), None)
-                if row is None or (not row["edited"] and row["seeded"] != digest(text)):
-                    self.store.put_stage_text(stage, name, text, digest(text), False, "", self.sign(stage, name, text))
-                elif row["edited"]:
-                    upstream = "" if row["seeded"] == digest(text) else digest(text)
-                    sig = self.sign(stage, name, row["text"]) if rekeyed else row["sig"]
-                    self.store.put_stage_text(stage, name, row["text"], row["seeded"], True, upstream, sig)
-                elif rekeyed:
-                    self.store.put_stage_text(stage, name, row["text"], row["seeded"], False, "", self.sign(stage, name, row["text"]))
-        for (stage, name), row in stored.items():
-            if not row["edited"]:
-                self.store.drop_stage_text(stage, name)
-        self.store.put("blocks_key", check)
-
-    def parts(self, stage: str) -> list[Part]:
-        """A stage's parts as Riggy edits them: base, then each setting's, then care's."""
-        golems = golems_text().get(stage, {})
-        found = catalog().get(stage)
-        order = ["base", *(found.variants if found else []), *(f"{s.key}.{o}" for s in found.settings for o, _ in s.options)] if found else []
-        order += [f"care.{c}" for c in CARE] if found and found.care else []
-        stored = self.store.stage_texts()
-        out = []
-        for name in order:
-            row = stored.get((stage, name))
-            golem = golems.get(name, "")
-            ok = row is not None and hmac.compare_digest(row["sig"], self.sign(stage, name, row["text"]))
-            text = row["text"] if ok else golem
-            out.append(Part(stage, name, text, golem, bool(row and row["edited"]), bool(row and row["upstream"]), row is not None and not ok))
-        return out
-
-    def text(self, stage: str, name: str) -> str:
-        part = next((p for p in self.parts(stage) if p.name == name), None)
-        return part.text if part else ""
-
-    def parts_for(self, node: dict) -> dict[str, str]:
-        """The texts a stage block uses, as they are now: what a job takes with it when it starts."""
-        stage = catalog().get(node.get("stage") or "")
-        if stage is None:
-            return {}
-        names = stage.every_part(node)
-        return {p.name: p.text for p in self.parts(stage.key) if p.name in names and p.text}
-
-    def save(self, stage: str, name: str, text: str) -> None:
-        golems = golems_text().get(stage, {})
-        found = catalog().get(stage)
-        if found is None or name not in {p.name for p in self.parts(stage)} | set(golems):
-            raise KeyError(f"{stage} has no part {name}")
-        text = text.replace("\r\n", "\n").strip()
-        row = self.store.stage_texts().get((stage, name))
-        seeded = row["seeded"] if row else digest(golems.get(name, ""))
-        if text == golems.get(name, "").strip():
-            self.reset(stage, name)
-            return
-        self.store.put_stage_text(stage, name, text, seeded, True, row["upstream"] if row else "", self.sign(stage, name, text))
-
-    def reset(self, stage: str, name: str) -> None:
-        """A part back to golem's text."""
-        golem = golems_text().get(stage, {}).get(name, "")
-        if golem:
-            self.store.put_stage_text(stage, name, golem, digest(golem), False, "", self.sign(stage, name, golem))
-        else:
-            self.store.drop_stage_text(stage, name)

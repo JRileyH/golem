@@ -1,0 +1,5 @@
+name: Claude power
+about: How golem has always worked. Claude Code, with Opus wherever judgment counts and Sonnet for the scaffold and the docs.
+harness: claude
+models: claude-power
+prompts: golem

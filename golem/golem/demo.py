@@ -30,11 +30,10 @@ def main() -> None:
     store = Store(settings.state_dir / "golem.db")
     talk = Talk(store)
     scheduler = Scheduler(settings, store, talk, FakeHarness(), LocalWorkspace(settings.workspace_dir), Prompts(settings), None)
-    scheduler.library.seed()
     walk = Walker(store, scheduler)
 
     trees = walk.project("tree-cards", "Tree Cards", "A flashcard game for northeastern US trees.", tag="Game")
-    job = walk.job(trees, "new", "web_app", "a flashcard game for identifying northeastern us trees", "Tree Flashcard Game")
+    job = walk.job(trees, "new", "web_app", "", "a flashcard game for identifying northeastern us trees", "Tree Flashcard Game")
     walk.to(job, "your check-in")
     walk.wait(job, "Try the quiz: ten trees a round, photos of bark and leaves.\nhttp://tree-cards.localhost/\n\n"
                    "Try it and reply here: say it looks good, or what to change.")  # fmt: skip
@@ -114,10 +113,10 @@ class Walker:
             project = self.store.update_project(slug, tag=tag)
         return project
 
-    def job(self, project, start: str, workflow: str, request: str, title: str):
+    def job(self, project, start: str, workflow: str, mode: str, request: str, title: str):
         kind = {"new": "new"}.get(start, "change")
         job = self.store.add_job(project.slug, kind, request, workflow, title=title, start=start)
-        job = self.store.update_job(job.id, workflow=workflow)
+        job = self.store.update_job(job.id, workflow=workflow, mode=mode)
         self.scheduler.ensure_started(job)
         return self.store.job(job.id)
 

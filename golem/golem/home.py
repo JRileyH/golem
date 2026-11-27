@@ -1,6 +1,6 @@
 """Settings, the web app's top-level tab for golem itself: signing in, notifications, pausing
-all work, how many workers run at once, the version, the tags, and each kind of step's model
-and effort. (Now and Projects are now.py's.)
+all work, how many workers run at once, the version, the tags, and golem's modes, with the one
+requests run in by default. (Now and Projects are now.py's.)
 """
 
 from __future__ import annotations
@@ -8,9 +8,8 @@ from __future__ import annotations
 import json
 from html import escape
 
-from . import pwa
-from .insights import Report
-from .pages import (_hidden, action_form, defaults_table, signin_card)  # fmt: skip
+from . import modes, pwa
+from .pages import _hidden, action_form, select_form, signin_card
 from .store import MAX_WORKERS, Tag
 from .upgrade import SHOWN, Upgrades
 
@@ -22,8 +21,7 @@ COLORS = ("lapis", "rust", "verdigris", "ochre", "madder", "moss", "amethyst", "
 # --- settings ---------------------------------------------------------------------------
 
 
-def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str, tuple[str, str]],
-             fallback: tuple[str, str], report: Report, tags: list[Tag], counts: dict[str, int],
+def settings(signed_in: bool, paused: bool, found: dict[str, modes.Mode], default_mode: str, tags: list[Tag], counts: dict[str, int],
              upgrades: Upgrades | None = None, workers: int = 1, memory: int | None = None) -> str:  # fmt: skip
     if signed_in:
         account = (
@@ -46,12 +44,46 @@ def settings(signed_in: bool, paused: bool, kinds: list[str], defaults: dict[str
         "<section class=card><ul class=links-list>"
         + "<li><a href=/insights>Insights</a><span class=sub>Where the time and Claude usage go, by kind of step, project and model.</span></li>"
         "<li><a href=/reports>Reports</a><span class=sub>What got in the way of golem's workers, about golem itself.</span></li>"
-        + ("<li><a href=/settings/blocks>Blocks</a><span class=sub>What golem's stage blocks tell their agents, to change.</span></li>"
-           if signed_in else "")
         + "<li><a href=/projects>Public projects page ↗</a><span class=sub>A card for each live project, for anyone.</span></li>"
         "</ul></section>"
     )
-    return account + more + tags_card(tags, counts, signed_in) + defaults_table(kinds, defaults, fallback, report, signed_in)
+    return account + more + modes_card(found, default_mode, signed_in) + tags_card(tags, counts, signed_in)
+
+
+def modes_card(found: dict[str, modes.Mode], default_mode: str, signed_in: bool) -> str:
+    """golem's modes (modes.py), each what it's made of, and the one requests run in by default."""
+    own = found.get(modes.DEFAULT)
+    pick = ""
+    if signed_in and own:
+        others = tuple(k for k in found if k != modes.DEFAULT)
+        pick = (
+            "<div class=row-form><label>Requests run in</label>"
+            + select_form("mode", default_mode if default_mode in others else "", others, f"{own.name} (golem's own)",
+                          {k: found[k].name for k in others}, action="default-mode", back="/settings#modes")
+            + "</div>"
+        )
+    items = "".join(_mode(m, m.key == (default_mode if default_mode in found else modes.DEFAULT)) for m in found.values())
+    return (
+        "<section class=card id=modes><h2>Modes</h2><p class=sub>How golem works: who does the agent steps, on which "
+        "models, with which texts. A request runs in the mode it asks for, else its project's default, else golem's "
+        "(below). Each mode is files in golem's repo (<code>modes/</code>), and a job keeps the mode it started in.</p>"
+        f"{pick}<ul class=links-list>{items}</ul></section>"
+    )
+
+
+def _mode(m: modes.Mode, default: bool) -> str:
+    steps = "".join(
+        f"<li><b>{escape(k if k != '*' else 'every other step')}</b> {escape(c.model)}{escape('/' + c.effort) if c.effort else ''}</li>"
+        for k, c in m.models.steps.items()
+    )
+    made = f"{'Claude Code' if m.harness == 'claude' else 'OpenCode'} · models: {m.models.name} · prompts: {m.prompts.name}"
+    swaps = ", ".join(f"{a} → {b}" for a, b in m.workflows.items())
+    return (
+        f"<li><b>{escape(m.name)}</b>{' <span class=badge>default</span>' if default else ''}"
+        f"<span class=sub>{escape(made)}{escape(' · workflows: ' + swaps) if swaps else ''}</span>"
+        f"{f'<p class=hint>{escape(m.about)}</p>' if m.about else ''}"
+        f"<details><summary>Models</summary><ul class=plain>{steps}</ul></details></li>"
+    )
 
 
 def workers_card(workers: int, memory: int | None) -> str:

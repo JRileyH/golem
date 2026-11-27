@@ -1,0 +1,5 @@
+name: OpenCode free
+about: Every step on one of OpenCode Zen's free models, whichever is offered when the job starts (kept for the whole job).
+harness: opencode
+steps:
+  "*": {model: free}

@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 
 from . import engine as graphs
+from . import modes
 from .config import Settings
 from .store import ACTIVE, OPEN, TRIAGE, Job, Project, Step, Store
 
@@ -58,14 +59,33 @@ BOOKS = {"standard": "web_app", "rigorous": "web_app", "reckless": "web_app", "f
 NEW_BOOKS = ("standard", "rigorous", "reckless")
 
 
-def workflow_for(job: Job) -> str:
-    """The workflow (by key) a job runs: its own, or for a job that hasn't said, the one its
-    playbook became."""
+def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
+    """The workflow (by key) and mode a job runs: its own, or for a job that hasn't said, the
+    one its playbook became."""
     if job.workflow:
-        return job.workflow
+        return job.workflow, job.mode
     if job.playbook in NEW_BOOKS:
-        return "web_app"
-    return BOOKS.get(job.playbook, "change")
+        return "web_app", "" if job.playbook == "standard" else job.playbook
+    mode = project.mode if project and project.mode not in ("", "standard") else ""
+    return BOOKS.get(job.playbook, "change"), mode
+
+
+def mode_for(project: Project | None, asked: str = "") -> str:
+    """The mode a new job is in (modes.py): what Riggy picked for it, else its project's default
+    (his setting), else "" for golem's default, settled when it starts (mode_of)."""
+    found = modes.load()
+    if asked in found:
+        return asked
+    return project.mode if project and project.mode in found else ""
+
+
+def mode_of(store: Store, job: Job, project: Project | None = None) -> modes.Mode:
+    """The mode a job runs in: what it kept when it started, else what it will run in now."""
+    snap = snapshot(job) or {}
+    if kept := modes.kept(snap.get("mode")):
+        return kept
+    project = project or store.project(job.slug)
+    return modes.chosen(job.mode, project.mode if project else "", store.get("default_mode") or "")
 
 
 def snapshot(job: Job) -> dict | None:
@@ -122,12 +142,12 @@ def preview(settings: Settings, store: Store, job: Job) -> dict | None:
         from .triage import snapshot
 
         return snapshot()
-    key = workflow_for(job)
+    key, _ = workflow_for(job, store.project(job.slug))
     library = Library(store, settings.process_dir / "workflows", settings.web_password)
     wf = library.get(key)
     if wf is None or wf.start != job.start:
         wf = library.fallback(job.start)
-    return library.pin(wf, job.start) if wf else None
+    return library.pin(wf, job.start, mode_of(store, job)) if wf else None
 
 
 def block_of(settings: Settings, store: Store, job: Job, step: Step) -> dict | None:
@@ -160,37 +180,6 @@ def shown(steps: list[Step]) -> list[Step]:
     return [s for s in steps if s.kind not in graphs.CONTROL]
 
 
-# Golem's suggested model and effort for each kind of agent step, filled in once where Riggy
-# hasn't set them (Store.suggest_defaults); he changes them on the insights page. Opus thinks
-# hardest where everything after depends on it (spec, mvp) and where finding what's wrong
-# needs it (review); sonnet does the steps that follow a recipe or check a narrow diff.
-SUGGESTED = {
-    "spec": ("opus", "xhigh"),
-    "scaffold": ("sonnet", "medium"),
-    "mvp": ("opus", "xhigh"),
-    "buildout": ("opus", "high"),
-    "change": ("opus", "high"),
-    "options": ("opus", "high"),
-    "design": ("opus", "high"),  # a design round: taste, and a doc with real screens in it
-    "guide": ("opus", "high"),  # the design guide every later step follows
-    "apply": ("opus", "high"),  # restyling the whole app from the guide
-    "fix": ("opus", "high"),
-    "resolve": ("opus", "high"),  # merging main into a change: both intents have to survive
-    "review": ("opus", "xhigh"),
-    "docs": ("sonnet", "medium"),
-    "examine": ("sonnet", "high"),  # a question: a quick look and an answer
-    "propose": ("opus", "high"),  # finding what's worth doing, unprompted, takes judgment
-    "triage": ("opus", "high"),  # what in golem causes its workers' trouble: reading its code and their logs
-    "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
-    "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
-    # Stage blocks (stages.py), by stage, after a block's own name:
-    "stage:plan": ("opus", "xhigh"), "stage:build": ("opus", "high"), "stage:review": ("opus", "xhigh"),
-    "stage:docs": ("sonnet", "medium"), "stage:design": ("opus", "high"), "stage:fix": ("opus", "high"),
-    "stage:look": ("sonnet", "high"), "stage:options": ("opus", "high"),
-}  # fmt: skip
-SUGGESTED_KEY = "suggested_defaults_3"  # a new key fills in the whole set again, where unset
-
-
 @dataclass
 class Engine:
     """The model and effort an agent step runs with, and where each came from."""
@@ -201,48 +190,40 @@ class Engine:
     effort_from: str
 
     def __str__(self) -> str:
-        return f"{self.model}/{self.effort}"
+        return f"{self.model}/{self.effort}" if self.effort else self.model
 
 
 def engine(settings: Settings, store: Store, project: Project, step: Step, block: dict | None = None, job: Job | None = None) -> Engine:
-    """The most specific choice wins: the job's (a trial's arm runs every step on its own), this step's, the project's, the workflow block's own, the
-    default for steps like it (by name: docs, spec, fix…), then for its stage's blocks, the
-    default for every step, then GOLEM_MODEL and GOLEM_EFFORT."""
-    defaults = store.defaults()
-    named, every = defaults.get(step.name, ("", "")), defaults.get("*", ("", ""))
+    """The most specific choice wins: this step's (Riggy's pick on its sheet), its workflow block's
+    own, then the job's mode's model config (modes.py): for a step of its name, else of its stage,
+    else for every step. A Claude Code mode that leaves effort out runs GOLEM_EFFORT; OpenCode
+    runs a model's own default."""
     block = block or {}
-    stage = block.get("stage") or ""
-    staged = defaults.get(f"stage:{stage}", ("", "")) if stage else ("", "")
+    mode = mode_of(store, job, project) if job else modes.chosen("", project.mode, store.get("default_mode") or "")
+    choice, said = mode.models.choice(step.name, block.get("stage") or "")
     found = []
     for i, fallback in enumerate((settings.default_model, settings.default_effort)):
         choices = [
-            ((job.model if i == 0 else job.effort) if job else "", "this job"),
             (step.model if i == 0 else step.effort, "this step"),
-            (project.model if i == 0 else project.effort, "the project"),
             (block.get("model" if i == 0 else "effort") or "", "its workflow"),
-            (named[i], f"the {step.name} default"),
-            (staged[i], f"the {stage} blocks' default"),
-            (every[i], "the default"),
-            (fallback, "the default"),
+            ((choice.model if i == 0 else choice.effort) if choice else "", f"{mode.name} mode, for {said}"),
+            (fallback if mode.harness == "claude" else "", "the default"),
         ]
-        found.append(next((value, source) for value, source in choices if value))
+        found.append(next(((value, source) for value, source in choices if value), ("", "")))
     (model, model_from), (effort, effort_from) = found
     return Engine(model, effort, model_from, effort_from)
 
 
-def engine_words(project: Project) -> str:
-    """A project's model and effort in words: "each step's default model and effort"."""
-    if not project.model and not project.effort:
-        return "each step's default model and effort"
-    model = f"model {project.model}" if project.model else "each step's default model"
-    effort = f"{project.effort} effort" if project.effort else "default effort"
-    return f"{model}, {effort}"
-
-
 def settings_line(project: Project) -> str:
-    """A project's settings in a line: "Each step's default model and effort"."""
-    words = engine_words(project)
-    return words[0].upper() + words[1:]
+    """The mode a project's requests run in, in words: "OpenCode free mode", or "golem's default mode"."""
+    found = modes.load()
+    return f"{found[project.mode].name} mode" if project.mode in found else "golem's default mode"
+
+
+def running(job: Job, wf: object | None) -> str:
+    """What a job runs, in words: "Web app, rigorous mode", or "Change"."""
+    name = getattr(wf, "name", "") or job.workflow or job.playbook
+    return f"{name}, {job.mode} mode" if job.mode else name
 
 
 def what(job: Job) -> str:

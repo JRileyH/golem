@@ -51,6 +51,9 @@ class OpenCodeHarness:
     def __init__(self, binary: str = "opencode"):
         self.binary = binary
 
+    async def free_models(self) -> list[str]:
+        return await free_models(self.binary)
+
     async def run(self, *, cwd, prompt, model, max_turns, log_path, env, effort=None, resume=None, schema=None, label=""):
         wanted = schema or VERDICT_SCHEMA
         log_path.parent.mkdir(parents=True, exist_ok=True)

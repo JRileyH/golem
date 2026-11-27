@@ -58,6 +58,7 @@ RUN useradd --create-home --uid 1000 golem \
 COPY workflows /opt/golem/workflows
 COPY skills /opt/golem/skills
 COPY prompts /opt/golem/prompts
+COPY modes /opt/golem/modes
 
 WORKDIR /opt/golem/app
 COPY golem/pyproject.toml golem/uv.lock ./

@@ -42,8 +42,8 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, glance, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
-from .workflows import Library
+from . import about, adopt, engine, glance, modes, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
+from .workflows import Library, parts_for
 from .cards import Cards
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
@@ -336,7 +336,7 @@ class Scheduler:
                 continue
             wf = self.library.fallback("change")
             job = self.store.add_job(p.slug, "change", proposals.request(p), wf.key if wf else "feature", title=plan.clean_title(p.title))
-            job = self.store.update_job(job.id, workflow=wf.key if wf else "")
+            job = self.store.update_job(job.id, workflow=wf.key if wf else "", mode=plan.mode_for(project))
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)
@@ -367,9 +367,12 @@ class Scheduler:
         if job.start == TRIAGE:
             if job.graph:
                 return job
-            snap = triage.snapshot()
-            return self.store.update_job(job.id, workflow="triage", graph=json.dumps(snap), graph_hash=engine.digest(snap))
-        key = plan.workflow_for(job)
+            mode = plan.mode_of(self.store, job)
+            snap = {**triage.snapshot(), "mode": mode.record()}
+            return self.store.update_job(job.id, workflow="triage", mode=mode.key, graph=json.dumps(snap), graph_hash=engine.digest(snap))
+        project = self.store.project(job.slug)
+        key, _ = plan.workflow_for(job, project)
+        mode = plan.mode_of(self.store, job, project)
         wf = self.library.get(key)
         if wf is None or wf.start != job.start:
             fallback = self.library.fallback(job.start)
@@ -378,8 +381,9 @@ class Scheduler:
             log.warning("job %s: no workflow %s for it; using %s", job.id, key, fallback.key)
             self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use {key or 'its workflow'}, so it's running {fallback.name}.", job_id=job.id)
             wf = fallback
-        snap = self.library.pin(wf, job.start)
-        return self.store.update_job(job.id, workflow=wf.key, graph=json.dumps(snap), graph_hash=engine.digest(snap))
+        wf = self.library.instead(wf, mode)
+        snap = self.library.pin(wf, job.start, mode)
+        return self.store.update_job(job.id, workflow=wf.key, mode=mode.key, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
     def insert(self, job_id: int, steps: list[Step], after: int) -> None:
         """Steps golem puts in where they're needed (a fix, a catch-up with main, another round),
@@ -759,7 +763,7 @@ class Scheduler:
         text = block.get("instructions") or ""
         if block.get("stage"):  # golem's text for its settings, taken when the job started, and what it's about now
             found = about.about(snap.get("nodes") or {}, self.store.steps(job.id), step, job.request)
-            text = stages.compose(block, block.get("parts") or self.library.blocks.parts_for(block), found.text, found.variant)
+            text = stages.compose(block, block.get("parts") or parts_for(block, modes.load()[modes.DEFAULT].prompts), found.text, found.variant)
         if "$problem" in text:
             return intro, Template(text).safe_substitute(problem=step.problem or "(nothing reported)")
         if step.problem:
@@ -806,12 +810,17 @@ class Scheduler:
         as a step of its own name, or of `kind` (a vet step's survey)."""
         project = self.store.project(project.slug)
         current = self.store.step(step.id) or step
+        job = self.store.job(job.id) or job  # with its copy of its workflow, and its mode in it
+        mode = plan.mode_of(self.store, job, project)
         chosen = plan.engine(self.settings, self.store, project, replace(current, name=kind) if kind else current, block, job)
-        harness = self.agents.get(job.agent) if job.agent else self.harness
+        harness = self.harness if mode.harness == "claude" else self.agents.get(mode.harness)
         if harness is None:
-            return RunResult("error", error=f"golem has no {job.agent} worker")
-        if job.agent == "opencode" and "/" not in chosen.model:  # Claude Code's names mean nothing to it
-            return RunResult("error", error=f"an OpenCode job runs a provider/model, not {chosen.model}")
+            return RunResult("error", error=f"golem has no {mode.harness} worker")
+        if mode.harness == "opencode":
+            if chosen.model == modes.FREE:
+                chosen = replace(chosen, model=await self.free_model(job, harness))
+            if "/" not in chosen.model:  # Claude Code's names mean nothing to it
+                return RunResult("error", error=f"OpenCode runs a provider/model, not {chosen.model or 'nothing'}")
         log_path = self.settings.job_logs(job.id) / f"{len(self.store.runs(job.id)) + 1:03d}-{label}.jsonl.gz"
         self.settings.job_tmp(job.id).mkdir(parents=True, exist_ok=True)
         run_id = self.store.start_run(job.id, label, str(chosen), str(log_path), step.id)
@@ -851,6 +860,18 @@ class Scheduler:
         self.store.finish_run(run_id, result.outcome, session_id=result.session_id, glance=_glance(log_path), **result.usage)
         self.take_reports(job, project, current, run_id, str(chosen), filed_before)
         return result
+
+    async def free_model(self, job: Job, harness: Harness) -> str:
+        """The free model an OpenCode job runs (modes.FREE): the first OpenCode Zen offers when its
+        first step runs, kept for the rest of the job, so its runs are one model's. "" if none is."""
+        found = plan.vars_of(job)
+        if not found.get("free_model"):
+            offered = await harness.free_models() if hasattr(harness, "free_models") else []
+            if not offered:
+                return ""
+            found["free_model"] = offered[0]
+            self.store.update_job(job.id, vars=found)
+        return found["free_model"]
 
     def take_reports(self, job: Job, project: Project, step: Step, run_id: int, model: str, offset: int) -> None:
         """The reports about golem a run filed (`golem report`, past byte `offset` of the job's
@@ -952,7 +973,7 @@ class Scheduler:
         await self.say(
             project,
             f"I checked it over, and I'm adopting it.\n\n{adopt.report(checks)}\n\n{nxt}\n\n"
-            f"{plan.settings_line(self.store.project(slug))} (its settings change them).",
+            f"Its requests run in {plan.settings_line(self.store.project(slug))} unless they ask for another (its settings change that).",
         )
         summary = f"Adopting it: {fixing} thing(s) to fix." if fixing else "Adopting it as it is."
         return Outcome("done", summary, links, counters={"gaps": max(gaps, 1) if context else 0}, context=context)

@@ -104,7 +104,7 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     # A's change: its ledger, and a row for each step, its agents' and golem's own.
     job = next(r for r in rows if r["level"] == "job" and r["side"] == "A" and r["job_n"] == "2")
     assert (job["kind"], job["state"], job["text"]) == ("change", "done", "add the a and b files")
-    assert (job["runs"], job["cost_usd"], job["tokens_in"], job["cost_opus"]) == ("3", "1.5500", "3000", "1.5500")
+    assert (job["runs"], job["cost_usd"], job["tokens_in"], job["cost_opus"], job["cost_sonnet"]) == ("3", "1.5500", "3000", "1.5000", "0.0500")  # docs on sonnet (Claude power)
     steps = [r for r in rows if r["level"] == "step" and r["job"] == job["job"]]
     built = next(r for r in steps if r["name"] == "change")
     assert (built["kind"], built["runs"], built["cost_usd"], built["outcomes"]) == ("agent", "1", "1.0000", "verdict")
@@ -140,7 +140,7 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
 
     # The projects: everything added up, and what each checkout holds.
     a, b = (r for r in rows if r["level"] == "project")
-    assert (a["name"], a["vacuum"], a["jobs"], a["repo_files"]) == ("Tree Cards", "0", "2", "")
+    assert (a["name"], a["mode"], a["jobs"], a["repo_files"]) == ("Tree Cards", "usual", "2", "")
     assert float(a["cost_usd"]) == sum(float(r["cost_usd"]) for r in rows if r["level"] == "job" and r["side"] == "A")
     assert (b["name"], b["tool_calls"], b["url"]) == ("Fish", "3", golem.settings.project_url("fish"))
     assert (b["repo_files"], b["repo_lines"], b["repo_test_files"], b["repo_test_lines"], b["repo_commits"]) == ("6", "6", "1", "2", "2")

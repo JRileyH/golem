@@ -1008,44 +1008,6 @@ def test_a_job_reads_as_the_pieces_of_work_riggy_would_name():
     assert progress.pieces(steps)[0].name == "Get ready"  # shown while it runs
 
 
-def test_the_most_specific_model_and_effort_win(golem):
-    from golem.plan import engine
-
-    store = golem.store
-    project = store.add_project("trees", "Trees", "s")
-    docs = Step(1, 1, 1, "agent", "docs")
-    assert str(engine(golem.settings, store, project, docs)) == "opus/high"  # GOLEM_MODEL, GOLEM_EFFORT
-    store.set_default("*", "effort", "medium")
-    store.set_default("docs", "model", "haiku")
-    e = engine(golem.settings, store, project, docs)
-    assert (str(e), e.model_from, e.effort_from) == ("haiku/medium", "the docs default", "the default")
-    assert str(engine(golem.settings, store, project, Step(2, 1, 2, "agent", "spec"))) == "opus/medium"
-    project = store.update_project("trees", effort="max")
-    assert str(engine(golem.settings, store, project, docs)) == "haiku/max"
-    docs.model, docs.effort = "sonnet", "low"
-    e = engine(golem.settings, store, project, docs)
-    assert (str(e), e.model_from, e.effort_from) == ("sonnet/low", "this step", "this step")
-
-
-def test_suggested_defaults_fill_gaps_once(golem):
-    from golem.control import Control
-    from golem.plan import SUGGESTED, SUGGESTED_KEY
-
-    assert set(SUGGESTED) == set(Control(golem.store, golem.scheduler).kinds())  # one for every kind of step
-    assert all(m in MODELS and e in EFFORTS for m, e in SUGGESTED.values())
-    store = golem.store
-    store.set_default("docs", "model", "haiku")  # Riggy's own choice stays
-    store.suggest_defaults(SUGGESTED_KEY, SUGGESTED)
-    assert store.defaults()["docs"] == ("haiku", "medium")
-    assert store.defaults()["spec"] == ("opus", "xhigh")
-    store.set_default("spec", "effort", "")  # unset by Riggy afterwards: stays unset
-    store.suggest_defaults(SUGGESTED_KEY, SUGGESTED)
-    assert store.defaults()["spec"] == ("opus", "")
-    store.db.execute("DELETE FROM defaults WHERE name = 'examine'")  # a kind of step new since
-    store.suggest_defaults(SUGGESTED_KEY, SUGGESTED)
-    assert store.defaults()["examine"] == SUGGESTED["examine"] and store.defaults()["spec"] == ("opus", "")
-
-
 # --- golem's own git steps, on a real repo ---------------------------------------
 
 

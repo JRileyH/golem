@@ -2,14 +2,15 @@
 
 Three tabs: Now, every job and what needs Riggy (now.py); Projects, a card each, each opening
 its page of jobs beside the one being looked at (projectpage.py); and Settings (home.py), with
-the stage blocks' text (blockspage.py). Anyone can look at what's under way: each project's
+golem's modes (modes.py). Anyone can look at what's under way: each project's
 jobs, each job's route and steps, each step's details (with the pictures of any options Riggy is
 picking from), and where the time and usage go (insights.py).
 
 Signed in with GOLEM_WEB_PASSWORD, it's how Riggy works with golem: asking for something on a
 project's page (always a job of its own: bot.ask), replying to what a job asks and adding
 notes, and the web app's own controls (control.py): skipping optional steps, reordering the
-queue, pausing, stopping, models and effort (per step, project or kind of step). golem's own
+queue, pausing, stopping, a step's own model and effort, and modes (a request's, a project's
+default, golem's). golem's own
 conversation still takes new ideas (`/say`, bot.py), until the New project form.
 
 The sign-in cookie is an expiry signed with a key made from a random secret in the
@@ -37,9 +38,9 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Host, Route, Router
 
-from . import blockspage, brand, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
+from . import brand, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
 from . import now as now_page
-from . import about, jobhistory, newproject, projectpage, reports, reportspage, stages, triage
+from . import jobhistory, modes, newproject, projectpage, reports, reportspage, triage
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -48,7 +49,7 @@ from .live import LiveRuns
 from .pages import LaneData, NavProject, SheetData
 from .push import Push
 from .scheduler import Scheduler
-from .store import ACTIVE, EFFORTS, INTERNAL, LOOKS, MODELS, TRIAGE, Job, Project, Said, Step, Store
+from .store import ACTIVE, INTERNAL, LOOKS, TRIAGE, Job, Project, Said, Step, Store
 from .talk import STATUS
 
 if TYPE_CHECKING:
@@ -336,9 +337,7 @@ def create_app(
 
     async def settings_page(request: Request) -> Response:
         signed = signed_in(request)
-        since = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
-        body = home.settings(signed, scheduler.paused, control.kinds(), store.defaults(),
-                             (settings.default_model, settings.default_effort), insights.report(store, since),
+        body = home.settings(signed, scheduler.paused, modes.load(), store.get("default_mode") or "",
                              store.tags(), store.tag_counts(), scheduler.upgrades, scheduler.workers, config.memory_cap())  # fmt: skip
         return respond(request, "Settings", body, signed, here="settings")
 
@@ -454,8 +453,11 @@ def create_app(
         headers = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
         return FileResponse(path, media_type=options.IMAGE_TYPES[path.suffix], headers=headers)
 
+    def mode_choices() -> list[tuple[str, str]]:
+        return [(key, mode.name) for key, mode in modes.load().items()]
+
     def picks() -> projectpage.Picks:
-        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))])
+        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))], mode_choices())
 
     def project_view(request: Request, project: Project, job: Job | None) -> Response:
         """A project's page, open on `job` (else the one it opens on: projectpage.chosen). A job
@@ -528,9 +530,12 @@ def create_app(
         if not bot:
             return _back(form, "golem can't take that here.")
         text = form.get("text", "").strip()[:8000]
+        mode = form.get("mode", "auto")
         if not text:
             return _back(form, "Write something first.")
-        job = await bot.ask(project, text, workflow=form.get("workflow", ""))
+        if mode not in ("auto", "") and mode not in modes.load():
+            return _back(form, f"There's no mode called {mode}.")
+        job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode)
         return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.")
 
     async def project_history(request: Request) -> Response:
@@ -556,7 +561,8 @@ def create_app(
             return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to change a project.")
         data, jobs = project_lanes(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
-        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:])
+        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:],
+                                          modes=mode_choices())  # fmt: skip
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
@@ -566,7 +572,7 @@ def create_app(
         flows_ = scheduler.library.choices(("new",))
         fallback = scheduler.library.fallback("new")
         return newproject.Choices([(w.key, w.name, " ".join(w.ingest.split())) for w in flows_], fallback.key if fallback else "",
-                                  [t.name for t in store.tags()], settings.org)  # fmt: skip
+                                  mode_choices(), [t.name for t in store.tags()], settings.org)  # fmt: skip
 
     def new_page(request: Request, new: newproject.Filled | None = None, adopting: newproject.Filled | None = None, status: int = 200) -> Response:
         signed = signed_in(request)
@@ -575,6 +581,14 @@ def create_app(
         response = respond(request, "New project", newproject.page(new_choices(), new, adopting), signed, here="new", up=("/p", "Projects"))
         response.status_code = status
         return response
+
+    def picked_mode(value: str, errors: dict[str, str]) -> str | None:
+        """A form's mode: "" for golem's default, else one of golem's (modes.py)."""
+        if value in ("auto", ""):
+            return ""
+        if value not in modes.load():
+            errors["mode"] = f"There's no mode called {value}."
+        return value
 
     async def new_form(request: Request) -> Response:
         return new_page(request)
@@ -597,14 +611,12 @@ def create_app(
             errors["slug"] = "An address is 2 to 31 lowercase letters, digits and hyphens, and not a reserved word."
         elif slug and await bot.slug_taken(slug):
             errors["slug"] = f"{slug} is taken, by a project or a repo. {await intake.unique_slug(slug, bot.slug_taken)} is free."
-        model, effort = form.get("model", ""), form.get("effort", "")
-        if model and model not in MODELS or effort and effort not in EFFORTS:
-            errors[""] = "Pick a model and effort from the lists."
+        mode = picked_mode(form.get("mode", "auto"), errors)
         if errors:
             return new_page(request, newproject.Filled(form, errors), status=400)
-        args = {"slug": slug, "workflow": form.get("workflow", ""), "tag": form.get("tag", ""), "model": model, "effort": effort}
+        args = {"slug": slug, "workflow": form.get("workflow", ""), "tag": form.get("tag", "")}
         try:
-            job = await bot.new_project(name, idea, **args)
+            job = await bot.new_project(name, idea, mode=mode, **args)
         except ValueError:
             return new_page(request, newproject.Filled(form, {"slug": f"{slug} was just taken. Try another."}), status=400)
         return _back({"back": projectpage.href(job)}, f"Started {name}: {plan.title(job)}.")
@@ -620,9 +632,10 @@ def create_app(
         repo = form.get("repo", "").strip().lower()
         if not repo:
             errors["repo"] = "Which repo?"
+        mode = picked_mode(form.get("mode", "auto"), errors)
         if errors:
             return new_page(request, adopting=newproject.Filled(form, errors), status=400)
-        job, said = await bot.adopt(repo, form.get("words", ""), name=form.get("name", ""), tag=form.get("tag", ""))
+        job, said = await bot.adopt(repo, form.get("words", ""), name=form.get("name", ""), mode=mode, tag=form.get("tag", ""))
         if job is None:
             return new_page(request, adopting=newproject.Filled(form, {"": said}), status=400)
         return _back({"back": projectpage.href(job)}, said)
@@ -658,24 +671,6 @@ def create_app(
         if name not in pages.FONT_FILES:
             return Response("No such font.", 404)
         return FileResponse(pages.FONTS / name, media_type="font/woff2", headers={"Cache-Control": "public, max-age=31536000, immutable"})
-
-    async def blocks_page(request: Request) -> Response:
-        """Settings → Blocks: golem's stage blocks and the text of each of their parts."""
-        signed = signed_in(request)
-        if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20blocks.", 303)
-        return respond(request, "Blocks", blockspage.blocks_page(scheduler.library.blocks), signed, here="settings", up=("/settings", "Settings"))
-
-    async def stage_page(request: Request) -> Response:
-        signed = signed_in(request)
-        if not signed:
-            return RedirectResponse("/settings?msg=Sign%20in%20to%20see%20the%20blocks.", 303)
-        key = request.path_params["stage"]
-        if key not in stages.catalog():
-            return HTMLResponse("No such stage.", 404)
-        title = f"{stages.catalog()[key].label} blocks"
-        return respond(request, title, blockspage.stage_page(scheduler.library.blocks, key), signed, here="settings",
-                       up=("/settings/blocks", "Blocks"))  # fmt: skip
 
     async def service_worker(request: Request) -> Response:
         return Response(pwa.service_worker(), media_type="text/javascript", headers={"Cache-Control": "no-cache"})
@@ -763,10 +758,8 @@ def create_app(
                     message = await control.proposal_kind(slug, form.get("name", ""), value == "on")
                 case "step-setting":
                     message = await control.step_setting(job, step, position, form.get("name", ""), value)
-                case "default":
-                    message = control.default_setting(form.get("kind", ""), form.get("name", ""), value)
-                case "reset-defaults":
-                    message = control.reset_defaults()
+                case "default-mode":
+                    message = control.default_mode(value)
                 case "tag-add":
                     message = control.add_tag(value)
                 case "tag-rename":
@@ -779,10 +772,6 @@ def create_app(
                     message = await control.note(job, value, step, position)
                 case "rename":
                     message = control.rename(slug, value)
-                case "block-text":
-                    message = control.block_text(form.get("stage", ""), form.get("part", ""), value)
-                case "block-reset":
-                    message = control.block_reset(form.get("stage", ""), form.get("part", ""))
                 case "project-slug" | "project-delete":
                     project = visible_project(slug)
                     if project is None or bot is None:
@@ -866,7 +855,6 @@ def create_app(
             Route("/insights", insights_page),
             Route("/reports", reports_page),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
-            Route("/settings/blocks", blocks_page), Route("/settings/blocks/{stage}", stage_page),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),
             Route("/act", act, methods=["POST"]),

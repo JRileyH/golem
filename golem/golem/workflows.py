@@ -28,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from . import engine, stages
+from . import engine, modes, stages
 from .store import Store
 
 SECTION_RE = re.compile(r"^## +(\S+) *$", re.M)
@@ -207,6 +207,16 @@ def top(found: dict[str, Builtin], key: str) -> engine.Sub:
     return engine.Sub(key, found[key].name, found[key].graph)
 
 
+def parts_for(node: dict, prompts: modes.Prompts) -> dict[str, str]:
+    """The texts a stage block uses, in a prompt set (golem's own, by default)."""
+    stage = stages.catalog().get(node.get("stage") or "")
+    if stage is None:
+        return {}
+    names = stage.every_part(node)
+    texts = prompts.stage_parts(stage.key, stages.golems_text().get(stage.key, {}))
+    return {name: text for name, text in texts.items() if name in names and text}
+
+
 class Library:
     """Golem's workflows as its image has them (`workflows/`, read-only): what new jobs copy. And
     the stage blocks' texts, which Riggy can change (Settings → Blocks)."""
@@ -214,15 +224,12 @@ class Library:
     def __init__(self, store: Store, folder: Path, secret: str):
         self.folder = folder
         stages.use(folder / "stages")
-        self.blocks = stages.Blocks(store, secret)
+        if (folder.parent / "modes").is_dir():  # golem's image has them beside its workflows (a test's copy may not)
+            modes.use(folder.parent / "modes")
 
     @property
     def found(self) -> dict[str, Builtin]:
         return load_all(self.folder)
-
-    def seed(self) -> None:
-        """The stage blocks' texts in golem's database, brought up to date with golem's."""
-        self.blocks.seed()
 
     def get(self, key: str) -> Builtin | None:
         return self.found.get(key)
@@ -238,16 +245,30 @@ class Library:
         """The workflows a request could start, of these start types."""
         return [wf for wf in self.found.values() if wf.start in starts]
 
-    def pin(self, wf: Builtin, start: str) -> dict:
-        """A job's own copy of the workflow (engine.flatten), its stage blocks' texts with it."""
-        return self.freeze(engine.flatten(top(self.found, wf.key), start, resolver(self.found)))
+    def pin(self, wf: Builtin, start: str, mode: modes.Mode | None = None) -> dict:
+        """A job's own copy of the workflow (engine.flatten), with its mode (modes.py): the
+        workflow the mode runs in its place, if any, its stage blocks' texts, and the mode itself."""
+        mode = mode or modes.chosen()
+        wf = self.instead(wf, mode)
+        return self.freeze(engine.flatten(top(self.found, wf.key), start, resolver(self.found)), mode)
 
-    def freeze(self, snap: dict) -> dict:
-        """Each stage block of a job's copy takes the texts it uses with it, as they are now, so
-        changing them later never touches the job; and its instructions, put together without
-        what it's about (known when it runs), for anyone looking at it."""
+    def instead(self, wf: Builtin, mode: modes.Mode) -> Builtin:
+        """The workflow a mode runs in place of this one (of the same start type), else this one."""
+        found = self.found.get(mode.workflows.get(wf.key, ""))
+        return found if found is not None and found.start == wf.start else wf
+
+    def freeze(self, snap: dict, mode: modes.Mode) -> dict:
+        """A job's copy takes its mode with it, as it is now, so changing the mode later never
+        touches the job: each stage block the texts it uses, golem's or its prompt set's (with
+        its instructions put together without what it's about, known when it runs, for anyone
+        looking), the prompt set's instructions after the workflow's own text, and the mode's
+        record (modes.Mode.record) to run on and to say what it ran."""
         for node in (snap.get("nodes") or {}).values():
             if node.get("type") == "agent" and node.get("stage"):
-                node["parts"] = self.blocks.parts_for(node)
+                node["parts"] = parts_for(node, mode.prompts)
                 node["instructions"] = stages.compose(node, node["parts"])
+        if mode.prompts.instructions:
+            intros = snap.setdefault("intros", {})
+            intros[""] = f"{intros.get('', '')}\n\n{mode.prompts.instructions}".strip()
+        snap["mode"] = mode.record()
         return snap

@@ -1,0 +1,32 @@
+name: Claude power
+about: Opus at high or extra-high effort for planning, building, reviewing and fixing; Sonnet for the scaffold, the docs and quick looks.
+harness: claude
+steps:
+  "*": {model: opus, effort: high}
+  spec: {model: opus, effort: xhigh}
+  scaffold: {model: sonnet, effort: medium}
+  mvp: {model: opus, effort: xhigh}
+  buildout: {model: opus, effort: high}
+  change: {model: opus, effort: high}
+  options: {model: opus, effort: high}
+  design: {model: opus, effort: high}      # a design round: taste, and a doc with real screens in it
+  guide: {model: opus, effort: high}       # the design guide every later step follows
+  apply: {model: opus, effort: high}       # restyling the whole app from the guide
+  fix: {model: opus, effort: high}
+  resolve: {model: opus, effort: high}     # merging main into a change: both intents have to survive
+  review: {model: opus, effort: xhigh}
+  docs: {model: sonnet, effort: medium}
+  examine: {model: sonnet, effort: high}   # a question: a quick look and an answer
+  propose: {model: opus, effort: high}     # finding what's worth doing, unprompted, takes judgment
+  triage: {model: opus, effort: high}      # what in golem causes its workers' trouble
+  survey: {model: sonnet, effort: high}    # before an adoption: install, run the tests, read for needs
+  adopt: {model: opus, effort: high}       # bringing a repo golem didn't make into its shape
+  # Stage blocks, by stage, after a block's own name:
+  stage:plan: {model: opus, effort: xhigh}
+  stage:build: {model: opus, effort: high}
+  stage:review: {model: opus, effort: xhigh}
+  stage:docs: {model: sonnet, effort: medium}
+  stage:design: {model: opus, effort: high}
+  stage:fix: {model: opus, effort: high}
+  stage:look: {model: sonnet, effort: high}
+  stage:options: {model: opus, effort: high}

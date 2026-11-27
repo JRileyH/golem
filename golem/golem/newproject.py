@@ -1,8 +1,8 @@
 """The New project page: Riggy names a project and says what it's for, and its first job starts.
 
 He picks its name and address (filled in from the name until he changes it), what it's for,
-which workflow for new projects it starts with (the fallback picked), and its tag; model and
-effort are under More. golem only writes its summary
+which workflow for new projects it starts with (the fallback picked), the mode (when golem has
+modes.py), and its tag. golem only writes its summary
 and the first job's title (bot.new_project). A second form takes on a repo in the org that
 golem didn't make (bot.adopt): it's checked over first, and if something's in the way, nothing
 is made and the page says what.
@@ -15,13 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from html import escape
 
-from .store import EFFORTS, MODELS
 
 
 @dataclass
 class Choices:
     workflows: list[tuple[str, str, str]]  # (key, name, what it's for): for new projects
     fallback: str  # the workflow picked unless he picks another
+    modes: list[tuple[str, str]]  # (key, name): golem's modes (modes.py)
     tags: list[str]
     org: str
 
@@ -59,13 +59,10 @@ def new_form(c: Choices, f: Filled) -> str:
         + _field("What it's for", f"<textarea name=idea required rows=5 placeholder='A flashcard game for learning northeastern US trees from their leaves and bark…'>{escape(f.get('idea'))}</textarea>", f, "idea")
         + "<div class=new-row>"
         + _field("Workflow", f"<select name=workflow>{flows}</select>", f, "workflow")
+        + _modes(c, f)
         + _field("Tag", "<select name=tag><option value=''>None</option>" + "".join(
             f"<option{' selected' if f.get('tag') == t else ''}>{escape(t)}</option>" for t in c.tags) + "</select>", f, "tag")  # fmt: skip
         + "</div>"
-        + "<details class=new-more><summary>More</summary><div class=new-row>"
-        + _field("Model", _pick("model", MODELS, f.get("model")), f, "model")
-        + _field("Effort", _pick("effort", EFFORTS, f.get("effort")), f, "effort")
-        + "</div></details>"
         + "<div class=row-form><button class=primary>Start it</button></div></form>"
     )
 
@@ -81,16 +78,21 @@ def adopt_form(c: Choices, f: Filled) -> str:
         + _field("What it is (optional)", f"<textarea name=words rows=2 placeholder='Cards for my table, by its README otherwise'>{escape(f.get('words'))}</textarea>", f, "words")
         + "<div class=new-row>"
         + _field("Name (optional)", f"<input name=name maxlength=60 value='{escape(f.get('name'))}' placeholder='From its README'>", f, "name")
+        + _modes(c, f)
         + _field("Tag", "<select name=tag><option value=''>None</option>" + "".join(
             f"<option{' selected' if f.get('tag') == t else ''}>{escape(t)}</option>" for t in c.tags) + "</select>", f, "tag")  # fmt: skip
         + "</div><div class=row-form><button>Adopt it</button></div></form></details>"
     )
 
 
-def _pick(name: str, values: tuple[str, ...], current: str) -> str:
-    return f"<select name={name}><option value=''>Each step's default</option>" + "".join(
-        f"<option{' selected' if current == v else ''}>{escape(v)}</option>" for v in values
-    ) + "</select>"
+def _modes(c: Choices, f: Filled) -> str:
+    """The Mode field: golem's default, or one of its modes; none at all while it has none."""
+    if not c.modes:
+        return ""
+    current = f.get("mode")
+    items = [("", "golem's default"), *c.modes]
+    select = "<select name=mode>" + "".join(f"<option value='{escape(v)}'{' selected' if current == v else ''}>{escape(label)}</option>" for v, label in items) + "</select>"
+    return _field("Mode", select, f, "mode")
 
 
 def _field(label: str, control: str, f: Filled, name: str) -> str:

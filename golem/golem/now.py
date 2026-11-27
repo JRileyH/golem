@@ -62,8 +62,9 @@ def _under_way(lane: LaneData) -> bool:
 
 def _what(lane: LaneData, flows: dict[str, str]) -> str:
     job = lane.job
-    key = plan.workflow_for(job)  # one that hasn't started says by its playbook
-    return escape(flows.get(key) or plan.what(job).capitalize())
+    key, mode = plan.workflow_for(job, lane.project)  # one that hasn't started says by its playbook
+    name = flows.get(key) or plan.what(job).capitalize()
+    return escape(name) + (f", {escape(mode)}" if mode else "")
 
 
 def _card(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datetime, ask: bool = False) -> str:

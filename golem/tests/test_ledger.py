@@ -35,7 +35,7 @@ def test_a_jobs_page_says_what_it_cost(golem, app):  # noqa: F811
 
     job = asyncio.run(go())
     r = ledger.row(golem.store.job(job.id), golem.store.steps(job.id), golem.store.runs(job.id))
-    assert (r.runs, round(r.cost, 2), r.tokens_in, r.tokens_out, r.by_model, r.fixes) == (3, 1.55, 3000, 300, {"opus": 1.55}, 0)  # change, review, docs
+    assert (r.runs, round(r.cost, 2), r.tokens_in, r.tokens_out, r.by_model, r.fixes) == (3, 1.55, 3000, 300, {"opus": 1.5, "sonnet": 0.05}, 0)  # change, review, docs (on sonnet: Claude power)
     html = app.get(f"/p/tree-cards/jobs/{job.id}").text
-    assert "<p class=costs><b>Cost:</b> $1.55 at API prices · 3k in / 300 out · agents 0s · opus 100%</p>" in html
+    assert "<p class=costs><b>Cost:</b> $1.55 at API prices · 3k in / 300 out · agents 0s · opus 97%, sonnet 3%</p>" in html
     assert app.get("/insights/jobs").status_code == 404  # no page comparing jobs: two tabs do

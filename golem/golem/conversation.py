@@ -4,7 +4,7 @@ A conversation is messages oldest first, Riggy's on the right (thread): golem's 
 inbox, where new ideas are written, with its golem-wide news), a project's history (what was
 said before jobs had their own activity), and each job's activity on its pane
 (projectpage.py). golem's proposals for a project are here too, each to thumbs up or down
-(proposals.py). A project's settings page has what the !commands do: model, effort,
+(proposals.py). A project's settings page has what the !commands do: its default mode,
 pausing, renaming, moving and deleting; how often golem proposes things, and which kinds; the
 jobs' places in the queue and stopping them; and its jobs.
 """
@@ -17,16 +17,16 @@ from html import escape
 from . import plan, proposals
 from .pages import LaneData, _hidden, _pause, job_controls, select_form
 from .proposals import LENSES, WAITING, kinds
-from .store import CHANGES_AT_ONCE, EFFORTS, EVERY, MODELS, Job, Project, Proposal, Said
+from .store import CHANGES_AT_ONCE, EVERY, Job, Project, Proposal, Said
 from .talk import STATUS
 
 URL_RE = re.compile(r"https?://[^\s<>\"']+[^\s<>\"'.,;:!?)\]]")
 
 
 def settings_page(project: Project, lane: LaneData, jobs: list[Job], tags: list[str], decided: list[Proposal] = (),
-                  more: list[LaneData] = ()) -> str:  # fmt: skip
+                  more: list[LaneData] = (), modes: list[tuple[str, str]] = ()) -> str:  # fmt: skip
     controls = "".join(job_controls(x) for x in (lane, *more))
-    return settings_html(project, tags) + proposals_settings(project, decided) + controls + jobs_html(jobs) + _danger(project)
+    return settings_html(project, tags, modes) + proposals_settings(project, decided) + controls + jobs_html(jobs) + _danger(project)
 
 
 def proposals_card(waiting: list[Proposal], back: str) -> str:
@@ -123,19 +123,17 @@ def thread(said: list[Said], empty: str, earlier: str = "") -> str:
     return f"<section class=talk>{more}<ol class=messages>{''.join(items)}</ol></section>"
 
 
-def settings_html(project: Project, tags: list[str]) -> str:
-    """How golem works on it, and its tag."""
+def settings_html(project: Project, tags: list[str], modes: list[tuple[str, str]] = ()) -> str:
+    """How golem works on it, and its tag. Its default mode is the mode its requests run in unless
+    they ask for another: only Riggy sets it."""
     slug, back = project.slug, f"/p/{project.slug}/settings"
-    engine = "".join(
-        f"<span>{name.title()}</span>"
-        + select_form(name, getattr(project, name), values, "each step's default", action="setting", slug=slug, back=back)
-        for name, values in (("model", MODELS), ("effort", EFFORTS))
-    )
+    mode = select_form("mode", project.mode, tuple(k for k, _ in modes), "golem's default", dict(modes), action="setting", slug=slug, back=back) if modes else ""
     return (
         "<section class='card settings'><h2>How golem works on it</h2>"
-        "<p class=sub>From the next step.</p>"
-        f"<div class=row-form>{engine}</div>"
-        f"<div class=row-form>{_pause(project, back)}</div></section>"
+        "<p class=sub>Its default mode is what its requests run in unless they ask for another (Settings → Modes says "
+        "what each is), from the next request.</p>"
+        + (f"<div class=row-form><span>Default mode</span>{mode}</div>" if mode else "")
+        + f"<div class=row-form>{_pause(project, back)}</div></section>"
         + changes_card(project, back)
         + "<section class='card settings'><h2>Tag</h2><p class=sub>What sort of project it is, on the projects page. "
         "<a href=/settings#tags>The tags</a></p><div class=row-form>"

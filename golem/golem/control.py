@@ -29,7 +29,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
-from . import options, plan, shipments, stages, triage
+from . import modes, options, plan, shipments, triage
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .talk import STATUS
@@ -82,19 +82,6 @@ class Control:
     def configurable(self, job: Job, step: Step) -> bool:
         """Whether a step's model, effort and context can still change: an agent step not yet started."""
         return job.state in ACTIVE and step.kind == "agent" and step.state == "pending" and step.started_at is None
-
-    def kinds(self) -> list[str]:
-        """The kinds of agent run, by name: every agent block's in the workflows, built-ins first,
-        each in the order its graph runs them; then those golem starts itself: resolve (turns.py),
-        the survey an adoption's check runs (adopt.py) and its triage of reports about itself
-        (triage.py)."""
-        names: list[str] = []
-        for wf in self.scheduler.library.all():
-            for node in plan.blocks_in_order(wf.graph):
-                if node["type"] == "agent" and node.get("name") and node["name"] not in names:
-                    names.append(node["name"])
-        golems = ("fix", "resolve", "survey", "triage")
-        return [*names, *(n for n in golems if n not in names), *(f"stage:{k}" for k in stages.catalog())]
 
     def skippable(self, job: Job, step: Step) -> bool:
         """Whether an upcoming step can be skipped: optional, and not under way."""
@@ -195,11 +182,21 @@ class Control:
         return f"Stopped job {job.id}.{note}"
 
     async def setting(self, slug: str, name: str, value: str) -> str:
-        """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
-        none; how often golem looks for improvements to propose, "" for never; how many proposals may
-        await Riggy before it stops; or how many changes may be under way at once (turns.py). The
-        page's flash says what changed."""
+        """A project's tag, "" for none; its default mode (modes.py), "" for golem's; how often golem looks for improvements to propose, ""
+        for never; how many proposals may await Riggy before it stops; or how many changes may be
+        under way at once (turns.py). The page's flash says what changed."""
         project = self._project(slug)
+        if name == "mode":  # what its requests run in unless they ask for another: only Riggy sets it
+            found = modes.load()
+            if value and value not in found:
+                raise ControlError(f"There's no mode called {value}.")
+            self.store.update_project(slug, mode=value)
+            said = f"{project.name}: requests run in {found[value].name + ' mode' if value else 'golem’s default mode'} unless they ask for another"
+            job = self.store.active_job(slug, questions=False)
+            if job and not job.graph and not self.store.steps(job.id):  # not started: it runs in that mode too
+                self.store.update_job(job.id, mode=value)
+                said += f"; job {job.id}, not started yet, too"
+            return said + "."
         if name == "parallel_jobs":
             if not value.isdigit() or int(value) not in CHANGES_AT_ONCE:
                 raise ControlError(f"Pick {CHANGES_AT_ONCE[0]} to {CHANGES_AT_ONCE[-1]} changes at once.")
@@ -227,10 +224,7 @@ class Control:
             tag = self._tag(value) if value else None
             self.store.update_project(slug, tag=tag.name if tag else "")
             return f"{project.name}: {tag.name if tag else 'no tag'}."
-        _check(name, value)
-        self.store.update_project(slug, **{name: value})
-        said = f"{name.title()} is now {value}" if value else f"{name.title()} is each step's default again"
-        return f"{project.name}: {name} {value or 'by step'}, from the next agent step."
+        raise ControlError(f"A project has no setting {name}: its default mode says how golem works on it.")
 
     async def proposal_kind(self, slug: str, name: str, on: bool) -> str:
         """Turn one kind of proposal (a lens) on or off for the project. One stays on: "How often"
@@ -264,19 +258,15 @@ class Control:
         await self.scheduler.say(project, f"{step.name} will run on {engine}, from the status page.", notice=True, job=job, step=step.id or None)
         return f"{step.name} will run on {engine}."
 
-    def default_setting(self, kind: str, name: str, value: str) -> str:
-        """The model or effort for every step of one kind (or "*", all of them); "" to unset."""
-        if kind != "*" and kind not in self.kinds():
-            raise ControlError(f"No kind of step called {kind}.")
-        _check(name, value)
-        self.store.set_default(kind, name, value)
-        what = "Every step" if kind == "*" else f"Every {kind} step"
-        return f"{what}: {name} {value or 'unset'}, unless a project or step says otherwise. Starts with the next one."
-
-    def reset_defaults(self) -> str:
-        """Every kind of step's model and effort back to golem's suggestion."""
-        self.store.reset_defaults(plan.SUGGESTED)
-        return "Every kind of step is back to golem's suggestion. Projects' and steps' own choices stay."
+    def default_mode(self, value: str) -> str:
+        """golem's default mode (modes.py): what a request runs in when neither it nor its project
+        asks for another. "" for golem's own default."""
+        found = modes.load()
+        if value and value not in found:
+            raise ControlError(f"There's no mode called {value}.")
+        self.store.put("default_mode", value)
+        mode = found[value or modes.DEFAULT]
+        return f"Requests run in {mode.name} mode unless they or their project ask for another. From the next job."
 
     def _tag(self, name: str) -> Tag:
         tag = self.store.tag(name)
@@ -290,26 +280,6 @@ class Control:
             raise ControlError(f"There's a {same.name} tag already.")
         self.store.add_tag(name)
         return f"Added the {name} tag. golem uses it from the next new idea."
-
-    def block_text(self, stage: str, part: str, text: str) -> str:
-        """A stage part's text, as Riggy wrote it: every block of the stage uses it from the next job."""
-        found = stages.catalog().get(stage)
-        if found is None:
-            raise ControlError("There's no stage like that.")
-        if not text.strip():
-            raise ControlError("Write something, or put golem's text back.")
-        try:
-            self.scheduler.library.blocks.save(stage, part, text[:20_000])
-        except KeyError:
-            raise ControlError(f"{found.label} has no part {part}.") from None
-        return f"Saved {found.label}'s {part}: new jobs use it."
-
-    def block_reset(self, stage: str, part: str) -> str:
-        found = stages.catalog().get(stage)
-        if found is None:
-            raise ControlError("There's no stage like that.")
-        self.scheduler.library.blocks.reset(stage, part)
-        return f"{found.label}'s {part} is golem's again."
 
     def rename(self, slug: str, name: str) -> str:
         """A project's name; its address stays (bot.move changes that)."""

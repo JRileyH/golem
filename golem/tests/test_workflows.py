@@ -171,8 +171,8 @@ def test_a_job_copies_its_workflow_with_its_stage_blocks_texts(library):
     assert change["parts"] and "Make the change" in change["instructions"]
 
 
-def test_a_finished_job_keeps_its_copy_as_its_record(library):
-    store = library.blocks.store
+def test_a_finished_job_keeps_its_copy_as_its_record(tmp_path):
+    store = Store(tmp_path / "jobs.db")
     store.add_project("trees", "Trees", "s")
     job = store.add_job("trees", "change", "r", "feature")
     store.update_job(job.id, graph='{"v": 1}', vars={"counters": {"fixes": 1}})

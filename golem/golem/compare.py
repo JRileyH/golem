@@ -57,6 +57,7 @@ COLUMNS = {
     "kind": "project: its tag; job: where it came from (new, change, look = a question, propose, adopt); "
     "step: agent, or one of golem's own (setup, push, PR, CI, merge, deploy, checkin, choose…)",
     "role": "step: ask (waiting on Riggy); blank for any other",
+    "mode": "usual or checklist (project: the mode its requests run in unless they ask for another)",
     "vacuum": "project: 1 if it runs as on a fresh golem (lessons of its own starting empty, an empty Claude Code per job)",
     "state": "project: paused or blank; job: done, killed, running, waiting…; step: done, failed, skipped…; run: its outcome",
     "started": "ISO time: project made; job's first step began; step or run began; message said",
@@ -369,7 +370,7 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         out += [_said_row(side, slug, n, job, None, m) for m in said if m.step_id not in ids]
     head = {
         "level": "project", "side": side, "project": slug, "name": project.name, "kind": project.tag,
-        "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
+        "mode": project.mode or "usual", "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
         "started": project.created_at, "waiting_minutes": _minutes(sum(r.waiting_seconds for r in leds)), "between_runs_minutes": _minutes(idle),
         "model": "/".join(x for x in (project.model, project.effort) if x), **total.columns(), "jobs": len(jobs),
         "fixes": sum(r.fixes for r in leds), "asks": asks, **repo(settings.workspace_dir / slug),
@@ -383,7 +384,7 @@ def _job_row(side: str, slug: str, n: int, job: Job, steps: list[Step], sums: Su
     ended = [s.ended_at for s in steps if s.ended_at]
     return {
         "level": "job", "side": side, "project": slug, "job_n": n, "job": job.id, "name": plan.title(job), "kind": job.start,
-        "state": job.state, "started": min(started, default=""), "ended": max(ended, default=""),
+        "mode": job.mode or "usual", "state": job.state, "started": min(started, default=""), "ended": max(ended, default=""),
         "wall_minutes": _minutes(led.wall_seconds), "waiting_minutes": _minutes(led.waiting_seconds),
         "between_runs_minutes": _minutes(between), "workflow": job.workflow,
         **sums.columns(), "fixes": led.fixes, "asks": asks, "text": _flat(job.request),
@@ -395,7 +396,7 @@ def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, be
     took = ledger.seconds(step.started_at, step.ended_at)
     return {
         "level": "step", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position, "step": step.id,
-        "name": step.name, "kind": step.kind, "role": role, "state": step.state,
+        "name": step.name, "kind": step.kind, "role": role, "mode": job.mode or "usual", "state": step.state,
         "started": step.started_at or "", "ended": step.ended_at or "", "wall_minutes": _minutes(took) if step.ended_at else "",
         "between_runs_minutes": _minutes(between) if sums.runs > 1 else "",
         "model": " ".join(sums.engines), "node": step.node_id, "visit": step.visit or "", "turn": step.turn, "port": step.port,
@@ -414,7 +415,7 @@ def _run_row(side: str, slug: str, n: int, job: Job, step: Step | None, run: dic
     sums.add(run, log)
     return {
         "level": "run", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position if step else "",
-        "step": step.id if step else "", "run": run["id"], "name": run["phase"],
+        "step": step.id if step else "", "run": run["id"], "name": run["phase"], "mode": job.mode or "usual",
         "state": run["outcome"] or "running", "started": run["started_at"], "ended": run["ended_at"] or "",
         "wall_minutes": _minutes(sums.agent_seconds) if run["ended_at"] else "", "model": run["model"] or "",
         "max_turns": (step.max_turns or "") if step else "", "outcomes": run["outcome"] or "running", **sums.columns(),
@@ -424,7 +425,7 @@ def _run_row(side: str, slug: str, n: int, job: Job, step: Step | None, run: dic
 def _said_row(side: str, slug: str, n: int, job: Job, step: Step | None, said: Said) -> dict:
     return {
         "level": "message", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position if step else "",
-        "step": step.id if step else "", "name": said.who, "started": said.at, "text": _flat(said.text),
+        "step": step.id if step else "", "name": said.who, "mode": job.mode or "usual", "started": said.at, "text": _flat(said.text),
     }  # fmt: skip
 
 

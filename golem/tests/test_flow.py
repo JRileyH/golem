@@ -46,10 +46,10 @@ def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     async def go():
         room = await new_project(golem, [])
         project = golem.store.project("tree-cards")
-        assert (project.name, project.summary, room) == ("Tree Cards", "A flashcard game for northeastern US trees.", "tree-cards")
+        assert (project.name, project.summary, project.mode, room) == ("Tree Cards", "A flashcard game for northeastern US trees.", "", "tree-cards")
         job = golem.store.active_job("tree-cards")
         # No grace: the form said everything it was for.
-        assert (job.kind, job.workflow, job.state, job.title) == ("new", "web_app", "queued", "Tree Flashcard Game")
+        assert (job.kind, job.workflow, job.mode, job.state, job.title) == ("new", "web_app", "", "queued", "Tree Flashcard Game")
         assert job.request == "a flashcard game for identifying northeastern us trees"
         assert [m.text for m in golem.store.job_messages(job.id)] == [job.request]  # its activity starts with what he said
         # golem only writes the summary and the job's title: a cheap structured call.
@@ -60,15 +60,15 @@ def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     run(go())
 
 
-def test_a_new_project_takes_the_workflow_tag_and_engine_riggy_picked(golem):
+def test_a_new_project_takes_the_workflow_mode_and_tag_riggy_picked(golem, careful):
     async def go():
         golem.harness.script = [TREES]
-        job = await golem.new_project("trees, carefully", workflow="web_app", tag="Game", model="opus", effort="max")
+        job = await golem.new_project("trees, carefully", workflow="web_app", mode=careful, tag="Game")
         project = golem.store.project("tree-cards")
-        assert (job.workflow, project.tag, project.model, project.effort) == ("web_app", "Game", "opus", "max")
+        assert (job.workflow, job.mode, project.tag, project.mode) == ("web_app", careful, "Game", "")  # its default is Riggy's to set
         golem.harness.script = [{"summary": "s", "title": "t"}]
-        await golem.new_project("birds", name="Birds", tag="Nope")
-        assert golem.store.project("birds").tag == ""  # only a tag there is
+        other = await golem.new_project("birds", name="Birds", mode="", tag="Nope")
+        assert other.mode == "" and golem.store.project("birds").tag == ""  # no mode, and only a tag there is
         golem.workspace.repos.add("fish")  # a repo by that name already exists: the form says so first
         with pytest.raises(ValueError):
             await golem.new_project("fish", name="Fish")
@@ -1555,61 +1555,68 @@ def test_pausing_a_project_or_all_work(golem):
 # --- settings, names and slugs ------------------------------------------------
 
 
-def test_settings_picked_for_a_new_project_pick_the_model_and_effort(golem):
+def test_a_job_in_a_mode_runs_on_its_harness_and_models_and_keeps_it(golem, careful):
     async def go():
         golem.harness.script = [{**TREES, "title": "Leaf Guessing Game"}]
-        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", model="fable", effort="max")
-        project = golem.store.project("leaf-peeper")
-        assert (project.name, project.model, project.effort) == ("Leaf Peeper", "fable", "max")
+        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", mode=careful)
         job = golem.store.active_job("leaf-peeper")
-        assert job.workflow == "web_app"
+        assert (job.workflow, job.mode) == ("web_app", careful)
         await golem.until("spec")
         golem.harness.script = [verdict("done")]
         await golem.step()
         call = golem.harness.calls[-1]
-        assert (call.model, call.effort) == ("fable", "max")
-        assert "# Your step: spec" in call.prompt
+        assert (call.model, call.effort) == ("opencode/fake-free", "")  # OpenCode free: whichever free model is offered…
         job = golem.store.active_job("leaf-peeper")
+        assert plan.vars_of(job)["free_model"] == "opencode/fake-free"  # …kept for the whole job
+        assert plan.snapshot(job)["mode"]["key"] == careful and plan.snapshot(job)["mode"]["harness"] == "opencode"
+        assert golem.store.runs()[0]["model"] == "opencode/fake-free"
         assert len(plan.planned(golem.settings, golem.store, job)) == 33
-        assert golem.store.runs()[0]["model"] == "fable/max"
 
     run(go())
 
 
-def test_unpicked_settings_use_the_defaults(tmp_path):
-    golem = Golem(tmp_path, default_model="sonnet", default_effort="xhigh")
-
+def test_a_job_that_asks_for_no_mode_runs_in_golems_default(golem, careful):
     async def go():
         golem.harness.script = [TREES]
         await golem.new_project("trees")
         project = golem.store.project("tree-cards")
-        assert (project.model, project.effort) == ("", "")  # each step's default
+        assert (project.mode, golem.store.active_job("tree-cards").mode) == ("", "")  # settled when it starts
         await golem.until("spec")
         await golem.step()
-        assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "xhigh")
+        assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("opus", "xhigh")  # Claude power's spec
+        assert golem.store.active_job("tree-cards").mode == "claude-power"
+
+        said = golem.control.default_mode(careful)
+        assert said == "Requests run in OpenCode free mode unless they or their project ask for another. From the next job."
+        golem.harness.script = [{"summary": "s", "title": "Birds"}]
+        await golem.new_project("birds", name="Birds")
+        assert plan.mode_of(golem.store, golem.store.active_job("birds")).key == careful
+        assert golem.control.default_mode("").startswith("Requests run in Claude power mode")
 
     run(go())
 
 
-def test_a_projects_settings(golem):
+def test_a_projects_settings(golem, careful):
     from golem.control import ControlError
 
     async def go():
         await new_project(golem, [])
-        await golem.control.setting("tree-cards", "effort", "max")
-        await golem.control.setting("tree-cards", "model", "sonnet")
-        assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").effort) == ("sonnet", "max")
-        for name, value in (("model", "gpt"), ("mode", "careful")):  # golem has no modes
+        job = golem.store.active_job("tree-cards")
+        said = await golem.control.setting("tree-cards", "mode", careful)
+        assert said == f"Tree Cards: requests run in OpenCode free mode unless they ask for another; job {job.id}, not started yet, too."
+        assert golem.store.job(job.id).mode == careful and golem.store.project("tree-cards").mode == careful
+        for name, value in (("model", "sonnet"), ("effort", "max"), ("mode", "fancy")):  # its mode says its models
             with pytest.raises(ControlError):
                 await golem.control.setting("tree-cards", name, value)
 
         await golem.until("spec")
         golem.harness.script = [verdict("done")]
         await golem.step()
-        assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "max")
+        assert golem.harness.calls[-1].model == "opencode/fake-free"
 
-        await golem.control.setting("tree-cards", "model", "")
-        assert golem.store.project("tree-cards").model == ""
+        # Once the job has started, it carries on as it is.
+        await golem.control.setting("tree-cards", "mode", "")
+        assert golem.store.job(job.id).mode == careful and golem.store.project("tree-cards").mode == ""
         assert golem.chat.texts("tree-cards") == [m for m in golem.chat.texts("tree-cards") if "from the status page" not in m]  # the page says it
 
     run(go())

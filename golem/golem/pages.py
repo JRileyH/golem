@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import brand, glance, options, plan, progress, pwa, stages
+from . import brand, glance, options, plan, progress, pwa
 from .control import SKIPPED
 from .glance import Glance
 from .insights import Eta, Report, Tally, estimate
@@ -539,49 +539,6 @@ def bars(title: str, measure: str, rows: list[tuple[str, float, str, str]], whol
     return f"<section class='bars {measure}'><{tag}>{escape(title)}</{tag}>{f'<p class=hint>{escape(note)}</p>' if note else ''}<ol>{items}</ol></section>"
 
 
-def defaults_table(kinds: list[str], defaults: dict[str, tuple[str, str]], fallback: tuple[str, str], r: Report,
-                   signed_in: bool) -> str:  # fmt: skip
-    """Each kind of agent step's default model and effort, with how it's been doing."""
-    by_kind = {k.key: k for k in r.kinds}
-    every = defaults.get("*", ("", ""))
-    rows = []
-    for kind in ["*", *kinds]:
-        model, effort = defaults.get(kind, ("", ""))
-        t = by_kind.get(kind)
-        how = " · ".join(x for x in (_per(t), _per_cost(t)) if x) if t and t.steps else "not run yet"
-        if kind == "*":
-            name, how, base = "Every step", "unless set below", fallback
-        else:
-            name, base = kind, (every[0] or fallback[0], every[1] or fallback[1])
-            if kind.startswith("stage:") and (stage := stages.catalog().get(kind[6:])):
-                name = f"{stage.label} blocks"
-        unset = (f"default: {base[0]}", f"default: {base[1]}")
-        suggested = plan.SUGGESTED.get(kind)
-        if suggested and suggested != (model, effort):
-            how += f" · suggested {'/'.join(suggested)}"
-        if signed_in:
-            picks = "".join(
-                select_form(field, value, values, unset[i], action="default", kind=kind, back="/settings#defaults")
-                for i, (field, value, values) in enumerate((("model", model, MODELS), ("effort", effort, EFFORTS)))
-            )
-        else:
-            picks = f"<span>{escape(model or unset[0])}</span><span>{escape(effort or unset[1])}</span>"
-        rows.append(f"<li><div><b>{escape(name)}</b> <span class=muted>{escape(how)}</span></div><div class=picks>{picks}</div></li>")
-    return (
-        "<section class=defaults id=defaults><h2>Defaults for each kind of step</h2>"
-        "<p class=hint>The model and effort each kind of agent step runs on. A project's own choice (in its settings) "
-        "wins over these, and a single step's choice wins over both.</p>"
-        f"<ol class=kinds>{''.join(rows)}</ol>"
-        + (
-            action_form("reset-defaults", "Reset to golem's suggestions", back="/settings#defaults",
-                        confirm="Put every kind of step back on golem's suggested model and effort?")  # fmt: skip
-            if signed_in
-            else "<p class=hint>Sign in to change them.</p>"
-        )
-        + "</section>"
-    )
-
-
 # --- pieces ---------------------------------------------------------------------------
 
 
@@ -730,10 +687,13 @@ def action_form(action: str, label: str, *, job: int | None = None, step: int | 
     return f"<form method=post action=/act class=inline{check}>{hidden}<button{' class=danger' if danger else ''}>{escape(label)}</button></form>"
 
 
-def select_form(name: str, current: str, values: tuple[str, ...], unset: str, **fields) -> str:
-    """A select that saves on change. The first option is "" (`unset` says what that means)."""
+def select_form(name: str, current: str, values: tuple[str, ...], unset: str, labels: dict[str, str] | None = None, **fields) -> str:
+    """A select that saves on change. The first option is "" (`unset` says what that means); each
+    value shows as its label, if it has one."""
+    labels = labels or {}
     options = f"<option value=''{' selected' if not current else ''}>{escape(unset)}</option>" + "".join(
-        f"<option{' selected' if current == v else ''}>{escape(v)}</option>" for v in values
+        f"<option{f' value={chr(39)}{escape(v)}{chr(39)}' if v in labels else ''}{' selected' if current == v else ''}>{escape(labels.get(v, v))}</option>"
+        for v in values
     )
     fields = {k: v for k, v in fields.items() if k != "value"}
     return (
@@ -865,12 +825,6 @@ def _waiting_words(lane: LaneData) -> str:
     if step and step.kind == "choose":
         return "is waiting for you to pick an option"
     return "has a question for you" if lane.job.resume_session else "needs a hint from you"
-
-
-def _engine_words(p: Project) -> str:
-    if not p.model and not p.effort:
-        return "default models"
-    return f"{p.model or 'default'}/{p.effort or 'default'}"
 
 
 def _spent(lane: LaneData) -> str:

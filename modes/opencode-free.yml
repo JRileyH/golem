@@ -1,0 +1,5 @@
+name: OpenCode free
+about: OpenCode on whichever of OpenCode Zen's free models is offered when a job starts. Costs nothing, and the free models come and go; for trying golem out on other agents, not for work that matters.
+harness: opencode
+models: opencode-free
+prompts: golem

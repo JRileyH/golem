@@ -124,9 +124,9 @@ class Golem:
         self.prompts = Prompts(self.settings)
         self.deployer = FakeDeployer()
         self.scheduler = Scheduler(
-            self.settings, self.store, self.talk, self.harness, self.workspace, self.prompts, self.deployer
+            self.settings, self.store, self.talk, self.harness, self.workspace, self.prompts, self.deployer,
+            {"opencode": self.harness},  # the fake does OpenCode's runs too, as golem's fake harness does
         )
-        self.scheduler.library.seed()
         self.bot = Bot(
             self.settings, self.store, self.talk, self.scheduler, self.harness, self.workspace, self.prompts, self.deployer
         )
@@ -206,7 +206,7 @@ def own(tmp_path):
     """A golem whose process files (prompts, skills, workflows) are a copy, for tests that add
     workflows of their own (add_workflow)."""
     process = tmp_path / "process"
-    for name in ("prompts", "skills", "workflows"):
+    for name in ("prompts", "skills", "workflows", "modes"):
         shutil.copytree(REPO / name, process / name)
     return Golem(tmp_path, process_dir=process)
 
@@ -220,3 +220,25 @@ def add_workflow(golem: Golem, key: str, blocks: list, md: str = "", start: str 
         (folder / f"{key}.md").write_text(md)
         spec["md"] = f"{key}.md"
     (folder / f"{key}.yml").write_text(yaml.safe_dump(spec, sort_keys=False))
+
+
+@pytest.fixture
+def careful():
+    """A mode other than golem's default (modes/), for the tests of picking one."""
+    return "opencode-free"
+
+
+def add_prompts(golem: Golem, key: str, stages: dict[str, str], instructions: str = "") -> Path:
+    """A prompt set of a test's own and a mode of the same name that uses it (Claude power's
+    models), written as golem's are, in its modes folder. The stage file it wrote last."""
+    folder = golem.settings.process_dir / "modes"
+    written = None
+    for stage, text in stages.items():
+        written = folder / "prompts" / key / "stages" / f"{stage}.md"
+        written.parent.mkdir(parents=True, exist_ok=True)
+        written.write_text(text)
+    if instructions:
+        (folder / "prompts" / key).mkdir(parents=True, exist_ok=True)
+        (folder / "prompts" / key / "instructions.md").write_text(instructions)
+    (folder / f"{key}.yml").write_text(f"name: {key.title()}\nharness: claude\nmodels: claude-power\nprompts: {key}\n")
+    return written
