@@ -34,14 +34,13 @@ phone.
     stop it; its steps, with how long each took and what it said; its activity
     (what each block did, notes, questions and your replies); and the request
     and its runs. On a phone it's one side at a time. Its **Settings** tab has
-    the model,
-    effort, pause, how many changes at once, proposals, tag, its jobs, rename,
+    its default mode,
+    pause, how many changes at once, proposals, tag, its jobs, rename,
     move and delete; **History** has what was said before jobs had their own
     activity.
   - **Settings:** signing in and out, notifications, pausing all work, workers,
-    golem's version, links to Insights, Reports, **Blocks** (the text of golem's
-    stage blocks: Plan, Build, Review, Docs…, to read and change) and the public
-    projects page, the tags, and the model and effort for each kind of step.
+    golem's version, links to Insights, Reports and the public projects page,
+    **Modes** (what each is made of, and golem's default) and the tags.
   - **Notifications:** in Settings, "Turn on for this device". You get what
     wants you: questions, check-ins, options to pick from, answers, "Done" and
     usage limits, each opening its job (and its block). On an iPhone, first add
@@ -52,8 +51,8 @@ phone.
 - **A new project:** + New project. Name it (its address, and its repo
   `<GITHUB_ORG>/<slug>`, follow the name until you change them), say what it's
   for ("a flashcard game for northeastern US trees"), and pick its workflow (the
-  fallback for new projects is picked) and tag; model and effort are under
-  More. golem writes its summary and its first job's title, and the job starts
+  fallback for new projects is picked), its first job's mode and its tag.
+  golem writes its summary and its first job's title, and the job starts
   straight away.
 - **How a job runs:** it walks a workflow: blocks wired output to input, from
   Start to End, golem's own files (`workflows/`: to change one, change it there
@@ -112,20 +111,20 @@ phone.
   look at the sites. A project can run in a vacuum, as on a fresh golem
   (lessons of its own starting empty, and each job a Claude Code of its own
   with nothing in it); nothing on the forms sets it yet.
-- **Settings,** per project, on its Settings tab:
-  - **Model and effort:** for all the project's agent steps, from the next
-    one; "each step's default" goes back to each step's own.
-
-  The model and effort are chosen per step, the most specific choice winning:
-  one step's (set in its sheet in the web app), then the project's, then
-  the default for that kind of step (set in the web app's Settings), then
-  `GOLEM_MODEL` and `GOLEM_EFFORT` in `.env`. Golem starts each kind of step
-  on its own suggestion (`SUGGESTED` in `golem/plan.py`): opus at xhigh for
-  spec, mvp and review, sonnet for scaffold and docs, opus at high for the
-  rest. It fills them in once, where you haven't set one, so your
-  changes on Insights stay; each kind shows its suggestion while yours differs,
-  and "Reset to golem's suggestions" puts them all back (projects' and single
-  steps' own choices stay).
+- **Modes:** how golem works, by name: who does the agent steps (Claude Code or
+  OpenCode), on which models (and effort, where the harness has one), with which
+  texts, and any workflow run in place of golem's. Each is files in `modes/`
+  (its README has the format): golem ships **Claude power** (how golem has always
+  worked: Opus wherever judgment counts, Sonnet for the scaffold and docs) and
+  **OpenCode free** (whichever of OpenCode Zen's free models is offered, for
+  trying other agents). A request runs in the mode it picks, else its project's
+  default (its Settings tab), else golem's (Settings → Modes). A job keeps the
+  mode it started in, resolved, as its record. One step's own model and effort
+  (set in its sheet before it starts) win over its mode's. A prompt set holds
+  only the parts of golem's texts it changes (`prompts/` and
+  `workflows/stages/` are the master set), plus instructions for every step.
+  What you'd set in Settings before modes, `python -m golem.modes export
+  <golem.db>` writes out as a mode's files.
 - **Adopting a repo golem didn't make:** on the New project page, "Adopt a repo
   golem didn't make": the repo, what it is (or its README says), and its name
   and tag. Golem checks it over first: its CI, build workflow,
@@ -154,12 +153,12 @@ phone.
   project's tag when you make it, or on its Settings tab; Settings lists them
   to add, rename, recolor or delete.
 - **Who sees what:** anyone can see what's under way, each job's route and
-  steps, and each step's details; activity, asking, Blocks and every control
+  steps, and each step's details; activity, asking and every control
   need signing in. Signed in, you can skip optional steps
   (reviews, docs, the MVP check-in, your pick) or undo that, pick an option,
   give one upcoming step its own model, effort or context, run a job next or
-  last, pause a project or all work, stop a job, and set a project's or a kind
-  of step's model and effort. **Insights** (from Settings) shows where the time
+  last, pause a project or all work, stop a job, and pick a request's mode, a
+  project's default or golem's. **Insights** (from Settings) shows where the time
   and Claude usage go by kind of step, project and model, and the slowest and
   costliest steps. Each agent step's sheet has its transcript, or its live tail
   while it runs ("Checking on a job" in `docs/runbook.md`).

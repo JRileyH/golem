@@ -6,7 +6,7 @@
 # `instead` of a part when what the step is about calls for it (golem/golem/about.py). `base:
 # after` puts the base after the setting's part. Golem puts the parts a block uses together, with a section saying what the step is
 # about (golem/golem/about.py) and the block's own extra instructions. Riggy can change any
-# part's text in Workflows → Blocks.
+# part's text in a mode's prompt set (modes/).
 #
 # `turns`, `turn`, `contract` and `outputs` are the stage's, or a map from `<setting>.<option>` to
 # the value for that option, with `default` for the rest. `produces` is what a block leaves for

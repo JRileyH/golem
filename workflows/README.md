@@ -10,8 +10,9 @@ record.
 
 Golem had a visual editor for these for a while, with tabs per mode and blocks you
 could wire any way. Nearly every workflow stayed a straight line, so the editor, the
-tabs and the database copies went; what Riggy changes from the web app is what each
-stage block tells its agent (Settings → Blocks).
+tabs and the database copies went. What each stage block tells its agent can differ by
+mode: a mode's prompt set (`modes/`) replaces parts of golem's texts, and a mode can run
+another workflow in place of one of these.
 
 ## What a workflow is
 
@@ -45,8 +46,8 @@ the usual way on.
   plan), and a Review holds it to the request and what earlier blocks made; a Build is
   about his reply to a check-in that sends it there, else Riggy's pick, his reply, the
   plan, or else the request. The text for each stage, setting and care is in
-  `stages/<stage>.md`; Settings → Blocks changes it for every block of the stage, and a
-  job keeps the text it started with. Contracts: Options and a Design round make things
+  `stages/<stage>.md` (golem's own: a mode's prompt set can change any part), and a job
+  keeps the text it started with. Contracts: Options and a Design round make things
   for a choose block to show (a design round finding nothing to design leaves by
   `nothing`); Look's `propose` makes proposals.
 - **Test** (`do: test`) runs the project's `bin/test`: `pass` on exit 0, else `fail`

@@ -88,3 +88,7 @@ ps:
 # Follow a service's logs
 logs svc:
     docker compose logs -f {{svc}}
+
+# Print what Settings held before modes (each kind of step's model, changed stage texts) as mode files to save in modes/
+modes-export:
+    docker compose run --rm --no-deps -T golem python -m golem.modes export /var/lib/golem/golem.db
