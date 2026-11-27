@@ -39,6 +39,10 @@ RUN npm install -g playwright@1 \
     && ln -s /usr/local/lib/node_modules /node_modules \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
+# OpenCode, the other worker golem can run (golem/opencode.py). Pinned: golem reads its JSON
+# events, and a trial's runs are only comparable on a version that holds still.
+RUN npm install -g opencode-ai@1.19.6 && opencode --version && rm -rf /root/.npm
+
 # WeasyPrint (HTML to PDF, for projects that print): Chromium already brought Pango, HarfBuzz,
 # fontconfig and Liberation fonts; WeasyPrint also loads pangoft2 (178 kB) and subsets embedded
 # fonts with harfbuzz-subset (its fontTools fallback is deprecated).
