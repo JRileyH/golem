@@ -196,20 +196,10 @@ class Control:
 
     async def setting(self, slug: str, name: str, value: str) -> str:
         """A project's model or effort for all its agent steps, "" for each step's default; its tag, "" for
-        none; its default mode (plan.MODES), "" for none; how often golem looks for improvements to propose, ""
-        for never; how many proposals may await Riggy before it stops; or how many changes may be
-        under way at once (turns.py). The page's flash says what changed."""
+        none; how often golem looks for improvements to propose, "" for never; how many proposals may
+        await Riggy before it stops; or how many changes may be under way at once (turns.py). The
+        page's flash says what changed."""
         project = self._project(slug)
-        if name == "mode":  # what its requests run in unless they ask for another: only Riggy sets it
-            if value and value not in plan.MODES:
-                raise ControlError(f"There's no mode called {value}.")
-            self.store.update_project(slug, mode=value)
-            said = f"{project.name}: requests run in {value + ' mode' if value else 'the usual way'} unless they ask for another"
-            job = self.store.active_job(slug, questions=False)
-            if job and not job.graph and not self.store.steps(job.id):  # not started: it runs in that mode too
-                self.store.update_job(job.id, mode=value)
-                said += f"; job {job.id}, not started yet, too"
-            return said + "."
         if name == "parallel_jobs":
             if not value.isdigit() or int(value) not in CHANGES_AT_ONCE:
                 raise ControlError(f"Pick {CHANGES_AT_ONCE[0]} to {CHANGES_AT_ONCE[-1]} changes at once.")

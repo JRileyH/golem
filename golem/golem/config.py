@@ -43,7 +43,6 @@ class Settings:
         if harness not in ("claude", "fake"):
             raise SystemExit("HARNESS must be claude or fake")
         defaults = {
-            # The mode requests run in when nothing says: a mode's name, or "" for none ("standard" was none).
             "default_model": _choice(env, "GOLEM_MODEL", "opus", MODELS),
             "default_effort": _choice(env, "GOLEM_EFFORT", "high", EFFORTS),
         }

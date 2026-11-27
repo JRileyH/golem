@@ -140,7 +140,7 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
 
     # The projects: everything added up, and what each checkout holds.
     a, b = (r for r in rows if r["level"] == "project")
-    assert (a["name"], a["mode"], a["jobs"], a["repo_files"]) == ("Tree Cards", "usual", "2", "")
+    assert (a["name"], a["vacuum"], a["jobs"], a["repo_files"]) == ("Tree Cards", "0", "2", "")
     assert float(a["cost_usd"]) == sum(float(r["cost_usd"]) for r in rows if r["level"] == "job" and r["side"] == "A")
     assert (b["name"], b["tool_calls"], b["url"]) == ("Fish", "3", golem.settings.project_url("fish"))
     assert (b["repo_files"], b["repo_lines"], b["repo_test_files"], b["repo_test_lines"], b["repo_commits"]) == ("6", "6", "1", "2", "2")

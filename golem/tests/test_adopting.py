@@ -13,7 +13,7 @@ from golem import plan
 from golem.workspace import CI, About
 
 ABOUT = About("mimic", "Tabletop data in, cards out", False, True, "# Mimic\n\nTabletop data in, visual outputs out.\n")
-BRIEF = {"name": "Mimic", "summary": "Printable cards for a D&D table.", "title": "Tabletop Card Printer", "tag": "none", "mode": "unspecified",
+BRIEF = {"name": "Mimic", "summary": "Printable cards for a D&D table.", "title": "Tabletop Card Printer", "tag": "none",
          "model": "unspecified", "effort": "unspecified"}  # fmt: skip
 PAGE = "https://golem.unlaunched.dev/p/mimic"
 
@@ -64,22 +64,20 @@ def test_github_is_checked_first_and_a_blocked_repo_makes_nothing(golem):
     run(go())
 
 
-def test_an_adopted_repo_becomes_a_project_with_his_words_and_picks(golem, careful):
+def test_an_adopted_repo_becomes_a_project_with_his_words_and_picks(golem):
     async def go():
-        said = await adopt(golem, "cards for my table", mode="careful", tag="Game")
+        said = await adopt(golem, "cards for my table", tag="Game")
         assert said == "Adopting Mimic: first golem checks it over."
         project = golem.store.project("mimic")
-        assert (project.name, project.summary, project.mode, project.tag) == ("Mimic", "Printable cards for a D&D table.", "", "Game")
+        assert (project.name, project.summary, project.tag) == ("Mimic", "Printable cards for a D&D table.", "Game")
         job = golem.store.active_job("mimic")
         # No grace: the page said everything it was for, and the check starts straight away.
-        assert (job.kind, job.playbook, job.workflow, job.mode, job.state, job.request) == ("adopt", "adopt", "adopt", "careful", "queued", "cards for my table")
+        assert (job.kind, job.playbook, job.workflow, job.state, job.request) == ("adopt", "adopt", "adopt", "queued", "cards for my table")
         assert [m.text for m in golem.store.job_messages(job.id)] == ["cards for my table"]
         [triage] = golem.harness.calls
         assert (triage.model, triage.label) == ("haiku", "adopt") and "Tabletop data in, visual outputs out." in triage.prompt
         assert "What he said the repo is" in triage.prompt and "!adopt" not in triage.prompt
 
-        await golem.control.setting("mimic", "mode", "")  # not started yet: it takes the project's change too
-        assert (golem.store.job(job.id).workflow, golem.store.job(job.id).mode) == ("adopt", "")
         job_, said = await golem.bot.adopt("mimic")
         assert job_ is None and said == "Mimic (mimic) is already one of golem's projects."
 
@@ -128,7 +126,7 @@ def test_a_repo_that_passes_everything_is_adopted_and_main_deployed(tmp_path):
         assert checked == (
             "I checked it over, and I'm adopting it.\n\n✓ CI on main: build: success\n✓ Dockerfile\n✓ build workflow: build.yml\n"
             "✓ repo shape\n✓ docs/brief.md\n✓ deploy/compose.yml\n✓ tests in golem's container: uv run pytest: 559 passed\n\n"
-            "Next I deploy main as it is.\n\nNo default mode, each step's default model and effort (its settings change them)."
+            "Next I deploy main as it is.\n\nEach step's default model and effort (its settings change them)."
         )
         # Its issue says golem worked on it: adopting it again brings it back as history (history.py). With no PR, alert closes it.
         assert golem.workspace.issues == [("mimic", "Mimic")]

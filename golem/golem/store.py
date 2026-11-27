@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS projects (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     summary TEXT NOT NULL,
-    mode TEXT NOT NULL DEFAULT '',  -- the mode (plan.MODES) its requests run in unless they ask for another: Riggy's setting
+    mode TEXT NOT NULL DEFAULT '',  -- unused: its default mode, when golem had modes (checklist mode, gone)
     model TEXT NOT NULL DEFAULT 'opus',
     effort TEXT NOT NULL DEFAULT 'high',
     paused INTEGER NOT NULL DEFAULT 0,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     worktree INTEGER NOT NULL DEFAULT 0, -- 1: it works in a tree of its own (workspace.TREES); 0: in the project's checkout
     start TEXT NOT NULL DEFAULT 'change', -- where it came from and what it may do (STARTS)
     workflow TEXT NOT NULL DEFAULT '',   -- the workflow it runs, by key ('' from before workflows)
-    mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in (plan.MODES); '' for the usual way
+    mode TEXT NOT NULL DEFAULT '',       -- unused: the mode it ran in, when golem had modes ('checklist': cl-trees' jobs)
     graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
     vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
@@ -239,7 +239,7 @@ MIGRATIONS = {
         "worktree": "INTEGER NOT NULL DEFAULT 0",
         "start": "TEXT NOT NULL DEFAULT 'change'",
         "workflow": "TEXT NOT NULL DEFAULT ''",
-        "mode": "TEXT NOT NULL DEFAULT ''",
+        "mode": "TEXT NOT NULL DEFAULT ''",  # unused (golem has no modes): kept with cl-trees' jobs
         "graph": "TEXT NOT NULL DEFAULT ''",
         "graph_hash": "TEXT NOT NULL DEFAULT ''",
         "vars": "TEXT NOT NULL DEFAULT '{}'",
@@ -306,7 +306,6 @@ class Project:
     slug: str
     name: str
     summary: str
-    mode: str
     model: str  # "" for each step's default (plan.engine)
     effort: str
     paused: bool
@@ -447,7 +446,7 @@ class Job:
     worktree: int = 0  # 1: it works in a git worktree of its own (Scheduler.tree); 0: in the project's checkout
     start: str = "change"  # where it came from (STARTS)
     workflow: str = ""  # the workflow it runs, by key; "" from before workflows
-    mode: str = ""  # the mode it runs in (plan.MODES); "" for the usual way
+    mode: str = ""  # unused: the mode it ran in, when golem had modes ("checklist": cl-trees' jobs)
     graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
@@ -544,8 +543,8 @@ class Store:
                 self.db.execute("DELETE FROM kv WHERE key = ?", (key,))
             self.put("workflow_files", "1")
         if self.get("golems_modes") is None:
-            # Modes were Riggy's to make, each a tab of a workflow; now they're golem's (plan.MODES),
-            # and none of the old ones is among them.
+            # Modes were Riggy's to make, each a tab of a workflow; then golem's (checklist), now none:
+            # none of the old ones was among them.
             self.db.execute("DROP TABLE IF EXISTS modes")
             self.db.execute("UPDATE projects SET mode = ''")
             self.put("golems_modes", "1")
@@ -568,11 +567,11 @@ class Store:
     # --- projects -------------------------------------------------------------
 
     def add_project(
-        self, slug: str, name: str, summary: str, mode: str = "", model: str = "", effort: str = ""
+        self, slug: str, name: str, summary: str, model: str = "", effort: str = ""
     ) -> Project:
         self.db.execute(
-            "INSERT INTO projects (slug, name, summary, mode, model, effort, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (slug, name, summary, mode, model, effort, now()),
+            "INSERT INTO projects (slug, name, summary, model, effort, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (slug, name, summary, model, effort, now()),
         )
         return self.project(slug)
 
@@ -597,7 +596,7 @@ class Store:
         self.db.execute("UPDATE projects SET paused = ? WHERE slug = ?", (int(paused), slug))
 
     def update_project(self, slug: str, **fields: str | int) -> Project:
-        assert set(fields) <= {"name", "mode", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs", "vacuum"}, fields
+        assert set(fields) <= {"name", "model", "effort", "tag", "proposals", "proposals_max", "proposals_off", "parallel_jobs", "vacuum"}, fields
         columns = ", ".join(f"{name} = ?" for name in fields)
         self.db.execute(f"UPDATE projects SET {columns} WHERE slug = ?", (*fields.values(), slug))
         return self.project(slug)
@@ -607,8 +606,8 @@ class Store:
         with self.db:
             self.db.execute("BEGIN")
             self.db.execute(
-                "INSERT INTO projects (slug, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum)"
-                " SELECT ?, name, summary, mode, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum"
+                "INSERT INTO projects (slug, name, summary, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum)"
+                " SELECT ?, name, summary, model, effort, paused, created_at, tag, proposals, proposals_max, proposals_off, parallel_jobs, vacuum"
                 " FROM projects WHERE slug = ?",
                 (new, old),
             )

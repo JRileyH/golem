@@ -299,7 +299,7 @@ def test_a_stage_block_runs_on_its_stages_default_model_unless_something_more_sp
 
     golem.store.set_default("stage:review", "model", "sonnet")
     golem.store.set_default("stage:review", "effort", "low")
-    project = Project("p", "P", "s", "", "", "", False, "2026-11-22")
+    project = Project("p", "P", "s", "", "", False, "2026-11-22")
     step = Step(1, 1, 1, "agent", "check")
     found = plan.engine(golem.settings, golem.store, project, step, {"stage": "review"})
     assert (found.model, found.effort, found.model_from) == ("sonnet", "low", "the review blocks' default")

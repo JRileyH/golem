@@ -455,7 +455,7 @@ def create_app(
         return FileResponse(path, media_type=options.IMAGE_TYPES[path.suffix], headers=headers)
 
     def picks() -> projectpage.Picks:
-        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))], list(plan.MODES))
+        return projectpage.Picks([(w.key, w.name) for w in scheduler.library.choices(("change", "look"))])
 
     def project_view(request: Request, project: Project, job: Job | None) -> Response:
         """A project's page, open on `job` (else the one it opens on: projectpage.chosen). A job
@@ -528,12 +528,9 @@ def create_app(
         if not bot:
             return _back(form, "golem can't take that here.")
         text = form.get("text", "").strip()[:8000]
-        mode = form.get("mode", "auto")
         if not text:
             return _back(form, "Write something first.")
-        if mode not in ("auto", "") and mode not in plan.MODES:
-            return _back(form, f"There's no mode called {mode}.")
-        job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode)
+        job = await bot.ask(project, text, workflow=form.get("workflow", ""))
         return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.")
 
     async def project_history(request: Request) -> Response:
@@ -559,8 +556,7 @@ def create_app(
             return _back({"back": f"/p/{project.slug}"}, "Sign in (Settings) to change a project.")
         data, jobs = project_lanes(project, signed)
         decided = store.proposals(project.slug, ("accepted", "rejected"), limit=20)
-        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:],
-                                          modes=list(plan.MODES))  # fmt: skip
+        page = conversation.settings_page(project, data[0], jobs, [t.name for t in store.tags()], decided, more=data[1:])
         return respond(request, f"{project.name}: settings", page, signed, here=project.slug, up=(f"/p/{project.slug}", project.name),
                        subnav=tabs(project, "settings", signed))  # fmt: skip
 
@@ -570,7 +566,7 @@ def create_app(
         flows_ = scheduler.library.choices(("new",))
         fallback = scheduler.library.fallback("new")
         return newproject.Choices([(w.key, w.name, " ".join(w.ingest.split())) for w in flows_], fallback.key if fallback else "",
-                                  list(plan.MODES), [t.name for t in store.tags()], settings.org)  # fmt: skip
+                                  [t.name for t in store.tags()], settings.org)  # fmt: skip
 
     def new_page(request: Request, new: newproject.Filled | None = None, adopting: newproject.Filled | None = None, status: int = 200) -> Response:
         signed = signed_in(request)
@@ -579,14 +575,6 @@ def create_app(
         response = respond(request, "New project", newproject.page(new_choices(), new, adopting), signed, here="new", up=("/p", "Projects"))
         response.status_code = status
         return response
-
-    def picked_mode(value: str, errors: dict[str, str]) -> str | None:
-        """A form's mode: "" for none, else one of golem's (plan.MODES)."""
-        if value in ("auto", ""):
-            return ""
-        if value not in plan.MODES:
-            errors["mode"] = f"There's no mode called {value}."
-        return value
 
     async def new_form(request: Request) -> Response:
         return new_page(request)
@@ -609,7 +597,6 @@ def create_app(
             errors["slug"] = "An address is 2 to 31 lowercase letters, digits and hyphens, and not a reserved word."
         elif slug and await bot.slug_taken(slug):
             errors["slug"] = f"{slug} is taken, by a project or a repo. {await intake.unique_slug(slug, bot.slug_taken)} is free."
-        mode = picked_mode(form.get("mode", "auto"), errors)
         model, effort = form.get("model", ""), form.get("effort", "")
         if model and model not in MODELS or effort and effort not in EFFORTS:
             errors[""] = "Pick a model and effort from the lists."
@@ -617,7 +604,7 @@ def create_app(
             return new_page(request, newproject.Filled(form, errors), status=400)
         args = {"slug": slug, "workflow": form.get("workflow", ""), "tag": form.get("tag", ""), "model": model, "effort": effort}
         try:
-            job = await bot.new_project(name, idea, mode=mode, **args)
+            job = await bot.new_project(name, idea, **args)
         except ValueError:
             return new_page(request, newproject.Filled(form, {"slug": f"{slug} was just taken. Try another."}), status=400)
         return _back({"back": projectpage.href(job)}, f"Started {name}: {plan.title(job)}.")
@@ -633,10 +620,9 @@ def create_app(
         repo = form.get("repo", "").strip().lower()
         if not repo:
             errors["repo"] = "Which repo?"
-        mode = picked_mode(form.get("mode", "auto"), errors)
         if errors:
             return new_page(request, adopting=newproject.Filled(form, errors), status=400)
-        job, said = await bot.adopt(repo, form.get("words", ""), name=form.get("name", ""), mode=mode, tag=form.get("tag", ""))
+        job, said = await bot.adopt(repo, form.get("words", ""), name=form.get("name", ""), tag=form.get("tag", ""))
         if job is None:
             return new_page(request, adopting=newproject.Filled(form, {"": said}), status=400)
         return _back({"back": projectpage.href(job)}, said)

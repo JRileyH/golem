@@ -2,7 +2,7 @@
 that need more than its settings.
 
 - A new project, from the New project form: Riggy names it and says what it's for, which
-  workflow and mode it starts with, and its tag; golem only writes its summary and its first
+  workflow it starts with, and its tag; golem only writes its summary and its first
   job's title (intake.summarize), and the job starts straight away.
 - Adopting a repo in the org that golem didn't make, from the same page: the quick checks
   answer at once (adopt.py); then it's a project like any other, its job checking it over.
@@ -61,13 +61,12 @@ class Bot:
 
     # --- new projects ---------------------------------------------------------
 
-    async def new_project(self, name: str, idea: str, *, slug: str, workflow: str = "", mode: str | None = None, tag: str = "",
-                          model: str = "", effort: str = "", vacuum: bool = False) -> Job:  # fmt: skip
+    async def new_project(self, name: str, idea: str, *, slug: str, workflow: str = "", tag: str = "", model: str = "",
+                          effort: str = "", vacuum: bool = False) -> Job:  # fmt: skip
         """A project as Riggy named it on the New project form, and its first job, which starts
         straight away: the form already said all a minute's grace was for. `workflow`: one for new
-        projects by key, else the fallback; `mode` one of golem's (plan.MODES), or "" for none. The
-        project's own default mode stays unset: only Riggy sets that, in its settings. Raises
-        ValueError if the address can't be had (web.py checks first, and says why)."""
+        projects by key, else the fallback. Raises ValueError if the address can't be had (web.py
+        checks first, and says why)."""
         async with self.lock:
             if not intake.valid_slug(slug) or await self.slug_taken(slug):
                 raise ValueError(f"{slug} can't be had.")
@@ -75,7 +74,7 @@ class Bot:
             if wf is None or wf.start != "new":
                 wf = self.library.fallback("new")
             about = await self.summarize(name, idea)
-            project = self.store.add_project(slug, name.strip()[:60], about.summary, mode="", model=model, effort=effort)
+            project = self.store.add_project(slug, name.strip()[:60], about.summary, model=model, effort=effort)
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
             if vacuum:  # lessons of its own, from nothing (Settings.lessons)
@@ -84,7 +83,7 @@ class Bot:
                 own.parent.mkdir(parents=True, exist_ok=True)
                 own.write_text("")
             title = about.title or project.name  # without a model: what he called it, not his first line cut short
-            job = self.start_job(project, wf, plan.mode_for(project, mode or ""), idea.strip(), title, kind="new")
+            job = self.start_job(project, wf, idea.strip(), title, kind="new")
             await self.chat.heard(slug, idea.strip(), job=job.id)
             return job
 
@@ -106,7 +105,7 @@ class Bot:
 
     # --- adopting a repo golem didn't make (adopt.py) ---------------------------
 
-    async def adopt(self, repo: str, words: str = "", *, name: str = "", mode: str | None = None, tag: str = "") -> tuple[Job | None, str]:
+    async def adopt(self, repo: str, words: str = "", *, name: str = "", tag: str = "") -> tuple[Job | None, str]:
         """A repo in the org golem didn't make, taken on: the quick checks answer at once (a
         refusal says what's in the way, and nothing's made); then it's a project like a new one,
         its job checking it over (vet), tidying what's missing and deploying it. `name` "" names
@@ -119,11 +118,11 @@ class Bot:
             if blocked := adopt.preflight(slug, about, False, self.settings.org):
                 return None, adopt.refusal(slug, blocked)
             brief = await self.adopt_brief(slug, words, about)
-            project = self.store.add_project(slug, (name.strip() or brief.name)[:60], brief.summary, mode="")
+            project = self.store.add_project(slug, (name.strip() or brief.name)[:60], brief.summary)
             if tag and (found := self.store.tag(tag)):
                 project = self.store.update_project(slug, tag=found.name)
             wf = self.builtin("adopt", "adopt")
-            job = self.start_job(project, wf, plan.mode_for(project, mode or ""), words or plan.adopting(slug), brief.title, kind="adopt")
+            job = self.start_job(project, wf, words or plan.adopting(slug), brief.title, kind="adopt")
             if words:
                 await self.chat.heard(slug, words, job=job.id)
             return job, f"Adopting {project.name}: first golem checks it over."
@@ -154,28 +153,27 @@ class Bot:
         wf = self.library.get(key)
         return wf if wf and wf.start == start else self.library.fallback(start)
 
-    def start_job(self, project: Project, wf: Builtin, mode: str, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
-        """A job for a request, running a workflow in a mode."""
+    def start_job(self, project: Project, wf: Builtin, request: str, title: str = "", priority: int = 0, kind: str = "") -> Job:
+        """A job for a request, running a workflow."""
         kind = kind or {"new": "new", "adopt": "adopt"}.get(wf.start, "change")
         job = self.store.add_job(project.slug, kind, request, wf.key, priority=priority, title=title, start=wf.start)
-        job = self.store.update_job(job.id, workflow=wf.key, mode=mode)
+        job = self.store.update_job(job.id, workflow=wf.key)
         self.scheduler.wake()
         return job
 
     # --- requests on a project's page -------------------------------------------
 
-    async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None) -> Job:
+    async def ask(self, project: Project, text: str, *, workflow: str = "") -> Job:
         """What Riggy asked for on a project's page: always a job of its own, queued behind any
         change under way (turns.behind). The request call titles it and, unless he picked them,
-        says which workflow it's for. `mode` None for the project's default, "" for none."""
+        says which workflow it's for."""
         fallback = self.library.fallback("change")
         asked = await options.read_request(self.harness, self.settings, text, self.kinds(), fallback.key if fallback else "")
         picked = self.library.get(workflow)
         if picked is None or picked.start not in ("change", "look"):
             picked = self.library.get(asked.workflow) or fallback
-        mode = plan.mode_for(project) if mode is None else plan.mode_for(None, mode)
         async with self.lock:
-            job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
+            job = self.start_job(project, picked, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
         await self.chat.heard(project.slug, text, job=job.id)
         return job
 
@@ -213,8 +211,7 @@ class Bot:
             self.store.add_note(job.id, request)
             follow = "The current job will update the references and redeploy."
         else:
-            self.start_job(project, self.library.fallback("change"), plan.mode_for(project), request,
-                           f"Move to {new}")  # fmt: skip
+            self.start_job(project, self.library.fallback("change"), request, f"Move to {new}")
             follow = "A job is updating the references and will redeploy."
         return (
             f"Moved {project.name} to {new}: {repo}, soon live at {url}. {follow} "

@@ -46,10 +46,10 @@ def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     async def go():
         room = await new_project(golem, [])
         project = golem.store.project("tree-cards")
-        assert (project.name, project.summary, project.mode, room) == ("Tree Cards", "A flashcard game for northeastern US trees.", "", "tree-cards")
+        assert (project.name, project.summary, room) == ("Tree Cards", "A flashcard game for northeastern US trees.", "tree-cards")
         job = golem.store.active_job("tree-cards")
         # No grace: the form said everything it was for.
-        assert (job.kind, job.workflow, job.mode, job.state, job.title) == ("new", "web_app", "", "queued", "Tree Flashcard Game")
+        assert (job.kind, job.workflow, job.state, job.title) == ("new", "web_app", "queued", "Tree Flashcard Game")
         assert job.request == "a flashcard game for identifying northeastern us trees"
         assert [m.text for m in golem.store.job_messages(job.id)] == [job.request]  # its activity starts with what he said
         # golem only writes the summary and the job's title: a cheap structured call.
@@ -60,15 +60,15 @@ def test_a_new_project_is_named_by_riggy_and_starts_at_once(golem):
     run(go())
 
 
-def test_a_new_project_takes_the_workflow_mode_tag_and_engine_riggy_picked(golem, careful):
+def test_a_new_project_takes_the_workflow_tag_and_engine_riggy_picked(golem):
     async def go():
         golem.harness.script = [TREES]
-        job = await golem.new_project("trees, carefully", workflow="web_app", mode="careful", tag="Game", model="opus", effort="max")
+        job = await golem.new_project("trees, carefully", workflow="web_app", tag="Game", model="opus", effort="max")
         project = golem.store.project("tree-cards")
-        assert (job.workflow, job.mode, project.tag, project.model, project.effort, project.mode) == ("web_app", "careful", "Game", "opus", "max", "")
+        assert (job.workflow, project.tag, project.model, project.effort) == ("web_app", "Game", "opus", "max")
         golem.harness.script = [{"summary": "s", "title": "t"}]
-        other = await golem.new_project("birds", name="Birds", mode="", tag="Nope")
-        assert other.mode == "" and golem.store.project("birds").tag == ""  # no mode, and only a tag there is
+        await golem.new_project("birds", name="Birds", tag="Nope")
+        assert golem.store.project("birds").tag == ""  # only a tag there is
         golem.workspace.repos.add("fish")  # a repo by that name already exists: the form says so first
         with pytest.raises(ValueError):
             await golem.new_project("fish", name="Fish")
@@ -1555,14 +1555,14 @@ def test_pausing_a_project_or_all_work(golem):
 # --- settings, names and slugs ------------------------------------------------
 
 
-def test_settings_picked_for_a_new_project_pick_the_mode_model_and_effort(golem, careful):
+def test_settings_picked_for_a_new_project_pick_the_model_and_effort(golem):
     async def go():
         golem.harness.script = [{**TREES, "title": "Leaf Guessing Game"}]
-        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", mode="careful", model="fable", effort="max")
+        await golem.new_project("a game where you guess the leaf", name="Leaf Peeper", model="fable", effort="max")
         project = golem.store.project("leaf-peeper")
-        assert (project.name, project.mode, project.model, project.effort) == ("Leaf Peeper", "", "fable", "max")  # its default is Riggy's to set
+        assert (project.name, project.model, project.effort) == ("Leaf Peeper", "fable", "max")
         job = golem.store.active_job("leaf-peeper")
-        assert (job.workflow, job.mode) == ("web_app", "careful")
+        assert job.workflow == "web_app"
         await golem.until("spec")
         golem.harness.script = [verdict("done")]
         await golem.step()
@@ -1583,8 +1583,7 @@ def test_unpicked_settings_use_the_defaults(tmp_path):
         golem.harness.script = [TREES]
         await golem.new_project("trees")
         project = golem.store.project("tree-cards")
-        assert (project.mode, project.model, project.effort) == ("", "", "")  # each step's default; the usual way
-        assert golem.store.active_job("tree-cards").mode == ""
+        assert (project.model, project.effort) == ("", "")  # each step's default
         await golem.until("spec")
         await golem.step()
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "xhigh")
@@ -1592,19 +1591,15 @@ def test_unpicked_settings_use_the_defaults(tmp_path):
     run(go())
 
 
-def test_a_projects_settings(golem, careful):
+def test_a_projects_settings(golem):
     from golem.control import ControlError
 
     async def go():
         await new_project(golem, [])
-        job = golem.store.active_job("tree-cards")
-        said = await golem.control.setting("tree-cards", "mode", "careful")
-        assert said == f"Tree Cards: requests run in careful mode unless they ask for another; job {job.id}, not started yet, too."
-        assert golem.store.job(job.id).mode == "careful" and golem.store.project("tree-cards").mode == "careful"
         await golem.control.setting("tree-cards", "effort", "max")
         await golem.control.setting("tree-cards", "model", "sonnet")
         assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").effort) == ("sonnet", "max")
-        for name, value in (("model", "gpt"), ("mode", "fancy")):
+        for name, value in (("model", "gpt"), ("mode", "careful")):  # golem has no modes
             with pytest.raises(ControlError):
                 await golem.control.setting("tree-cards", name, value)
 
@@ -1613,11 +1608,8 @@ def test_a_projects_settings(golem, careful):
         await golem.step()
         assert (golem.harness.calls[-1].model, golem.harness.calls[-1].effort) == ("sonnet", "max")
 
-        # Once the job has started, it carries on as it is.
-        await golem.control.setting("tree-cards", "mode", "")
-        assert golem.store.job(job.id).mode == "careful" and golem.store.project("tree-cards").mode == ""
         await golem.control.setting("tree-cards", "model", "")
-        assert (golem.store.project("tree-cards").model, golem.store.project("tree-cards").mode) == ("", "")
+        assert golem.store.project("tree-cards").model == ""
         assert golem.chat.texts("tree-cards") == [m for m in golem.chat.texts("tree-cards") if "from the status page" not in m]  # the page says it
 
     run(go())

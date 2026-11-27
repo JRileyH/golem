@@ -51,10 +51,10 @@ class Search:
         return f"?{urlencode(kept)}" if kept else ""
 
 
-def matches(job: Job, project: Project, search: Search) -> bool:
+def matches(job: Job, search: Search) -> bool:
     if search.state == "active" and job.state not in ACTIVE or search.state not in ("", "active") and job.state != search.state:
         return False
-    if search.workflow and plan.workflow_for(job, project)[0] != search.workflow:
+    if search.workflow and plan.workflow_for(job) != search.workflow:
         return False
     number = search.text.removeprefix("#")
     if number.isdigit() and int(number) == job.id:
@@ -66,7 +66,7 @@ def matches(job: Job, project: Project, search: Search) -> bool:
 def form(project: Project, jobs: list[Job], search: Search, flows: dict[str, str]) -> str:
     """The search: words, then how it went and its workflow (each searches as it's picked). Its
     workflows are those the project's jobs ran."""
-    keys = {plan.workflow_for(j, project)[0] for j in jobs} | ({search.workflow} if search.workflow else set())
+    keys = {plan.workflow_for(j) for j in jobs} | ({search.workflow} if search.workflow else set())
     named = sorted(((flows.get(k) or k.replace("_", " ").capitalize(), k) for k in keys), key=lambda x: x[0].lower())
     states = "".join(f"<option value='{k}'{' selected' if k == search.state else ''}>{escape(v)}</option>" for k, v in STATES.items())
     workflows = "<option value=''>Any</option>" + "".join(
@@ -87,7 +87,7 @@ def results(project: Project, jobs: list[Job], search: Search, flows: dict[str, 
     """The jobs the search found, the latest first, a page of them, with the way to the others."""
     if not jobs:
         return "<p class=empty>No jobs yet.</p>"
-    found = [j for j in jobs if matches(j, project, search)]
+    found = [j for j in jobs if matches(j, search)]
     if not found:
         return "<p class=empty>No jobs match.</p>"
     pages = -(-len(found) // PER_PAGE)
@@ -114,7 +114,7 @@ def row(job: Job, project: Project, search: Search, flows: dict[str, str], now: 
     excerpt = _excerpt(job.request, words) if words and not all(w in title.lower() for w in words) else ""
     return (
         f"<li class=job-row><div class=row-head><a class=job-title href='{href(job)}'>{escape(title)}</a>{badge(job)}</div>"
-        f"<p class=muted>{workflow_words(job, project, flows)} · #{job.id} · {_day(job.created_at, now)}</p>"
+        f"<p class=muted>{workflow_words(job, flows)} · #{job.id} · {_day(job.created_at, now)}</p>"
         + (f"<p class=excerpt>{escape(excerpt)}</p>" if excerpt else "")
         + "</li>"
     )

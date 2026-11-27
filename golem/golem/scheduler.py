@@ -334,7 +334,7 @@ class Scheduler:
                 continue
             wf = self.library.fallback("change")
             job = self.store.add_job(p.slug, "change", proposals.request(p), wf.key if wf else "feature", title=plan.clean_title(p.title))
-            job = self.store.update_job(job.id, workflow=wf.key if wf else "", mode=plan.mode_for(project))
+            job = self.store.update_job(job.id, workflow=wf.key if wf else "")
             if p.issue:  # the job works on the proposal's issue, and its PR closes it
                 job = self.store.update_job(job.id, issue=p.issue)
             self.store.set_built_by(p.id, job.id)
@@ -367,8 +367,7 @@ class Scheduler:
                 return job
             snap = triage.snapshot()
             return self.store.update_job(job.id, workflow="triage", graph=json.dumps(snap), graph_hash=engine.digest(snap))
-        project = self.store.project(job.slug)
-        key, mode = plan.workflow_for(job, project)
+        key = plan.workflow_for(job)
         wf = self.library.get(key)
         if wf is None or wf.start != job.start:
             fallback = self.library.fallback(job.start)
@@ -378,7 +377,7 @@ class Scheduler:
             self.store.add_message(job.slug, "golem", f"Job {job.id} couldn't use {key or 'its workflow'}, so it's running {fallback.name}.", job_id=job.id)
             wf = fallback
         snap = self.library.pin(wf, job.start)
-        return self.store.update_job(job.id, workflow=wf.key, mode=mode, graph=json.dumps(snap), graph_hash=engine.digest(snap))
+        return self.store.update_job(job.id, workflow=wf.key, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
     def insert(self, job_id: int, steps: list[Step], after: int) -> None:
         """Steps golem puts in where they're needed (a fix, a catch-up with main, another round),

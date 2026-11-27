@@ -171,7 +171,7 @@ def start(store: Store, project: Project) -> Job:
     """A proposals job for the project, through the next kind in turn (`due` checked one is on)."""
     request = REQUEST.format(next_lens(store, project).name)
     job = store.add_job(project.slug, "change", request, "proposals", priority=PRIORITY, start="propose")
-    return store.update_job(job.id, workflow="proposals", mode=project.mode)
+    return store.update_job(job.id, workflow="proposals")
 
 
 def collect(raw: object) -> list[tuple[str, str, dict]]:

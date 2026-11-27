@@ -220,10 +220,3 @@ def add_workflow(golem: Golem, key: str, blocks: list, md: str = "", start: str 
         (folder / f"{key}.md").write_text(md)
         spec["md"] = f"{key}.md"
     (folder / f"{key}.yml").write_text(yaml.safe_dump(spec, sort_keys=False))
-
-
-@pytest.fixture
-def careful(monkeypatch):
-    """A mode of golem's (plan.MODES), for the tests of picking one: golem ships none yet."""
-    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care taken."})
-    return "careful"

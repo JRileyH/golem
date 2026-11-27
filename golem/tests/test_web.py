@@ -796,7 +796,7 @@ def new(client, path="/new", **form):
     return r
 
 
-def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
+def test_a_new_project_is_named_on_its_form(golem, app):
     from test_flow import TREES
 
     assert "Sign%20in" in app.get("/new", follow_redirects=False).headers["location"]
@@ -808,23 +808,22 @@ def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
     assert "<option value='web_app' selected" in html and "<option>Game</option>" in html
     assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
     assert "name=mode>" not in html  # golem has no modes: no Mode field
-    monkeypatch.setattr(plan, "MODES", {"careful": "Extra care."})
 
-    r = new(app, name="", slug="Bad Slug!", idea="", mode="nope", model="gpt")  # what's wrong comes back with what he wrote
+    r = new(app, name="", slug="Bad Slug!", idea="", model="gpt")  # what's wrong comes back with what he wrote
     html = r.text
     assert r.status_code == 400 and "Name it." in html and "Say what it&#x27;s for." in html and "An address is 2 to 31" in html
-    assert "There&#x27;s no mode called nope." in html and "value='Bad Slug!'" in html and golem.store.projects() == []
+    assert "Pick a model and effort from the lists." in html and "value='Bad Slug!'" in html and golem.store.projects() == []
     golem.workspace.repos.add("tree-cards")
     html = new(app, name="Tree Cards", idea="trees").text
     assert "tree-cards is taken, by a project or a repo. tree-cards-2 is free." in html and "value='Tree Cards'" in html
 
     golem.harness.script = [TREES]
     r = new(app, name="Tree Cards", slug="trees", idea="a flashcard game for identifying northeastern us trees", workflow="web_app",
-            mode="careful", tag="Game", model="opus", effort="")  # fmt: skip
+            tag="Game", model="opus", effort="")  # fmt: skip
     job = golem.store.active_job("trees")
     assert r.headers["location"] == f"/p/trees/jobs/{job.id}?msg=" + quote("Started Tree Cards: Tree Flashcard Game.")  # on to its page
     project = golem.store.project("trees")
-    assert (project.name, project.tag, project.model, job.mode, job.state) == ("Tree Cards", "Game", "opus", "careful", "queued")
+    assert (project.name, project.tag, project.model, job.state) == ("Tree Cards", "Game", "opus", "queued")
     assert app.get("/inbox", follow_redirects=False).headers["location"] == "/"  # golem's own conversation is no more
     assert "Ask%20on%20a%20project" in app.post("/say", data={"channel": "inbox", "text": "hi"}, follow_redirects=False).headers["location"]
 
@@ -838,7 +837,7 @@ def test_the_new_project_page_adopts_a_repo(golem, app):
     assert golem.store.projects() == []
     golem.workspace.existing["mimic"] = ABOUT
     golem.harness.script = [BRIEF]
-    r = new(app, "/new/adopt", repo="mimic", words="cards for my table", name="", mode="auto", tag="")
+    r = new(app, "/new/adopt", repo="mimic", words="cards for my table", name="", tag="")
     job = golem.store.active_job("mimic")
     assert r.headers["location"].startswith(f"/p/mimic/jobs/{job.id}?msg=Adopting%20Mimic") and job.request == "cards for my table"
 
@@ -861,24 +860,23 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert "class=project-grid" in html and "href='/p/tree-cards'" in html and "Tree Flashcard Game" in html and "class='route small'" in html
 
     # With a job under way, asking still starts one of its own: it waits its turn.
-    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "Bigger Cards"}]})
-    r = app.post("/p/tree-cards/ask", data={"text": "make the cards bigger", "workflow": "", "mode": "auto"}, follow_redirects=False)
+    golem.harness.script = by_label({"request": [{"workflow": "change", "title": "Bigger Cards"}]})
+    r = app.post("/p/tree-cards/ask", data={"text": "make the cards bigger", "workflow": ""}, follow_redirects=False)
     bigger = golem.store.project_jobs("tree-cards")[0]
     assert r.headers["location"] == f"/p/tree-cards/jobs/{bigger.id}?msg=" + quote(f"Started job #{bigger.id}: Bigger Cards.")
     assert bigger.id != job.id and (bigger.workflow, bigger.state, bigger.request) == ("change", "queued", "make the cards bigger")
     assert [m.text for m in golem.store.job_messages(bigger.id)] == ["make the cards bigger"]  # its activity starts with what he asked
-    golem.harness.script = by_label({"request": [{"workflow": "change", "mode": "none", "title": "A New Logo"}]})
-    app.post("/p/tree-cards/ask", data={"text": "a new logo", "workflow": "options", "mode": ""})
+    golem.harness.script = by_label({"request": [{"workflow": "change", "title": "A New Logo"}]})
+    app.post("/p/tree-cards/ask", data={"text": "a new logo", "workflow": "options"})
     logo = golem.store.project_jobs("tree-cards")[0]
-    assert (logo.workflow, logo.mode, logo.title) == ("options", "", "A New Logo")  # his picks over the call's
-    golem.harness.script = by_label({"request": [{"workflow": "question", "mode": "none", "title": "Why So Slow"}]})
-    app.post("/p/tree-cards/ask", data={"text": "why is it slow?", "workflow": "", "mode": "auto"})
+    assert (logo.workflow, logo.title) == ("options", "A New Logo")  # his picks over the call's
+    golem.harness.script = by_label({"request": [{"workflow": "question", "title": "Why So Slow"}]})
+    app.post("/p/tree-cards/ask", data={"text": "why is it slow?", "workflow": ""})
     why = golem.store.project_jobs("tree-cards")[0]
     assert why.start == "look" and why.priority == QUESTION_PRIORITY  # a question goes ahead of other work
     assert "Sign%20in%20first" in app.post("/p/tree-cards/ask", data={"text": "x"}, headers={"origin": "https://evil.example"},
                                             follow_redirects=False).headers["location"]  # fmt: skip
     assert "Write%20something%20first" in app.post("/p/tree-cards/ask", data={"text": " "}, follow_redirects=False).headers["location"]
-    assert "no%20mode" in app.post("/p/tree-cards/ask", data={"text": "x", "mode": "nope"}, follow_redirects=False).headers["location"]
 
     golem.store.update_job(logo.id, state="waiting")  # a reply, from its pane or Now, picks it back up
     act(app, action="note", job=logo.id, value="B")
@@ -889,8 +887,7 @@ def test_a_project_page_is_its_jobs_and_asking_always_starts_one(golem, app):
     assert "name=action value='rename'" in html and "name=action value='project-slug'" in html and "action=/say" not in html
     act(app, action="rename", slug="tree-cards", value="Leaf Cards")
     assert golem.store.project("tree-cards").name == "Leaf Cards"
-    assert "no%20mode" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")
-    assert golem.store.project("tree-cards").mode == ""
+    assert "mode%20can%27t%20be%20rigorous" in act(app, action="setting", slug="tree-cards", name="mode", value="rigorous")  # golem has no modes
     assert "type%20tree-cards%20exactly" in act(app, action="project-delete", slug="tree-cards", value="trees")
     location = act(app, action="project-slug", slug="tree-cards", value="leaf-cards", back="/p/tree-cards/settings")
     assert location.startswith("/p/leaf-cards/settings?msg=Moved%20Leaf%20Cards%20to%20leaf-cards")

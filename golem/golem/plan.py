@@ -58,27 +58,14 @@ BOOKS = {"standard": "web_app", "rigorous": "web_app", "reckless": "web_app", "f
 NEW_BOOKS = ("standard", "rigorous", "reckless")
 
 
-def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
-    """The workflow (by key) and mode a job runs: its own, or for a job that hasn't said, the
-    one its playbook became."""
+def workflow_for(job: Job) -> str:
+    """The workflow (by key) a job runs: its own, or for a job that hasn't said, the one its
+    playbook became."""
     if job.workflow:
-        return job.workflow, job.mode
+        return job.workflow
     if job.playbook in NEW_BOOKS:
-        return "web_app", "" if job.playbook == "standard" else job.playbook
-    mode = project.mode if project and project.mode not in ("", "standard") else ""
-    return BOOKS.get(job.playbook, "change"), mode
-
-
-# Golem's modes: ways of working a job can be in, each with what it means. "" is the usual way.
-MODES: dict[str, str] = {}
-
-
-def mode_for(project: Project | None, asked: str = "") -> str:
-    """The mode a job runs in: what Riggy picked for it, else its project's default (his
-    setting), else none."""
-    if asked in MODES:
-        return asked
-    return project.mode if project and project.mode in MODES else ""
+        return "web_app"
+    return BOOKS.get(job.playbook, "change")
 
 
 def snapshot(job: Job) -> dict | None:
@@ -135,7 +122,7 @@ def preview(settings: Settings, store: Store, job: Job) -> dict | None:
         from .triage import snapshot
 
         return snapshot()
-    key, _ = workflow_for(job, store.project(job.slug))
+    key = workflow_for(job)
     library = Library(store, settings.process_dir / "workflows", settings.web_password)
     wf = library.get(key)
     if wf is None or wf.start != job.start:
@@ -252,16 +239,9 @@ def engine_words(project: Project) -> str:
 
 
 def settings_line(project: Project) -> str:
-    """A project's settings in a line: "No default mode, each step's default model and effort".
-    Its default mode is what its requests run in unless they ask for another: Riggy's setting."""
-    mode = f"Default mode {project.mode}" if project.mode else "No default mode"
-    return f"{mode}, {engine_words(project)}"
-
-
-def running(job: Job, wf: object | None) -> str:
-    """What a job runs, in words: "Web app, rigorous mode", or "Change"."""
-    name = getattr(wf, "name", "") or job.workflow or job.playbook
-    return f"{name}, {job.mode} mode" if job.mode else name
+    """A project's settings in a line: "Each step's default model and effort"."""
+    words = engine_words(project)
+    return words[0].upper() + words[1:]
 
 
 def what(job: Job) -> str:
