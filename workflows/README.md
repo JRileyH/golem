@@ -65,10 +65,6 @@ the usual way on.
   sub-workflow's Output blocks. One can't contain itself.
 - **End** tells Riggy it's done; a sub-workflow ends at its **Outputs** instead.
 
-In checklist mode (`golem/golem/checklist.py`) a Build plans instead of building, by its
-stage's `checklist` part, and golem puts a build and a check step in after it for each item
-it plans.
-
 Agent blocks with instructions of their own (not a stage) are for workflows golem builds
 in code, like triage's (`golem/golem/triage.py`). A loop guard asks Riggy before a job
 goes round too often.

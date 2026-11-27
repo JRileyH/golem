@@ -57,7 +57,7 @@ hello-local:
     docker build -q -t "ghcr.io/$GITHUB_ORG/hello:$sha" examples/hello >/dev/null
     just deploy hello "$sha"
 
-# Two projects side by side in one CSV for a model to compare (an idea built both ways: slug cl-slug), in compare/
+# Two projects side by side in one CSV for a model to compare, in compare/
 compare a b:
     #!/usr/bin/env bash
     set -euo pipefail
