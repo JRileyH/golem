@@ -40,8 +40,6 @@ NAMES = {
     "setup": "Get ready",
     "refresh": "Catch up",
     "test": "Test it",
-    "item": "Build an item",
-    "check": "Check an item",
     "examine": "Look into it",
     "answer": "Answer you",
 }
@@ -58,9 +56,6 @@ class Piece:
     @property
     def name(self) -> str:
         s = self.step
-        if s.item:  # a checklist's item: by its title and place
-            where = f"{s.item.get('title')} (item {s.item.get('n')} of {s.item.get('of')})"
-            return where if s.kind == "agent" else f"Check {where}"
         own = s.kind == "agent" or (s.kind in ("checkin", "choose") and s.name != s.kind)  # a block named for itself
         return NAMES.get(s.name if own else s.kind, s.name.replace("-", " ").capitalize())
 
@@ -99,8 +94,8 @@ def pieces(steps: list[Step]) -> list[Piece]:
 
 def current(found: list[Piece]) -> Piece | None:
     """The piece under way or waiting, else the one that just failed (a fix follows), else the
-    next to do. A failure that something ran after is history: a checklist item's failed check,
-    tried again since, isn't what the job is on."""
+    next to do. A failure that something ran after is history: tried again since, it isn't
+    what the job is on."""
     if live := next((p for p in found if p.state in ("now", "waiting")), None):
         return live
     ran = [p for p in found if p.state != "todo"]

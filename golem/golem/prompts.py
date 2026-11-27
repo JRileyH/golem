@@ -169,31 +169,6 @@ class Prompts:
             cwd=cwd,
         )
 
-    def item(self, item: dict, items: list[dict]) -> str:
-        """A checklist item's build (checklist.py): its item and check, where it fits in the
-        plan's list, and on a later try, what its check said last time."""
-        from .checklist import listed
-
-        failed = ""
-        if item.get("problem"):
-            said = f"\n\nThe last try said: {item['said']}" if item.get("said") else ""
-            failed = (
-                f"\n## What failed last time\n\nThis is try {item.get('try')} at this item. Its check failed after the last one:\n\n"
-                f"{item['problem']}{said}\n\nThat try's work is on the branch: start from it.\n"
-            )
-        return self.render(
-            "item",
-            title=item.get("title", ""),
-            do=item.get("do", ""),
-            files=", ".join(f"`{f}`" for f in item.get("files") or []) or "(none named: find them)",
-            check=item.get("check", ""),
-            checks=", ".join(f"`{c}`" for c in item.get("checks") or []) or "the tests it runs",
-            n=item.get("n"),
-            of=item.get("of"),
-            list=listed(items, item.get("n", 0)) if items else f"→ {item.get('n')}. {item.get('title')}",
-            failed=failed,
-        )
-
     def resume(self, feedback: list[str]) -> str:
         return self.render("resume", feedback=format_feedback(feedback))
 

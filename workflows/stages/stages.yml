@@ -38,7 +38,6 @@ build:
   base: after  # what it builds, then how
   variants:
     pick: {instead: builds.auto, when: "Building Riggy's pick, after a Riggy picks block"}
-    checklist: {instead: base, when: "In checklist mode: planning the work as items for cheaper runs to build (golem/golem/checklist.py)"}
   settings:
     builds:
       label: Builds

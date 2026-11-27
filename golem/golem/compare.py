@@ -3,8 +3,7 @@
     python -m golem.compare A B [-o FILE]   the CSV
     python -m golem.compare --columns       what each column means, a line each
 
-`just compare A B` runs both on the server and writes them to compare/. Built both ways
-(checklist.py), an idea is two projects, `<slug>` and `cl-<slug>`, but any two will do.
+`just compare A B` runs both on the server and writes them to compare/.
 
 There's a row per project, job, step, agent run and message (`level`), A's then B's: each job, then
 each of its steps followed by its runs and what golem and Riggy said about it. A step's runs are
@@ -13,8 +12,8 @@ each run (cost at API prices, turns, tokens), each run's log says what the runs 
 has wrong: every stretch of a run that went on after background tasks (harness.merge_results),
 input from the cache and not, time waiting on the API, the tools it called and how many came back
 as errors, and the models Claude Code itself used. A job's row has its ledger
-(ledger.py): fixes, time waiting on Riggy, a checklist's planning against its items and how the
-items went. Each project's checkout gives the size of what it built.
+(ledger.py): fixes and time waiting on Riggy. Each project's checkout gives the size of what it
+built.
 
 Golem keeps no judgement of how good the work is: that's for whoever reads the CSV, and the sites.
 Reads only: the database (opened read-only, so it's safe beside a running golem of another version,
@@ -35,7 +34,7 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from pathlib import Path
 
-from . import checklist, glance, ledger, plan, reports
+from . import glance, ledger, plan, reports
 from .config import Settings
 from .harness import merge_results
 from .store import Job, Said, Step, Store
@@ -56,9 +55,8 @@ COLUMNS = {
     "name": "project: its name; job: its title; step: its name (a stage, or one of golem's own steps); run: its label; "
     "message: who said it, golem or riggy",
     "kind": "project: its tag; job: where it came from (new, change, look = a question, propose, adopt); "
-    "step: agent, check, or one of golem's own (setup, push, PR, CI, merge, deploy, checkin, choose…)",
-    "role": "step: plan (a Build that planned a checklist), item (an item's build), check (golem running "
-    "an item's check), ask (waiting on Riggy); blank for any other",
+    "step: agent, or one of golem's own (setup, push, PR, CI, merge, deploy, checkin, choose…)",
+    "role": "step: ask (waiting on Riggy); blank for any other",
     "mode": "usual or checklist (project: the mode its requests run in unless they ask for another)",
     "vacuum": "project: 1 if it runs as on a fresh golem (lessons of its own starting empty, an empty Claude Code per job)",
     "state": "project: paused or blank; job: done, killed, running, waiting…; step: done, failed, skipped…; run: its outcome",
@@ -109,20 +107,6 @@ COLUMNS = {
     "jobs": "project: how many jobs",
     "fixes": "project, job: fix steps, after a failed CI run or a refused deploy",
     "asks": "project, job: times it waited on Riggy",
-    "planning_cost_usd": "checklist mode: what the Builds that planned items cost",
-    "items_cost_usd": "checklist mode: what building the items cost",
-    "items": "checklist mode: items checked",
-    "items_first_try": "checklist mode: items whose first check passed",
-    "items_again": "checklist mode: items built more than once",
-    "items_escalated": f"checklist mode: items that went to their Build's own model for try {checklist.TRIES}",
-    "items_gave_up": "checklist mode: items still failing after their last try, carried on without",
-    "item_n": "step: which item of its plan",
-    "item_of": "step: of how many",
-    "item_try": f"step: which try at the item (try {checklist.TRIES} is on the Build's model)",
-    "item_title": "step: the item as planned: its title",
-    "item_do": "step: what to do",
-    "item_files": "step: the files to touch or read first",
-    "item_check": "step: the command that exits 0 once the item works",
     "repo_files": "project: files on its main (origin/main, as golem last fetched it)",
     "repo_mb": "project: their size in MB, photos and all",
     "repo_lines": "project: lines in them, lockfiles and binary files aside",
@@ -132,7 +116,7 @@ COLUMNS = {
     "repo_types": "project: tracked files by extension, most first",
     "url": "project: where it's hosted",
     "text": "project: its summary; job: Riggy's request; step: what it did, or what it's waiting for; message: what was said",
-    "problem": "step: what a fix step was to fix, or what failed on an item's try before",
+    "problem": "step: what a fix step was to fix",
     "error": "step: why its last attempt failed",
 }  # fmt: skip
 
@@ -374,12 +358,11 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         between = {s.id: _between([r for r in runs if r["step_id"] == s.id]) for s in steps}
         idle += sum(between.values())
         out.append(_job_row(side, slug, n, job, steps, sums, led, job_asks, sum(between.values())))
-        planners = {s.item.get("plan") for s in steps if s.item}
         for step in steps:
             mine, theirs = Sums(), [r for r in runs if r["step_id"] == step.id]
             for r in theirs:
                 mine.add(r, logs[r["id"]])
-            out.append(_step_row(side, slug, n, job, step, mine, planners, between[step.id]))
+            out.append(_step_row(side, slug, n, job, step, mine, between[step.id]))
             out += [_run_row(side, slug, n, job, step, r, logs[r["id"]]) for r in theirs]
             out += [_said_row(side, slug, n, job, step, m) for m in said if m.step_id == step.id]
         ids = {s.id for s in steps}
@@ -390,7 +373,7 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         "mode": project.mode or "usual", "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
         "started": project.created_at, "waiting_minutes": _minutes(sum(r.waiting_seconds for r in leds)), "between_runs_minutes": _minutes(idle),
         "model": "/".join(x for x in (project.model, project.effort) if x), **total.columns(), "jobs": len(jobs),
-        "fixes": sum(r.fixes for r in leds), "asks": asks, **_items(leds), **repo(settings.workspace_dir / slug),
+        "fixes": sum(r.fixes for r in leds), "asks": asks, **repo(settings.workspace_dir / slug),
         "url": settings.project_url(slug), "text": _flat(project.summary),
     }  # fmt: skip
     return [head, *out]
@@ -404,18 +387,12 @@ def _job_row(side: str, slug: str, n: int, job: Job, steps: list[Step], sums: Su
         "mode": job.mode or "usual", "state": job.state, "started": min(started, default=""), "ended": max(ended, default=""),
         "wall_minutes": _minutes(led.wall_seconds), "waiting_minutes": _minutes(led.waiting_seconds),
         "between_runs_minutes": _minutes(between), "workflow": job.workflow,
-        **sums.columns(), "fixes": led.fixes, "asks": asks, **_items([led]), "text": _flat(job.request),
+        **sums.columns(), "fixes": led.fixes, "asks": asks, "text": _flat(job.request),
     }  # fmt: skip
 
 
-def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, planners: set, between: float) -> dict:
-    item = step.item or {}
-    if step.id in planners:
-        role = "plan"
-    elif item:
-        role = "check" if step.kind == "check" else "item"
-    else:
-        role = "ask" if step.kind in plan.ASKS else ""
+def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, between: float) -> dict:
+    role = "ask" if step.kind in plan.ASKS else ""
     took = ledger.seconds(step.started_at, step.ended_at)
     return {
         "level": "step", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position, "step": step.id,
@@ -424,10 +401,7 @@ def _step_row(side: str, slug: str, n: int, job: Job, step: Step, sums: Sums, pl
         "between_runs_minutes": _minutes(between) if sums.runs > 1 else "",
         "model": " ".join(sums.engines), "node": step.node_id, "visit": step.visit or "", "turn": step.turn, "port": step.port,
         "max_turns": step.max_turns or "", "outcomes": " ".join(sums.outcomes), **(sums.columns() if sums.runs else {}),
-        **({"item_n": item.get("n", ""), "item_of": item.get("of", ""), "item_try": item.get("try", ""),
-            "item_title": _flat(item.get("title")), "item_do": _flat(item.get("do")),
-            "item_files": " ".join(item.get("files") or []), "item_check": _flat(item.get("check"))} if item else {}),
-        "text": _flat(step.summary), "problem": _flat(step.problem or item.get("problem")), "error": _flat(step.error),
+        "text": _flat(step.summary), "problem": _flat(step.problem), "error": _flat(step.error),
     }  # fmt: skip
 
 
@@ -452,21 +426,6 @@ def _said_row(side: str, slug: str, n: int, job: Job, step: Step | None, said: S
     return {
         "level": "message", "side": side, "project": slug, "job_n": n, "job": job.id, "step_n": step.position if step else "",
         "step": step.id if step else "", "name": said.who, "mode": job.mode or "usual", "started": said.at, "text": _flat(said.text),
-    }  # fmt: skip
-
-
-def _items(leds: list[ledger.Row]) -> dict[str, object]:
-    """How some jobs' checklists went, added up: nothing for jobs that planned none."""
-    if not any(r.items or r.planning_cost for r in leds):
-        return {}
-
-    def total(name: str) -> float:
-        return sum(getattr(r, name) for r in leds)
-
-    return {
-        "planning_cost_usd": _money(total("planning_cost")), "items_cost_usd": _money(total("items_cost")),
-        "items": int(total("items")), "items_first_try": int(total("first_try")), "items_again": int(total("again")),
-        "items_escalated": int(total("escalated")), "items_gave_up": int(total("gave_up")),
     }  # fmt: skip
 
 

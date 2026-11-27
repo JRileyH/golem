@@ -42,7 +42,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, checklist, engine, glance, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
+from . import about, adopt, engine, glance, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
 from .workflows import Library
 from .cards import Cards
 from .config import Settings
@@ -79,6 +79,7 @@ CI_POLL = timedelta(seconds=20)  # how often CI is checked while a step waits fo
 CI_START_TIMEOUT = timedelta(minutes=10)  # no workflow run on a commit by then: the repo has no CI
 CI_TIMEOUT = timedelta(minutes=60)  # CI started but still not finished: something's wrong at GitHub
 IDLE_POLL_SECONDS = 30
+GONE = "Checklist mode is gone: passed over"  # a checklist's step left in a job (its records stay: steps.item)
 # Each slot's localhost ports for dev servers: GOLEM_PORT to GOLEM_PORT+9 (worker_env), clear of
 # the usual defaults (3000, 4173, 5173, 8080) so a worker that forgets still can't take another's.
 PORTS = 20000
@@ -96,8 +97,8 @@ WORKER_ENV_DENY = frozenset({"DEPLOYER_ADMIN_SECRET", "GOLEM_WEB_PASSWORD"})
 # always posted.
 ANNOUNCED = {"pr", "deploy", "choose"}
 # Steps that work in the job's tree (made by setup, vet or refresh, the first step).
-USES_TREE = ("agent", "test", "check", "push", "merge", "deploy", "alert", "sync")
-TREE_STEPS = ("setup", "vet", "agent", "test", "check", "sync", "push", "merge")  # steps after which the branch's commit is kept
+USES_TREE = ("agent", "test", "push", "merge", "deploy", "alert", "sync")
+TREE_STEPS = ("setup", "vet", "agent", "test", "sync", "push", "merge")  # steps after which the branch's commit is kept
 
 
 @dataclass
@@ -458,7 +459,7 @@ class Scheduler:
                 quiet = job.start in LOOKS  # its last step says it
                 nxt = plan.current(steps)
                 if state == "failed" and not (nxt and nxt.kind == "checkin"):  # a check-in after says it itself
-                    fixing = " Fixing it." if nxt and nxt.kind == "agent" and not step.item else ""  # a checklist's check says itself
+                    fixing = " Fixing it." if nxt and nxt.kind == "agent" else ""
                     await self.say(project, f"✗ {name}: {outcome.summary}.{fixing}", notice=True)
                 elif state == "done" and not quiet and (step.kind == "agent" or step.kind in ANNOUNCED):
                     link = next(iter(outcome.links.values()), "")
@@ -570,7 +571,7 @@ class Scheduler:
         vars["guard"] = {**guard, "asked": True}
         self.store.update_job(job.id, vars=vars, state="waiting", attempts=0)
         steps = self.store.steps(job.id)
-        runs = sum(1 for s in steps if s.kind == "agent" and s.started_at and s.id != step.id and not s.item)
+        runs = sum(1 for s in steps if s.kind == "agent" and s.started_at and s.id != step.id)
         lately = [f"- {plan.label(s)} ({s.state}): {s.error or s.summary or ''}"[:300] for s in steps if s.started_at][-8:]
         self.incident(
             job, step, ("guard", job.workflow, step.name), "friction", "blocked",
@@ -623,6 +624,8 @@ class Scheduler:
         """One headless run that does the step's work on the job's branch and commits it. A
         question's or a proposal's looks at the checkout as it is (main, or a job's work under
         way), and anything it changes there is put back."""
+        if step.name == "item" and not step.node_id:  # a checklist item's build, from checklist mode (gone)
+            return Outcome("skipped", GONE)
         block = plan.node(job, step) or {}
         looking, tree = job.start in LOOKS, self.tree(job)
         if project.slug == INTERNAL:  # golem's own job: no repo, a scratch directory (checkout)
@@ -659,13 +662,8 @@ class Scheduler:
 
         contract = block.get("contract") or ""
         schema = {"options": options.SCHEMA, "design": options.DESIGN_SCHEMA, "propose": proposals.SCHEMA}.get(contract)
-        planning = checklist.planning(job.mode, block, step)  # a Build in checklist mode plans its items
-        if planning:
-            schema = checklist.SCHEMA
         if job.start == TRIAGE:
             schema = triage.SCHEMA
-        if step.item:  # an item asks nobody: its check decides
-            schema = checklist.ITEM_SCHEMA
         if outputs:  # its verdict is the output it takes, or blocked
             schema = {**VERDICT_SCHEMA, "properties": {**VERDICT_SCHEMA["properties"], "verdict": {"enum": [*(o["name"] for o in outputs), "blocked"]}}}
         turns = step.max_turns or FIX_TURNS
@@ -717,36 +715,12 @@ class Scheduler:
             made = self.store.add_triaged(job.id, triage.upto(job), found, said)
             await self.say(project, triage.announcement(len(read), made, f"{self.settings.url('golem')}/reports"), notice=True)
             return Outcome("done", message or f"Proposed {len(made)} fix(es) to golem.", links)
-        if v["verdict"] == "blocked" and not step.item:  # an item that asks anyway goes to its check, which decides
+        if v["verdict"] == "blocked":
             return Outcome("blocked", message, links, session_id=result.session_id)
         if not looking:
             await self.workspace.commit_all(project.slug, f"{step.name}: work left uncommitted", job=tree)
-        if planning:
-            items, problem = self.plan_items(job, project, step, block, v)
-            if problem:
-                return Outcome("error", problem=problem)
-            message = message or f"Planned {items} item(s)."
-        if step.item:
-            message = f"{checklist.name(step.item)}: {message}"
         passed_on = message if block.get("stage") and port == "fail" else None  # a Review that reports: what to fix, for the next block
         return Outcome("done", message, links, port=port, context=passed_on)
-
-    def plan_items(self, job: Job, project: Project, step: Step, block: dict, v: dict) -> tuple[int, str]:
-        """A checklist's plan (checklist.py): its items and check files kept, and a build and a
-        check put in after the planner for each, building on the item default and, for an item's
-        last try, on this Build block's model. How many items; or what's wrong with the plan."""
-        items, checks, problem = checklist.collect(v)
-        if problem:
-            return 0, problem
-        where = checklist.folder(self.settings.job_logs(job.id), step.id)
-        kept = checklist.keep(where, self.checkout(project, job), items, checks)
-        model, effort = self.store.defaults().get("item", ("", ""))
-        up = plan.engine(self.settings, self.store, project, step, block)
-        rows = checklist.item_steps(step, items, kept, (model or checklist.DEFAULT[0], effort or checklist.DEFAULT[1]), (up.model, up.effort))
-        stale = [s.id for s in self.store.steps(job.id) if s.item.get("plan") == step.id and not s.started_at]  # put in before a crash
-        self.store.drop_steps(job.id, stale)
-        self.insert(job.id, [replace(r, job_id=job.id) for r in rows], after=step.position)
-        return len(items), ""
 
     def triage_prompt(self, job: Job, project: Project) -> str:
         """A triage step's prompt (triage.py), the reports it reads written out in full where it works."""
@@ -778,17 +752,13 @@ class Scheduler:
         if block.get("path") and intros.get(block["path"]):  # a sub-workflow's own text, after the job's
             intro = f"{intro}\n\n{intros[block['path']]}".strip()
         if not block:
-            if step.item:  # a checklist item's build (checklist.py)
-                where = checklist.folder(self.settings.job_logs(job.id), int(step.item.get("plan") or 0))
-                return intro, self.prompts.item(step.item, checklist.items_of(where))
             if step.name == "resolve":  # merging main in, put in where a catch-up conflicted
                 return intro, self.prompts.render(step.name, problem=step.problem or "")
             return intro, ""
         text = block.get("instructions") or ""
         if block.get("stage"):  # golem's text for its settings, taken when the job started, and what it's about now
             found = about.about(snap.get("nodes") or {}, self.store.steps(job.id), step, job.request)
-            variant = (found.variant, checklist.MODE) if checklist.planning(job.mode, block, step) else found.variant
-            text = stages.compose(block, block.get("parts") or self.library.blocks.parts_for(block), found.text, variant)
+            text = stages.compose(block, block.get("parts") or self.library.blocks.parts_for(block), found.text, found.variant)
         if "$problem" in text:
             return intro, Template(text).safe_substitute(problem=step.problem or "(nothing reported)")
         if step.problem:
@@ -1341,40 +1311,8 @@ class Scheduler:
         return await self.run(job, project, step, "bin/test", int(block.get("timeout") or TEST_TIMEOUT))
 
     async def do_check(self, job: Job, project: Project, step: Step) -> Outcome:
-        """A checklist item's check (checklist.py): the plan's check files put back as its planner
-        wrote them, then the item's command run in the job's checkout (run). If it fails, the
-        item's next try goes in after it; after its last, golem gives up on the item and tells the
-        next agent step, and the job carries on."""
-        item = step.item
-        where = checklist.folder(self.settings.job_logs(job.id), int(item.get("plan") or 0))
-        put = checklist.restore(where, self.checkout(project, job))
-        ran = await self.run(job, project, step, item.get("check") or "false", TEST_TIMEOUT)
-        note = f" (put back {', '.join(put)}, which it had changed)" if put else ""
-        if ran.state == "done":
-            return Outcome("done", f"{checklist.name(item)}: its check passed{note}.", ran.links)
-        built = next((s for s in reversed(self.store.steps(job.id)) if s.position < step.position and s.kind == "agent"
-                      and s.item.get("plan") == item.get("plan") and s.item.get("n") == item.get("n")), None)  # fmt: skip
-        said = (built.summary or "").removeprefix(f"{checklist.name(item)}: ") if built else ""
-        if nxt := checklist.again(item, ran.problem, said):
-            self.insert(job.id, [replace(s, job_id=job.id) for s in nxt], after=step.position)
-            return Outcome("failed", f"{checklist.name(item)}: its check failed{note}, so it goes again", ran.links, ran.problem)
-        self.tell_next_agent(job, step, checklist.gave_up(item, ran.problem))
-        return Outcome("failed", f"{checklist.name(item)}: its check still fails after {item.get('try')} tries{note}; carrying on", ran.links, ran.problem)
-
-    def tell_next_agent(self, job: Job, step: Step, text: str) -> None:
-        """Something for the next agent block of the job's workflow, under what golem's checks
-        found (instructions): on its step if that's written already, else in the job's context,
-        which the next agent step written takes (engine.row)."""
-        heading = "## Checklist items that didn't pass\n\nGolem gave up on these after their tries; their checks still fail. Fix them first.\n\n"
-        nxt = next((s for s in self.store.steps(job.id) if s.position > step.position and s.state == "pending" and s.kind == "agent" and s.node_id), None)
-        if nxt is not None:
-            had = nxt.problem or ""
-            self.store.update_step(nxt.id, problem=f"{had}\n\n{text}".strip() if heading.strip() in had else f"{had}\n\n{heading}{text}".strip())
-            return
-        vars = plan.vars_of(self.store.job(job.id))
-        had = vars.get("context") or ""
-        vars["context"] = f"{had}\n\n{text}".strip() if heading.strip() in had else f"{had}\n\n{heading}{text}".strip()
-        self.store.update_job(job.id, vars=vars)
+        """A checklist item's check, from checklist mode (gone): passed over, should one be left."""
+        return Outcome("skipped", GONE)
 
     async def run(self, job: Job, project: Project, step: Step, command: str, timeout: int) -> Outcome:
         """A command run in the job's checkout, as a worker would run it (its environment, ports

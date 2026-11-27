@@ -806,10 +806,8 @@ def test_a_new_project_is_named_on_its_form(golem, app, monkeypatch):
     assert "max-age=7776000" in cookie and "samesite=lax" in cookie
     html = app.get("/new").text
     assert "<option value='web_app' selected" in html and "<option>Game</option>" in html
-    assert "<select name=mode><option value='' selected>Usual</option><option value='checklist'>Checklist</option>" in html  # golem's modes
     assert "Adopt a repo golem didn't make" in html and "github.com/unlaunched" in html
-    monkeypatch.setattr(plan, "MODES", {})  # with none, no Mode field
-    assert "name=mode>" not in app.get("/new").text
+    assert "name=mode>" not in html  # golem has no modes: no Mode field
     monkeypatch.setattr(plan, "MODES", {"careful": "Extra care."})
 
     r = new(app, name="", slug="Bad Slug!", idea="", mode="nope", model="gpt")  # what's wrong comes back with what he wrote
@@ -1176,6 +1174,25 @@ def test_a_job_page_lists_its_steps_and_one_from_before_workflows_shows_the_way_
     golem.store.update_job(job.id, state="done", graph="")  # a job from before workflows has no copy
     html = page.get(f"/p/trees/jobs/{job.id}").text
     assert "The way it went" in html and "class=trail" in html
+
+
+def test_a_job_from_checklist_mode_still_shows_its_steps_and_golem_passes_over_any_left(golem, page):
+    """Checklist mode is gone; cl-trees' jobs and their items stay (steps.item, unused)."""
+    job = page.job
+    start(golem, job, "mvp")
+    item = json.dumps({"plan": 1, "n": 1, "of": 2, "try": 1, "title": "File A", "check": "test -f a.txt"})
+    for i, (kind, name, state) in enumerate((("agent", "item", "done"), ("check", "check", "done"), ("agent", "item", "pending"), ("check", "check", "pending"))):
+        golem.store.db.execute("INSERT INTO steps (job_id, position, kind, name, state, item, links) VALUES (?, ?, ?, ?, ?, ?, '{}')",
+                               (job.id, 100 + i, kind, name, state, item))  # fmt: skip
+    steps = golem.store.steps(job.id)
+    sign_in(page)
+    assert page.get(f"/p/trees/jobs/{job.id}").status_code == 200
+    for s in steps[-4:]:
+        assert page.get(f"/steps/{s.id}").status_code == 200
+    project = golem.store.project("trees")
+    for s in steps[-2:]:  # left in a job under way: passed over, never run
+        outcome = asyncio.run(getattr(golem.scheduler, f"do_{s.kind}")(job, project, s))
+        assert (outcome.state, outcome.summary) == ("skipped", "Checklist mode is gone: passed over")
 
 
 def test_there_is_no_workflow_editor_and_blocks_are_in_settings(golem, page):

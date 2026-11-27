@@ -12,8 +12,8 @@ import sqlite3
 import subprocess
 
 import pytest
-from test_checklist import ITEMS, builds, checklist_job, costed, planner
-from test_flow import TREES
+from test_flow import TREES, idle_project
+from test_ledger import costed
 
 from golem import compare
 from golem.store import Store
@@ -46,11 +46,12 @@ def git(where, *args):
 
 
 def two_projects(golem):
-    """tree-cards: its first job, then a change in checklist mode; fish: its first job, then a change the usual way."""
+    """tree-cards and fish: each its first job, then a change."""
 
     async def go():
-        job = await checklist_job(golem)
-        golem.harness.script = costed({"change": [planner(ITEMS, ["tests/items.txt"])], "item": [builds("a.txt"), builds(), builds(), builds("b.txt")]})
+        room = await idle_project(golem)
+        job = await golem.ask(room, "add the a and b files", workflow="change")
+        golem.harness.script = costed({})
         await golem.finish()
         golem.harness.script = [TREES]
         await golem.new_project("a game about fish", name="Fish")
@@ -100,23 +101,15 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
         ("project", "B", "fish", ""), ("job", "B", "fish", "1"), ("job", "B", "fish", "2"),
     ]  # fmt: skip
 
-    # The checklist job: its ledger, and a row for each step, the planner's, the items' and their checks'.
+    # A's change: its ledger, and a row for each step, its agents' and golem's own.
     job = next(r for r in rows if r["level"] == "job" and r["side"] == "A" and r["job_n"] == "2")
-    assert (job["mode"], job["kind"], job["state"], job["text"]) == ("checklist", "change", "done", "add the a and b files")
-    assert (job["runs"], job["cost_usd"], job["tokens_in"], job["cost_haiku"]) == ("7", "1.9500", "7000", "0.3000")
-    assert (job["items"], job["items_first_try"], job["items_again"], job["items_escalated"], job["items_gave_up"]) == ("2", "1", "1", "1", "0")
-    assert (job["planning_cost_usd"], job["items_cost_usd"]) == ("1.0000", "0.4000")
+    assert (job["kind"], job["state"], job["text"]) == ("change", "done", "add the a and b files")
+    assert (job["runs"], job["cost_usd"], job["tokens_in"], job["cost_opus"]) == ("3", "1.5500", "3000", "1.5500")
     steps = [r for r in rows if r["level"] == "step" and r["job"] == job["job"]]
-    plan_row = next(r for r in steps if r["role"] == "plan")
-    assert (plan_row["name"], plan_row["runs"], plan_row["cost_usd"], plan_row["outcomes"]) == ("change", "1", "1.0000", "verdict")
-    items = [(r["role"], r["item_title"], r["item_try"], r["model"].split("/")[0] if r["role"] == "item" else r["state"]) for r in steps if r["role"] in ("item", "check")]
-    assert items == [
-        ("item", "File A", "1", "haiku"), ("check", "File A", "1", "done"), ("item", "File B", "1", "haiku"), ("check", "File B", "1", "failed"),
-        ("item", "File B", "2", "haiku"), ("check", "File B", "2", "failed"), ("item", "File B", "3", plan_row["model"].split("/")[0]),
-        ("check", "File B", "3", "done"),
-    ]  # fmt: skip
-    check = next(r for r in steps if r["role"] == "check")
-    assert (check["item_check"], check["item_of"], check["runs"], check["cost_usd"]) == ("test -f a.txt", "2", "", "")  # golem's own: no runs
+    built = next(r for r in steps if r["name"] == "change")
+    assert (built["kind"], built["runs"], built["cost_usd"], built["outcomes"]) == ("agent", "1", "1.0000", "verdict")
+    setup = next(r for r in steps if r["kind"] == "setup")
+    assert (setup["runs"], setup["cost_usd"]) == ("", "")  # golem's own: no runs
 
     # The usual change: what its run's log says that the runs table doesn't.
     change = next(r for r in rows if r["level"] == "step" and r["side"] == "B" and r["name"] == "change")
@@ -132,7 +125,7 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
     assert (change["runs"], change["between_runs_minutes"], change["outcomes"]) == ("2", "50.0", "verdict verdict")
     fish_job = next(r for r in rows if r["level"] == "job" and r["job"] == str(fish.id))
     assert fish_job["between_runs_minutes"] == "50.0" and next(r for r in rows if r["level"] == "project" and r["side"] == "B")["between_runs_minutes"] == "50.0"
-    assert plan_row["between_runs_minutes"] == ""  # one run: nothing between
+    assert built["between_runs_minutes"] == ""  # one run: nothing between
 
     # Each step's runs follow it, and what golem said about it.
     at = rows.index(change)
@@ -147,9 +140,9 @@ def test_two_projects_side_by_side_a_row_per_project_job_and_step(golem):
 
     # The projects: everything added up, and what each checkout holds.
     a, b = (r for r in rows if r["level"] == "project")
-    assert (a["name"], a["mode"], a["jobs"], a["items"], a["planning_cost_usd"], a["repo_files"]) == ("Tree Cards", "usual", "2", "2", "1.0000", "")
+    assert (a["name"], a["mode"], a["jobs"], a["repo_files"]) == ("Tree Cards", "usual", "2", "")
     assert float(a["cost_usd"]) == sum(float(r["cost_usd"]) for r in rows if r["level"] == "job" and r["side"] == "A")
-    assert (b["name"], b["tool_calls"], b["items"], b["url"]) == ("Fish", "3", "", golem.settings.project_url("fish"))
+    assert (b["name"], b["tool_calls"], b["url"]) == ("Fish", "3", golem.settings.project_url("fish"))
     assert (b["repo_files"], b["repo_lines"], b["repo_test_files"], b["repo_test_lines"], b["repo_commits"]) == ("6", "6", "1", "2", "2")
     assert b["repo_types"].startswith(".py 2, ") and b["repo_mb"] == "0.0"
 

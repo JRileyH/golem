@@ -64,12 +64,12 @@ def chips(job: Job, steps: list[Step]) -> list[Chip]:
             continue
         if s.kind in SHOWN_WHEN and s.state not in SHOWN_WHEN[s.kind]:
             continue
-        key = s.node_id.split("/", 1)[0] if s.node_id else f"checklist-{s.item['plan']}" if s.item else f"#{s.position}"
-        inside = "/" in s.node_id or bool(s.item)  # a checklist's items and checks fill one chip, as a container's steps do
+        key = s.node_id.split("/", 1)[0] if s.node_id else f"#{s.position}"
+        inside = "/" in s.node_id
         chip = by_key.get(key)
         if chip is None:
             stem = key.rsplit("-", 1)[0] if key.rsplit("-", 1)[-1].isdigit() else key  # ship-2: the second Ship
-            label = "Checklist" if s.item else (levels.get(key, {}).get("name") or stem.replace("_", " ").capitalize()) if inside else plan.label(s)
+            label = (levels.get(key, {}).get("name") or stem.replace("_", " ").capitalize()) if inside else plan.label(s)
             chip = Chip(key, label, "", container=inside, predicted=not s.id)
             by_key[key] = chip
             out.append(chip)

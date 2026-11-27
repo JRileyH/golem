@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from . import checklist
 from . import engine as graphs
 from .config import Settings
 from .store import ACTIVE, OPEN, TRIAGE, Job, Project, Step, Store
@@ -31,7 +30,6 @@ LABELS = {
     "vet": "check it over",
     "sync": "catch up with main",
     "test": "test",
-    "check": "check",
 }
 TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
@@ -43,7 +41,7 @@ ASKS = ("checkin", "choose")
 CLASSES = {
     "setup": "plan", "vet": "plan", "spec": "plan", "spec-review": "plan", "options": "plan", "design": "plan",
     "scaffold": "build", "mvp": "build", "buildout": "build", "build": "build", "change": "build", "adopt": "build",
-    "guide": "build", "apply": "build", "item": "build", "check": "build",
+    "guide": "build", "apply": "build",
     "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
     "checkin": "wait", "choose": "wait",
     "push": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
@@ -72,7 +70,7 @@ def workflow_for(job: Job, project: Project | None) -> tuple[str, str]:
 
 
 # Golem's modes: ways of working a job can be in, each with what it means. "" is the usual way.
-MODES: dict[str, str] = {checklist.MODE: checklist.ABOUT}
+MODES: dict[str, str] = {}
 
 
 def mode_for(project: Project | None, asked: str = "") -> str:
@@ -198,7 +196,6 @@ SUGGESTED = {
     "triage": ("opus", "high"),  # what in golem causes its workers' trouble: reading its code and their logs
     "survey": ("sonnet", "high"),  # before an adoption: install, run the tests, read for needs
     "adopt": ("opus", "high"),  # bringing a repo golem didn't make into its shape
-    "item": ("haiku", "medium"),  # a checklist item's build (checklist mode): small, with a check to pass; its last try is on its Build's
     # Stage blocks (stages.py), by stage, after a block's own name:
     "stage:plan": ("opus", "xhigh"), "stage:build": ("opus", "high"), "stage:review": ("opus", "xhigh"),
     "stage:docs": ("sonnet", "medium"), "stage:design": ("opus", "high"), "stage:fix": ("opus", "high"),

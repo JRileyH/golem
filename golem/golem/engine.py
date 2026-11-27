@@ -351,7 +351,7 @@ def advance(snap: dict, vars: dict, trace: list[Step], node_id: str | None, port
         if settings.get("effort"):
             nxt.effort = settings["effort"]
         rounds = vars["guard"].get("rounds", 0) + 1
-        runs = sum(1 for s in trace if s.kind == "agent" and s.started_at and not s.item) + (1 if t == "agent" else 0)  # a checklist's items aside
+        runs = sum(1 for s in trace if s.kind == "agent" and s.started_at) + (1 if t == "agent" else 0)
         if nxt.visit > guard[0] * rounds or runs > guard[1] * rounds:
             vars["guard"]["hit"] = to
         rows.append(nxt)

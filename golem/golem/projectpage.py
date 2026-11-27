@@ -181,7 +181,7 @@ def head_part(lane: LaneData, flows: dict[str, str], signed_in: bool, now: datet
 
 def costs(r: Row, active: bool) -> str:
     """What the job's cost, in a line (ledger.py): usage at API prices, tokens, how long its agents
-    ran, its cost by model, fixes, and a checklist's items."""
+    ran, its cost by model, and fixes."""
     if not r.runs:
         return ""
     bits = [f"{_money(r.cost)} at API prices", f"{_count(r.tokens_in)} in / {_count(r.tokens_out)} out", f"agents {span(timedelta(seconds=r.agent_seconds))}"]
@@ -189,11 +189,6 @@ def costs(r: Row, active: bool) -> str:
         bits.append(", ".join(f"{m} {round(100 * c / r.cost)}%" for m, c in sorted(r.by_model.items(), key=lambda x: -x[1]) if c))
     if r.fixes:
         bits.append(f"{r.fixes} fix{'es' if r.fixes != 1 else ''}")
-    if r.items:
-        items = f"{r.items} items: {r.first_try} first time, {r.again} again"
-        items += f" ({r.escalated} on its Build's model)" if r.escalated else ""
-        items += f", {r.gave_up} given up" if r.gave_up else ""
-        bits += [items, f"planning {_money(r.planning_cost)}, items {_money(r.items_cost)}"]
     return f"<p class=costs><b>{'Cost so far' if active else 'Cost'}:</b> {escape(' · '.join(bits))}</p>"
 
 
