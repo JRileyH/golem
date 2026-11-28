@@ -19,21 +19,23 @@
   turn upgrading automatically on or off (upgrade.py).
 - Turn golem's triage of the reports about itself on or off, and take each fix it proposes
   to golem (a prompt for Riggy to paste into a session in golem's repo) or turn it down, with
-  why (triage.py).
+  why (triage.py). Or clear all the reports and triage at once, once they're out of date.
 
 Each change to a project is posted in its conversation, so it stays the record of the job.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
+import shutil
 from dataclasses import replace
 
 from . import modes, options, plan, shipments, triage
 from .proposals import LENSES, WAITING, kinds
 from .scheduler import Scheduler
 from .talk import STATUS
-from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, INTERNAL, MAX_WORKERS, MODELS, Job, Project, Step, Store, Tag
+from .store import ACTIVE, CHANGES_AT_ONCE, EFFORTS, EVERY, INTERNAL, MAX_WORKERS, MODELS, TRIAGE, Job, Project, Step, Store, Tag
 
 SKIPPED = "Skipped from the status page."
 TAG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ]{0,19}")
@@ -371,6 +373,21 @@ class Control:
         if on:
             return "golem triages the reports about itself when it has nothing else to do."
         return "golem keeps the reports about itself, and doesn't triage them."
+
+    async def clear_reports(self) -> str:
+        """Riggy wipes the reports about golem and its triage of them (Store.clear_reports), once a
+        big change to golem has made most of them out of date. Not while a triage is under way:
+        it would propose fixes from reports that are gone."""
+        if any(j.state in ACTIVE for j in self.store.jobs_from(TRIAGE)):
+            raise ControlError("A triage is under way: clear the reports once it's done.")
+        reports, proposals, jobs = self.store.clear_reports()
+        settings = self.scheduler.settings
+        for job_id in jobs:
+            for path in (settings.job_logs(job_id), settings.job_tmp(job_id)):
+                await asyncio.to_thread(shutil.rmtree, path, ignore_errors=True)
+        if not (reports or proposals or jobs):
+            return "There was nothing to clear."
+        return f"Cleared {reports} report(s), {proposals} proposal(s) for golem and {len(jobs)} triage job(s)."
 
     def auto_upgrade(self, on: bool) -> str:
         self.store.put("auto_upgrade", "1" if on else "0")

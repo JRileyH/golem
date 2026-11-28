@@ -804,6 +804,8 @@ def create_app(
                         return _back({"back": f"/reports/proposals/{taken.id}"}, message)
                 case "triage":
                     message = control.set_triage(value == "on")
+                case "reports-clear":
+                    message = await control.clear_reports()
                 case _:
                     message = "Unknown action."
         except ControlError as e:

@@ -1197,6 +1197,22 @@ class Store:
         assert state in ("accepted", "dismissed"), state
         self.db.execute("UPDATE reports SET state = ? WHERE proposal_id = ?", (state, proposal_id))
 
+    def clear_reports(self) -> tuple[int, int, list[int]]:
+        """Forget the reports about golem and its triage of them, for when a big change to golem
+        left them out of date: every report, golem's proposals for itself (waiting or decided) and
+        its triage jobs with their steps, runs and notes. Golem's news and the triage setting stay.
+        Returns how many reports and proposals went, and the jobs' ids (their files go too)."""
+        jobs = "SELECT id FROM jobs WHERE start = ?"
+        with self.db:
+            self.db.execute("BEGIN")
+            ids = [r["id"] for r in self.db.execute(jobs, (TRIAGE,))]
+            reports = self.db.execute("DELETE FROM reports").rowcount
+            proposals = self.db.execute("DELETE FROM proposals WHERE slug = ?", (INTERNAL,)).rowcount
+            for table in ("notes", "runs", "steps"):
+                self.db.execute(f"DELETE FROM {table} WHERE job_id IN ({jobs})", (TRIAGE,))
+            self.db.execute("DELETE FROM jobs WHERE start = ?", (TRIAGE,))
+        return reports, proposals, ids
+
     def new_reports(self, limit: int = 100) -> list[Report]:
         """Reports triage hasn't read yet, oldest first."""
         rows = self.db.execute("SELECT * FROM reports WHERE state = 'new' ORDER BY id LIMIT ?", (limit,))

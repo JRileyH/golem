@@ -963,6 +963,40 @@ def test_riggy_takes_a_fix_golem_proposes_to_itself_or_turns_it_down(golem, page
     assert page.get("/reports/proposals/9999").status_code == 404
 
 
+def test_riggy_clears_all_reports_and_triage_once_theyre_out_of_date(golem, page):
+    from golem import triage
+    from golem.store import INTERNAL
+
+    a = golem.store.add_report("instructions", "costly", "skills/deploy.md says port 80")
+    b = golem.store.file_incident("f1", "environment", "blocked", "merge failed: GraphQL")
+    job = triage.start(golem.store)
+    golem.scheduler.ensure_steps(job)
+    golem.store.add_note(job.id, "look at the merge step")
+    golem.store.start_run(job.id, "triage", "opus", "")
+    logs, scratch = golem.settings.job_logs(job.id), golem.settings.job_tmp(job.id)
+    for folder in (logs, scratch):
+        folder.mkdir(parents=True)
+        (folder / "x").write_text("x")
+    golem.store.put("triage", "on")
+    golem.store.add_proposals("trees", page.job.id, "polish", [("A project's own idea", "Change: polish it.")])
+    sign_in(page)
+    assert "Clear all reports and triage" in page.get("/reports").text and "can&#x27;t be undone" in page.get("/reports").text
+
+    assert "triage%20is%20under%20way" in act(page, action="reports-clear", back="/reports")  # it'd cite reports that are gone
+    assert golem.store.report(a.id) is not None
+    golem.store.update_job(job.id, state="done")
+    golem.store.add_triaged(job.id, b.id, [("Back off on GitHub errors", "Change: retry later.", "code", [b.id])], {a.id: "stale"})
+    location = act(page, action="reports-clear", back="/reports")
+    assert unquote(location) == "/reports?msg=Cleared 2 report(s), 1 proposal(s) for golem and 1 triage job(s)."
+    assert golem.store.reports() == [] and golem.store.proposals(INTERNAL) == [] and golem.store.jobs_from("triage") == []
+    assert golem.store.steps(job.id) == [] and golem.store.runs(job.id) == [] and not logs.exists() and not scratch.exists()
+    assert [p.title for p in golem.store.proposals("trees")] == ["A project's own idea"]  # projects' proposals aren't golem's
+    assert golem.store.get("triage") == "on" and golem.store.job(page.job.id) is not None
+    html = page.get("/reports").text
+    assert "No reports here." in html and "Back off on GitHub errors" not in html and "Lately:" not in html
+    assert "nothing%20to%20clear" in act(page, action="reports-clear", back="/reports")
+
+
 def test_golems_own_project_is_never_shown_or_changed(golem, page):
     import asyncio
 

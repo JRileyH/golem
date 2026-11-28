@@ -2,8 +2,9 @@
 (reports.py), from both sources: their own reports and golem's incidents. Riggy reads it to see
 how many there are and whether they say anything, turns golem's triage of them on or off, and
 takes or turns down the fixes to golem it proposes (triage.py): taking one opens its prompt
-(/reports/proposals/<id>), to paste into a Claude Code session in golem's repo. Signed in
-only: they quote runs and errors.
+(/reports/proposals/<id>), to paste into a Claude Code session in golem's repo. Once a big
+change to golem has made most of them out of date, he clears them all, triage too, after an
+are-you-sure. Signed in only: they quote runs and errors.
 """
 
 from __future__ import annotations
@@ -69,8 +70,16 @@ def proposals_card(waiting: list[Proposal], back: str) -> str:
     )
 
 
+CLEAR = (
+    "Clear every report about golem and all its triage? This deletes every report, new or old, golem's "
+    "proposals for itself (waiting or decided, so triage forgets why you turned any down) and its triage "
+    "jobs. It can't be undone."
+)
+
+
 def triage_card(t: Triage, now: datetime) -> str:
     toggle = action_form("triage", "Triage: on" if t.on else "Triage: off", value="off" if t.on else "on", back="/reports")
+    clear = action_form("reports-clear", "Clear all reports and triage", back="/reports", confirm=CLEAR, danger=True)
     how = (
         f"When golem has nothing else to do, at most every {_hours(triage.MIN_GAP)} hours, once {triage.BATCH} reports are "
         f"new or the oldest has waited {_hours(triage.WAIT)} hours, and while fewer than {triage.MAX_OPEN} of its proposals "
@@ -83,7 +92,7 @@ def triage_card(t: Triage, now: datetime) -> str:
     )
     return (
         "<section class='card settings'><h2>Triage</h2><p class=sub>golem's own look at the new reports: what in golem "
-        f"causes them, and what to change. {how}</p><div class=row-form>{toggle}</div>"
+        f"causes them, and what to change. {how}</p><div class=row-form>{toggle}{clear}</div>"
         + (f"<p class=sub>Lately:</p><ol class=links-list>{rows}</ol>" if rows else "")
         + "</section>"
     )
