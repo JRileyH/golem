@@ -7,9 +7,10 @@ FROM ghcr.io/astral-sh/uv:0.12 AS uv
 FROM python:3.13-slim
 ARG DEBIAN_FRONTEND=noninteractive
 # Claude Code from Anthropic's signed apt repo (stable channel; fingerprint
-# from https://code.claude.com/docs/en/setup), gh from GitHub's.
+# from https://code.claude.com/docs/en/setup), gh from GitHub's. procps: ps, pgrep and pkill,
+# which workers reach for to find and stop the dev servers they start (slim images lack them).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg jq ripgrep \
+    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg jq procps ripgrep \
     && install -d -m 0755 /etc/apt/keyrings \
     && curl -fsSL https://downloads.claude.ai/keys/claude-code.asc -o /etc/apt/keyrings/claude-code.asc \
     && gpg --show-keys --with-colons /etc/apt/keyrings/claude-code.asc \
