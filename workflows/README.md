@@ -61,7 +61,8 @@ the usual way on.
   uses them.
 - **Golem's own** (a bare name, or `do:`): setup, vet, refresh, push, pr, checks, merge,
   deploy, answer, proposals. `checks` and `deploy` pass or fail (the failure goes on
-  to the next agent).
+  to the next agent). A trial's arm also gets a `pick` before End, where it waits for
+  Riggy's pick (`golem/golem/trials.py`); only golem puts one in, never a workflow file.
 - **Container** (`use:`): a whole sub-workflow as one block, its outputs the
   sub-workflow's Output blocks. One can't contain itself.
 - **End** tells Riggy it's done; a sub-workflow ends at its **Outputs** instead.

@@ -125,6 +125,20 @@ phone.
   `workflows/stages/` are the master set), plus instructions for every step.
   What you'd set in Settings before modes, `python -m golem.modes export
   <golem.db>` writes out as a mode's files.
+- **Trials:** a change run two ways, to compare modes. On a project's request
+  box, set **Compare with** to another mode: arm A runs in the Mode picked (or
+  the project's default), arm B in the other. Both start from the same commit
+  of main, on branches of their own, each in a worker slot of its own beside
+  the workers setting's, and take no turns on the project, so neither slows the
+  other or anything else. Each opens its PR and runs CI, but merges and deploys
+  nothing, then waits for your pick. Its trial's page (Settings → Modes →
+  Trials) shows the arms side by side: time to ready, agent time, cost at API
+  prices, tokens, runs and fixes, the PR and CI. Pick one, or neither, with a
+  note: the arm you pick catches up with main and ships the usual way, and the
+  other closes its PR. Picking while the other arm is still working stops it.
+  Each trial's CSV has every step, run and message of both arms, as `just
+  compare` writes. One trial at a time on a project, and only for changes;
+  previews of each arm, to try before picking, come next.
 - **Adopting a repo golem didn't make:** on the New project page, "Adopt a repo
   golem didn't make": the repo, what it is (or its README says), and its name
   and tag. Golem checks it over first: its CI, build workflow,
