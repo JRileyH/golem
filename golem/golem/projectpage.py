@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from html import escape
 
-from . import modes, plan, route
+from . import modes, plan, route, trials
 from .conversation import proposals_card, thread
 from .ledger import Row
 from .pages import (LaneData, _count, _hidden, _money, action_form, ask_card, badge, headline, region, request_card, route_list,
@@ -83,10 +83,13 @@ def layout(project: Project, parts: dict[str, str], lane: LaneData | None, signe
 
 def ask_form(project: Project, picks: Picks) -> str:
     """A request: a job of its own. A workflow on Auto is golem's pick (the request call), as the
-    words say; the mode on Auto, the project's default, else golem's (modes.py)."""
+    words say; the mode on Auto, the project's default, else golem's (modes.py). A change to
+    compare with another mode is a trial: the request run both ways (trials.py)."""
     flows = "".join(f"<option value='{escape(k)}'>{escape(n)}</option>" for k, n in picks.workflows)
     modes = "".join(f"<option value='{escape(k)}'>{escape(name)}</option>" for k, name in picks.modes)
     mode = f"<label>Mode <select name=mode><option value=auto>Auto</option>{modes}</select></label>" if modes else ""
+    if modes:
+        mode += f"<label title='Run it both ways, side by side, and pick one to ship'>Compare with <select name=compare><option value=''>Nothing</option>{modes}</select></label>"
     return (
         f"<form method=post action='/p/{escape(project.slug)}/ask' class='card ask-form' data-send>"
         "<label class=ask-label for=ask-text>Ask for…</label>"
@@ -134,11 +137,15 @@ def what(lane: LaneData, flows: dict[str, str]) -> str:
 
 
 def workflow_words(job: Job, project: Project | None, flows: dict[str, str]) -> str:
-    """The job's workflow, and its mode unless it's golem's own default (modes.py), in words: "Change, OpenCode free"."""
+    """The job's workflow, and its mode unless it's golem's own default (modes.py), in words: "Change, OpenCode free".
+    A trial's arm says which, its mode always, and links to the trial (trials.py)."""
     key, mode = plan.workflow_for(job, project)
     found = modes.load().get(mode)
     named = found.name if found else mode  # a mode golem no longer has (cl-trees' "checklist") by its key
-    return escape(flows.get(key) or plan.what(job).capitalize()) + (f", {escape(named)}" if mode and mode != modes.DEFAULT else "")
+    words = escape(flows.get(key) or plan.what(job).capitalize())
+    if job.trial:
+        return f"{words}, {escape(named)} · <a href='/trials/{job.trial}'>{escape(trials.label(job))}</a>"
+    return words + (f", {escape(named)}" if mode and mode != modes.DEFAULT else "")
 
 
 # --- the right: the job ------------------------------------------------------------------------

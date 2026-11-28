@@ -111,6 +111,7 @@ class Workspace(Protocol):
     async def back_to_main(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
     async def pull_request(self, slug: str, branch: str) -> PullRequest | None: ...
     async def open_pr(self, slug: str, branch: str, title: str, body: str) -> PullRequest | None: ...
+    async def close_pr(self, slug: str, branch: str, comment: str) -> int | None: ...
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str: ...
     async def merged(self, slug: str, number: int) -> str | None: ...
     async def after_merge(self, slug: str, branch: str, *, job: int | None = None) -> None: ...
@@ -477,6 +478,17 @@ class GitHubWorkspace:
             raise _failed(f"opening a PR on {slug}", code, out)
         return await self.pull_request(slug, branch)
 
+    async def close_pr(self, slug: str, branch: str, comment: str) -> int | None:
+        """The branch's open PR closed unmerged, saying why, and the branch deleted on GitHub (a
+        trial's arm that wasn't picked: trials.py). The PR's number; None if it had none."""
+        pr = await self.pull_request(slug, branch)
+        if pr is not None:
+            code, out = await run("gh", "pr", "close", str(pr.number), "--repo", f"{self.org}/{slug}", "--comment", comment)
+            if code != 0:
+                raise _failed(f"closing PR #{pr.number} on {slug}", code, out)
+        await run("git", "push", "--quiet", "origin", "--delete", branch, cwd=self.path(slug))  # best effort: it may never have been pushed
+        return pr.number if pr else None
+
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
         """Squash-merge exactly the commit CI checked. Returns the merge commit."""
         repo = f"{self.org}/{slug}"
@@ -722,6 +734,13 @@ class LocalWorkspace:
             self.bodies.append(body)
             self.prs[(slug, branch)] = PullRequest(number, f"https://github.com/unlaunched/{slug}/pull/{number}", "")
         return await self.pull_request(slug, branch)
+
+    async def close_pr(self, slug: str, branch: str, comment: str) -> int | None:
+        pr = self.prs.pop((slug, branch), None)
+        self.pushed.pop((slug, branch), None)
+        if pr is not None:
+            self.actions.append(f"close PR #{pr.number}: {comment}")
+        return pr.number if pr else None
 
     async def merge(self, slug: str, pr: PullRequest, branch: str, *, job: int | None = None) -> str:
         if self.merge_errors and not self.merge_lands:

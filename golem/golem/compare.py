@@ -45,7 +45,7 @@ MODELS = ("haiku", "sonnet", "opus", "fable")  # golem's choices, a cost column 
 COLUMNS = {
     "level": "project, job, step, run or message: what the row is about. A step's row adds up its runs, a job's all of its "
     "runs, a project's all of its jobs': add up the rows of one level only",
-    "side": "A or B: which of the two projects, as given",
+    "side": "A or B: which of the two projects, as given; for a trial, which arm",
     "project": "the project's slug (its address)",
     "job_n": "the job's place among its project's jobs, oldest first: to pair it with the other side's",
     "job": "golem's job id",
@@ -57,7 +57,8 @@ COLUMNS = {
     "kind": "project: its tag; job: where it came from (new, change, look = a question, propose, adopt); "
     "step: agent, or one of golem's own (setup, push, PR, CI, merge, deploy, checkin, choose…)",
     "role": "step: ask (waiting on Riggy); blank for any other",
-    "mode": "usual or checklist (project: the mode its requests run in unless they ask for another)",
+    "mode": "the job's mode (golem's modes/, by key; usual or checklist from before modes); project: the mode its "
+    "requests run in unless they ask for another",
     "vacuum": "project: 1 if it runs as on a fresh golem (lessons of its own starting empty, an empty Claude Code per job)",
     "state": "project: paused or blank; job: done, killed, running, waiting…; step: done, failed, skipped…; run: its outcome",
     "started": "ISO time: project made; job's first step began; step or run began; message said",
@@ -344,30 +345,11 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
     total, leds, asks, out, idle = Sums(), [], 0, [], 0.0
     jobs = list(reversed(store.project_jobs(slug)))
     for n, job in enumerate(jobs, 1):
-        steps, runs = store.steps(job.id), store.runs(job.id)
-        logs = {r["id"]: read_log(r["log_path"]) for r in runs}
-        sums = Sums()
-        for r in runs:
-            sums.add(r, logs[r["id"]])
-            total.add(r, logs[r["id"]])
-        said = store.job_messages(job.id, limit=100_000)
-        led = ledger.row(job, steps, runs)
-        job_asks = sum(1 for s in steps if s.kind in plan.ASKS and s.started_at)
+        mine, led, job_asks, between = _job(store, side, slug, n, job, total)
+        out += mine
         leds.append(led)
         asks += job_asks
-        between = {s.id: _between([r for r in runs if r["step_id"] == s.id]) for s in steps}
-        idle += sum(between.values())
-        out.append(_job_row(side, slug, n, job, steps, sums, led, job_asks, sum(between.values())))
-        for step in steps:
-            mine, theirs = Sums(), [r for r in runs if r["step_id"] == step.id]
-            for r in theirs:
-                mine.add(r, logs[r["id"]])
-            out.append(_step_row(side, slug, n, job, step, mine, between[step.id]))
-            out += [_run_row(side, slug, n, job, step, r, logs[r["id"]]) for r in theirs]
-            out += [_said_row(side, slug, n, job, step, m) for m in said if m.step_id == step.id]
-        ids = {s.id for s in steps}
-        out += [_run_row(side, slug, n, job, None, r, logs[r["id"]]) for r in runs if r["step_id"] not in ids]
-        out += [_said_row(side, slug, n, job, None, m) for m in said if m.step_id not in ids]
+        idle += between
     head = {
         "level": "project", "side": side, "project": slug, "name": project.name, "kind": project.tag,
         "mode": project.mode or "usual", "vacuum": int(project.vacuum), "state": "paused" if project.paused else "",
@@ -377,6 +359,40 @@ def rows(store: Store, settings: Settings, slug: str, side: str) -> list[dict[st
         "url": settings.project_url(slug), "text": _flat(project.summary),
     }  # fmt: skip
     return [head, *out]
+
+
+def job_rows(store: Store, side: str, slug: str, n: int, job: Job) -> list[dict[str, object]]:
+    """A job's rows: its own, then each of its steps followed by that step's runs and what was said
+    about it, and last what was said about the job as a whole. `n`: its place, to pair it with the
+    other side's (a trial's arms: trials.csv)."""
+    return _job(store, side, slug, n, job, Sums())[0]
+
+
+def _job(store: Store, side: str, slug: str, n: int, job: Job, total: Sums) -> tuple[list[dict[str, object]], ledger.Row, int, float]:
+    """A job's rows (job_rows), its runs added to `total` too, with its ledger, how many times it
+    asked Riggy, and how long its steps sat between runs."""
+    steps, runs = store.steps(job.id), store.runs(job.id)
+    logs = {r["id"]: read_log(r["log_path"]) for r in runs}
+    sums = Sums()
+    for r in runs:
+        sums.add(r, logs[r["id"]])
+        total.add(r, logs[r["id"]])
+    said = store.job_messages(job.id, limit=100_000)
+    led = ledger.row(job, steps, runs)
+    asks = sum(1 for s in steps if s.kind in plan.ASKS and s.started_at)
+    between = {s.id: _between([r for r in runs if r["step_id"] == s.id]) for s in steps}
+    out = [_job_row(side, slug, n, job, steps, sums, led, asks, sum(between.values()))]
+    for step in steps:
+        mine, theirs = Sums(), [r for r in runs if r["step_id"] == step.id]
+        for r in theirs:
+            mine.add(r, logs[r["id"]])
+        out.append(_step_row(side, slug, n, job, step, mine, between[step.id]))
+        out += [_run_row(side, slug, n, job, step, r, logs[r["id"]]) for r in theirs]
+        out += [_said_row(side, slug, n, job, step, m) for m in said if m.step_id == step.id]
+    ids = {s.id for s in steps}
+    out += [_run_row(side, slug, n, job, None, r, logs[r["id"]]) for r in runs if r["step_id"] not in ids]
+    out += [_said_row(side, slug, n, job, None, m) for m in said if m.step_id not in ids]
+    return out, led, asks, sum(between.values())
 
 
 def _job_row(side: str, slug: str, n: int, job: Job, steps: list[Step], sums: Sums, led: ledger.Row, asks: int, between: float) -> dict:

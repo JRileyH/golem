@@ -36,6 +36,7 @@ NAMES = {
     "sync": "Catch up with main",
     "checkin": "You try it",
     "choose": "You pick one",
+    "pick": "You pick an arm",
     "hint": "Your hint",
     "setup": "Get ready",
     "refresh": "Catch up",

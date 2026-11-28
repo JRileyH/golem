@@ -395,6 +395,16 @@ class Control:
             return "golem upgrades itself when it's behind and has no work going."
         return "golem only upgrades when you say."
 
+    async def pick_arm(self, trial_id: int, pick: str, note: str = "") -> str:
+        """Riggy's pick of a trial's arm, or neither (trials.py)."""
+        trial = self.store.trial(trial_id)
+        if trial is None:
+            raise ControlError("No such trial.")
+        try:
+            return await self.scheduler.decide(trial, pick, note)
+        except ValueError as e:
+            raise ControlError(str(e)) from None
+
     async def note(self, job_id: int, text: str, step_id: int = 0, position: int = 0) -> str:
         job, project = self._job(job_id)
         text = text.strip()

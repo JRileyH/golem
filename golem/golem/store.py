@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     mode TEXT NOT NULL DEFAULT '',       -- the mode it runs in (modes.py): asked for, or settled when it starts; '' until then
     graph TEXT NOT NULL DEFAULT '',      -- its own flattened copy of the workflow (engine.flatten), from when it started; '' before
     graph_hash TEXT NOT NULL DEFAULT '', -- the workflow's digest when it was copied, to tell whether it's changed since
-    vars TEXT NOT NULL DEFAULT '{}'      -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    vars TEXT NOT NULL DEFAULT '{}',     -- JSON: its counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    trial INTEGER,                       -- the trial it's an arm of (trials.py), if any
+    arm TEXT NOT NULL DEFAULT ''         -- which arm: a | b; '' for a job that isn't one
 );
 CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY,
@@ -193,6 +195,20 @@ CREATE TABLE IF NOT EXISTS shipments (
     created_at TEXT NOT NULL,
     ended_at TEXT
 );
+-- Requests run two ways (trials.py): each of its arms is a job, the same request in a mode of its
+-- own, on a branch of its own, until Riggy picks one to ship.
+CREATE TABLE IF NOT EXISTS trials (
+    id INTEGER PRIMARY KEY,
+    slug TEXT NOT NULL,
+    request TEXT NOT NULL,           -- Riggy's words, as each arm was asked
+    title TEXT NOT NULL DEFAULT '',
+    base TEXT NOT NULL DEFAULT '',   -- the commit of main both arms start from, once the first has set up
+    issue INTEGER,                   -- the issue both arms work on
+    pick TEXT NOT NULL DEFAULT '',   -- a | b | neither once Riggy has decided; '' until then
+    note TEXT NOT NULL DEFAULT '',   -- what he said about it as he picked
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
 -- Reports about golem itself (reports.py): workers' (`golem report`) and golem's own incidents,
 -- for golem's triage to turn into proposals for golem. No foreign keys: they outlive their projects.
 CREATE TABLE IF NOT EXISTS reports (
@@ -244,6 +260,8 @@ MIGRATIONS = {
         "graph": "TEXT NOT NULL DEFAULT ''",
         "graph_hash": "TEXT NOT NULL DEFAULT ''",
         "vars": "TEXT NOT NULL DEFAULT '{}'",
+        "trial": "INTEGER",
+        "arm": "TEXT NOT NULL DEFAULT ''",
     },
     "proposals": {"issue": "INTEGER", "card": "TEXT NOT NULL DEFAULT '{}'"},
     "runs": {"step_id": "INTEGER", "glance": "TEXT NOT NULL DEFAULT ''"},  # glance: where its time went (glance.py), once it ended
@@ -290,6 +308,8 @@ EVERY = ("off", "hourly", "daily", "weekly")  # how often a project gets proposa
 INTERNAL = "golem"
 MODELS = ("fable", "opus", "sonnet", "haiku")
 MAX_WORKERS = 8  # steps that can run at once, across projects (the workers setting, kv `workers`)
+# A job that isn't a trial's arm, or is the arm Riggy picked: one whose work goes to main (trials.py).
+ON_MAIN = " AND (trial IS NULL OR EXISTS (SELECT 1 FROM trials WHERE trials.id = jobs.trial AND trials.pick = jobs.arm))"
 CHANGES_AT_ONCE = (1, 2, 3, 4)  # what a project's parallel_jobs can be
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
@@ -376,6 +396,22 @@ REPORT_PLACE = ("job_id", "step_id", "run_id", "slug", "label", "model", "versio
 
 
 @dataclass
+class Trial:
+    """A request run two ways on one project (trials.py): its arms are jobs, a and b."""
+
+    id: int
+    slug: str
+    request: str
+    title: str
+    base: str  # the commit of main both arms start from; "" until the first has set up
+    issue: int | None  # the issue both arms work on
+    pick: str  # a | b | neither once Riggy has decided; "" until then
+    note: str
+    created_at: str
+    decided_at: str | None = None
+
+
+@dataclass
 class Shipment:
     """Changes on one project shipping together (shipments.py): the carrier's ship steps ship them
     all, and the others' go by as done once it has."""
@@ -452,6 +488,8 @@ class Job:
     graph: str = ""  # JSON: its own flattened copy (engine.flatten), kept as its record; "" until it starts
     graph_hash: str = ""
     vars: str = "{}"  # JSON: counters, settings for blocks still to come, the loop guard (engine.blank_vars)
+    trial: int | None = None  # the trial it's an arm of (trials.py), if any
+    arm: str = ""  # which arm, a or b; "" for a job that isn't one
 
 
 # A job's columns but those only its own page needs (its graph and vars, which can be large): for listing many.
@@ -616,6 +654,7 @@ class Store:
             self.db.execute("UPDATE jobs SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE proposals SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE shipments SET slug = ? WHERE slug = ?", (new, old))
+            self.db.execute("UPDATE trials SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE cards SET slug = ? WHERE slug = ?", (new, old))
             self.db.execute("UPDATE messages SET channel = ? WHERE channel = ?", (new, old))
             self.db.execute("DELETE FROM projects WHERE slug = ?", (old,))
@@ -632,6 +671,7 @@ class Store:
             self.db.execute(f"DELETE FROM steps WHERE job_id IN ({jobs})", (slug,))
             self.db.execute("DELETE FROM proposals WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM shipments WHERE slug = ?", (slug,))
+            self.db.execute("DELETE FROM trials WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM jobs WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM cards WHERE slug = ?", (slug,))
             self.db.execute("DELETE FROM messages WHERE channel = ?", (slug,))
@@ -797,11 +837,13 @@ class Store:
         self.db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
         return self.job(job_id)
 
-    def change_jobs(self, slug: str) -> list[Job]:
-        """The project's unfinished jobs that change it (not questions or proposals), oldest first."""
+    def change_jobs(self, slug: str, arms: bool = False) -> list[Job]:
+        """The project's unfinished jobs that change it (not questions or proposals), oldest first.
+        A trial's arms only change it once Riggy picks one (trials.py): until then they take no
+        turns and nothing waits for them, so they're left out unless `arms`."""
         marks, looks = ", ".join("?" * len(ACTIVE)), ", ".join("?" * len(LOOKS))
         rows = self.db.execute(
-            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}) AND start NOT IN ({looks}) ORDER BY id",
+            f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}) AND start NOT IN ({looks}){'' if arms else ON_MAIN} ORDER BY id",
             (slug, *ACTIVE, *LOOKS),
         )
         return [Job(**r) for r in rows]
@@ -817,10 +859,10 @@ class Store:
 
     def active_job(self, slug: str, questions: bool = True) -> Job | None:
         """The project's oldest unfinished job, if any. A question or a look for proposals can
-        come in between its changes (`questions=False` leaves them out); a project allows one
-        change at a time unless it says more (room_for_change)."""
+        come in between its changes (`questions=False` leaves them out, and a trial's arms not yet
+        picked: change_jobs); a project allows one change at a time unless it says more (room_for_change)."""
         marks = ", ".join("?" * len(ACTIVE))
-        skip = "" if questions else f" AND start NOT IN ({', '.join('?' * len(LOOKS))})"
+        skip = "" if questions else f" AND start NOT IN ({', '.join('?' * len(LOOKS))}){ON_MAIN}"
         row = self.db.execute(
             f"SELECT * FROM jobs WHERE slug = ? AND state IN ({marks}){skip} ORDER BY id LIMIT 1",
             (slug, *ACTIVE, *(() if questions else LOOKS)),
@@ -1019,6 +1061,38 @@ class Store:
             (job_id,),
         )
         return [_shipment(r) for r in rows]
+
+    # --- trials (trials.py) ----------------------------------------------------------
+
+    def add_trial(self, slug: str, request: str, title: str = "") -> Trial:
+        cur = self.db.execute("INSERT INTO trials (slug, request, title, created_at) VALUES (?, ?, ?, ?)", (slug, request, title, now()))
+        return self.trial(cur.lastrowid)
+
+    def trial(self, trial_id: int | None) -> Trial | None:
+        row = self.db.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone() if trial_id else None
+        return Trial(**row) if row else None
+
+    def trials(self, slug: str = "", limit: int = 100) -> list[Trial]:
+        """The latest trials first: a project's, or every project's."""
+        where, args = ("WHERE slug = ?", (slug,)) if slug else ("", ())
+        return [Trial(**r) for r in self.db.execute(f"SELECT * FROM trials {where} ORDER BY id DESC LIMIT ?", (*args, limit))]
+
+    def update_trial(self, trial_id: int, **fields) -> Trial:
+        columns = ", ".join(f"{name} = ?" for name in fields)
+        self.db.execute(f"UPDATE trials SET {columns} WHERE id = ?", (*fields.values(), trial_id))
+        return self.trial(trial_id)
+
+    def arms(self, trial_id: int) -> list[Job]:
+        """A trial's jobs, a then b."""
+        return [Job(**r) for r in self.db.execute("SELECT * FROM jobs WHERE trial = ? ORDER BY arm, id", (trial_id,))]
+
+    def on_trial(self, job: Job) -> bool:
+        """Whether the job is a trial's arm Riggy hasn't picked (yet): its work stays on its own
+        branch and PR, and it takes no turns on its project (trials.py)."""
+        if not job.trial:
+            return False
+        trial = self.trial(job.trial)
+        return trial is None or trial.pick != job.arm
 
     def end_shipment(self, shipment_id: int, state: str) -> Shipment:
         assert state in ("shipped", "dropped"), state

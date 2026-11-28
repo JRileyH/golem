@@ -40,7 +40,7 @@ from starlette.routing import Host, Route, Router
 
 from . import brand, config, conversation, gallery, home, insights, intake, ledger, options, pages, plan, pwa, turns
 from . import now as now_page
-from . import jobhistory, modes, newproject, projectpage, reports, reportspage, triage
+from . import jobhistory, modes, newproject, projectpage, reports, reportspage, trials, trialspage, triage
 from .cards import fallback
 from .config import Settings
 from .control import Control, ControlError
@@ -240,7 +240,7 @@ def create_app(
         if project.parallel_jobs <= 1:
             return [main], jobs
         ctx = context(datetime.now(UTC))
-        more = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in store.change_jobs(project.slug) if not main.job or j.id != main.job.id]
+        more = [lane(j, project, ctx["order"].get(j.id), signed, ctx) for j in store.change_jobs(project.slug, arms=True) if not main.job or j.id != main.job.id]
         return [main, *more], jobs
 
     def nav() -> list[NavProject]:
@@ -250,7 +250,7 @@ def create_app(
         for p in sorted(store.projects(), key=lambda p: p.name.lower()):
             job = store.active_job(p.slug)
             if p.parallel_jobs > 1:  # several changes: one waiting on Riggy shows first, then one working
-                changes = store.change_jobs(p.slug)
+                changes = store.change_jobs(p.slug, arms=True)
                 job = next((j for j in changes if j.state == "waiting"), None) or next((j for j in changes if j.state == "running"), job)
             state = job.state if job and job.state in ("waiting", "running") and not p.paused else ""
             out.append(NavProject(p.slug, p.name, palette.get(p.slug, 1), state))
@@ -393,6 +393,38 @@ def create_app(
             body = reportspage.page(rows, state, source, datetime.now(UTC), triage_info())
         return respond(request, "Reports", body, signed, here="reports", up=("/settings", "Settings"))
 
+    async def trials_page(request: Request) -> Response:
+        """Every trial (trialspage.py)."""
+        signed = signed_in(request)
+        rows = []
+        for trial in store.trials(limit=200):
+            arms = store.arms(trial.id)
+            rows.append((trial, store.project(trial.slug), arms, trials.state(trial, arms, {j.id: store.steps(j.id) for j in arms})))
+        return respond(request, "Trials", trialspage.index(rows, signed), signed, here="trials", up=("/settings", "Settings"))
+
+    async def trial_page(request: Request) -> Response:
+        """A trial's arms side by side, and Riggy's pick (trialspage.py)."""
+        trial = store.trial(request.path_params["trial_id"])
+        if trial is None:
+            return HTMLResponse("No such trial.", 404)
+        signed, now = signed_in(request), datetime.now(UTC)
+        arms = store.arms(trial.id)
+        steps = {j.id: store.steps(j.id) for j in arms}
+        sides = [trials.side(j, steps[j.id], store.runs(j.id), now) for j in arms]
+        part = trialspage.page(trial, store.project(trial.slug), sides, trials.state(trial, arms, steps), signed, now)
+        return respond(request, f"Trial {trial.id}", pages.region("trial", part), signed, here="trials", up=("/trials", "Trials"),
+                       parts={"trial": part})  # fmt: skip
+
+    async def trial_csv(request: Request) -> Response:
+        """A trial's arms in compare.py's CSV: what was said is in it, so signed in only."""
+        trial = store.trial(request.path_params["trial_id"])
+        if trial is None:
+            return HTMLResponse("No such trial.", 404)
+        if not signed_in(request):
+            return _back({"back": f"/trials/{trial.id}"}, "Sign in (Settings) to download a trial.")
+        headers = {"Content-Disposition": f"attachment; filename=trial-{trial.id}.csv", "Cache-Control": "no-store"}
+        return Response(trials.csv(store, settings, trial), media_type="text/csv; charset=utf-8", headers=headers)
+
     def triage_info() -> reportspage.Triage:
         """golem's triage of the reports about itself, for the Reports page (triage.py)."""
         jobs = []
@@ -530,13 +562,21 @@ def create_app(
         if not bot:
             return _back(form, "golem can't take that here.")
         text = form.get("text", "").strip()[:8000]
-        mode = form.get("mode", "auto")
+        mode, compare = form.get("mode", "auto"), form.get("compare", "")
         if not text:
             return _back(form, "Write something first.")
         if mode not in ("auto", "") and mode not in modes.load():
             return _back(form, f"There's no mode called {mode}.")
-        job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode)
-        return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.")
+        if compare and compare not in modes.load():
+            return _back(form, f"There's no mode called {compare}.")
+        if compare and (going := trials.open_trial(store, project.slug)):
+            return _back(form, f"Trial {going.id} on {project.name} is waiting for your pick: one trial at a time on a project.")
+        job = await bot.ask(project, text, workflow=form.get("workflow", ""), mode=None if mode == "auto" else mode, compare=compare)
+        if job.trial:
+            arms = store.arms(job.trial)
+            return _back({"back": f"/trials/{job.trial}"}, f"Started trial {job.trial}: jobs {' and '.join(f'#{j.id}' for j in arms)}.")
+        unasked = " It's a question, so there's nothing to compare." if compare else ""
+        return _back({"back": projectpage.href(job)}, f"Started job #{job.id}: {plan.title(job)}.{unasked}")
 
     async def project_history(request: Request) -> Response:
         """What was said in a project's conversation, before jobs had their own activity: read-only."""
@@ -770,6 +810,8 @@ def create_app(
                     message = control.delete_tag(form.get("name", ""))
                 case "note":
                     message = await control.note(job, value, step, position)
+                case "trial-pick":
+                    message = await control.pick_arm(_int(form.get("trial")), value, form.get("note", ""))
                 case "rename":
                     message = control.rename(slug, value)
                 case "project-slug" | "project-delete":
@@ -856,6 +898,9 @@ def create_app(
             Route("/steps/{step_id:int}", step_page),
             Route("/insights", insights_page),
             Route("/reports", reports_page),
+            Route("/trials", trials_page),
+            Route("/trials/{trial_id:int}", trial_page),
+            Route("/trials/{trial_id:int}/csv", trial_csv),
             Route("/reports/proposals/{proposal_id:int}", fix_page),
             Route("/login", login, methods=["POST"]),
             Route("/logout", logout, methods=["POST"]),

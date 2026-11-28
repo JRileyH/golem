@@ -24,6 +24,7 @@ LABELS = {
     "deploy": "deploy",
     "checkin": "your check-in",
     "choose": "your pick",
+    "pick": "trial pick",
     "alert": "done",
     "refresh": "catch up",
     "answer": "your answer",
@@ -34,7 +35,7 @@ LABELS = {
 }
 TITLE_CHARS = 60  # a job's title (title)
 # Golem's steps that wait for Riggy's reply: the time they take is his, not the work's.
-ASKS = ("checkin", "choose")
+ASKS = ("checkin", "choose", "pick")
 # What each kind of step does to a project, by golem's step kind or an agent step's name: changes
 # on one project take turns at "build" (writing the code) and "ship" (push to deploy), and
 # overlap at the rest (turns.py). plan: specs, options, a design round, setup. finish: review,
@@ -44,7 +45,7 @@ CLASSES = {
     "scaffold": "build", "mvp": "build", "buildout": "build", "build": "build", "change": "build", "adopt": "build",
     "guide": "build", "apply": "build",
     "review": "finish", "second-pass": "finish", "docs": "finish", "alert": "finish", "test": "finish",
-    "checkin": "wait", "choose": "wait",
+    "checkin": "wait", "choose": "wait", "pick": "wait",
     "push": "ship", "pr": "ship", "checks": "ship", "merge": "ship", "deploy": "ship",
     "refresh": "look", "examine": "look", "answer": "look", "propose": "look", "proposals": "look", "triage": "look",
 }  # fmt: skip
@@ -147,7 +148,14 @@ def preview(settings: Settings, store: Store, job: Job) -> dict | None:
     wf = library.get(key)
     if wf is None or wf.start != job.start:
         wf = library.fallback(job.start)
-    return library.pin(wf, job.start, mode_of(store, job)) if wf else None
+    if wf is None:
+        return None
+    snap = library.pin(wf, job.start, mode_of(store, job))
+    if job.trial:  # an arm's: it waits for Riggy's pick at the end (trials.py)
+        from .trials import with_pick
+
+        snap = with_pick(snap)
+    return snap
 
 
 def block_of(settings: Settings, store: Store, job: Job, step: Step) -> dict | None:

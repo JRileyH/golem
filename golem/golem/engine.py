@@ -31,7 +31,9 @@ CODE = {
     "setup": ("next",), "vet": ("next",), "refresh": ("next",), "push": ("next",),
     "pr": ("next",), "checks": ("pass", "fail"), "merge": ("next",), "deploy": ("pass", "fail"),
     "answer": ("next",), "proposals": ("next",), "test": ("pass", "fail"),
+    "pick": ("end", "ship"),  # a trial's arm waiting for Riggy's pick (trials.py): only golem puts one in
 }  # fmt: skip
+GOLEMS = ("pick",)  # golem's own blocks that only golem puts in a job's copy: no workflow file can
 # Golem's own blocks that ship: one change at a time per project goes from push to deploy (turns.py).
 SHIPS = ("push", "pr", "checks", "merge", "deploy")
 # Blocks golem passes through on the way, leaving a row each, already done.

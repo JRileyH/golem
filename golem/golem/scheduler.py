@@ -24,6 +24,9 @@ conflicts, are steps golem puts in itself.
 Adopting a repo golem didn't make starts with `vet` (adopt.py): golem's own checks and a
 survey that changes nothing. Something blocking and golem forgets the project and says why;
 otherwise the job goes on like any other that ships.
+
+A trial's two arms (trials.py) run in worker slots of their own, from the same commit of main,
+and leave their work on their PRs until Riggy picks one: the one he picks ships the usual way.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import about, adopt, engine, glance, modes, options, plan, proposals, reports, shipments, stages, teardown, triage, turns
+from . import about, adopt, engine, glance, modes, options, plan, proposals, reports, shipments, stages, teardown, trials, triage, turns
 from .workflows import Library, parts_for
 from .cards import Cards
 from .config import Settings
@@ -52,7 +55,7 @@ from .history import records
 from .talk import STATUS, Talk
 from .upgrade import Upgrades
 from .prompts import Prompts
-from .store import ACTIVE, INTERNAL, LOOKS, MAX_WORKERS, TRIAGE, Job, Project, Proposal, Shipment, Step, Store, later, now
+from .store import ACTIVE, INTERNAL, LOOKS, MAX_WORKERS, TRIAGE, Job, Project, Proposal, Shipment, Step, Store, Trial, later, now
 from .watch import Steps, Tail, span
 from .workspace import JOB_BRANCHES, Workspace, WorkspaceError
 
@@ -108,6 +111,7 @@ class Running:
     slug: str
     slot: int
     task: asyncio.Task
+    own: bool = False  # a trial's arm (trials.py): in a slot of its own, beside the workers setting's
 
 
 @dataclass
@@ -161,6 +165,7 @@ class Scheduler:
         self.library = Library(store, settings.process_dir / "workflows", settings.web_password)
         self.running: dict[int, Running] = {}  # by job id
         self.shipping_out: set[int] = set()  # shipments whose riders are being seen out (ship_out)
+        self.trial_locks: dict[int, asyncio.Lock] = {}  # by trial: its arms set up one at a time (do_setup)
         self._wake = asyncio.Event()
 
     # --- control --------------------------------------------------------------
@@ -181,6 +186,10 @@ class Scheduler:
         """How many steps may run at once, across projects (set on the settings page). One by default."""
         value = self.store.get("workers") or "1"
         return min(max(int(value), 1), MAX_WORKERS) if value.isdigit() else 1
+
+    def counted(self) -> int:
+        """The steps running in the workers setting's slots: a trial's arms run in slots of their own."""
+        return sum(1 for r in self.running.values() if not r.own)
 
     def running_jobs(self) -> list[Job]:
         """The jobs whose current step is running, in the order they started."""
@@ -243,13 +252,17 @@ class Scheduler:
                 r.task.cancel()
             raise
 
-    def pick(self, at: str | None = None) -> Job | None:
+    def pick(self, at: str | None = None, full: bool = False) -> Job | None:
         """The next job to start a step of: the highest priority queued one that can go. On a
         project that allows several changes at once, a job goes unless another has the turn its
-        step needs (turns.py); otherwise a project's steps run one at a time."""
-        busy = {r.slug for r in self.running.values()}
+        step needs (turns.py); otherwise a project's steps run one at a time. A trial's arm not
+        yet picked goes beside anything, in a slot of its own (trials.py): with every other slot
+        taken (`full`), only one of those can."""
+        busy = {r.slug for r in self.running.values() if not r.own}
         for job in self.store.ready_jobs(at):
-            if job.id in self.running or turns.behind(self.store, job) is not None:  # it waits to start: in order
+            if job.id in self.running or (full and not self.store.on_trial(job)):
+                continue
+            if turns.behind(self.store, job) is not None:  # it waits to start: in order
                 continue
             if shipments.rides(self.store, job):  # another job's ship steps are shipping its work (shipments.py)
                 continue
@@ -262,19 +275,20 @@ class Scheduler:
 
     def side_by_side(self, job: Job) -> bool:
         """Whether the job's steps can run beside others on its project: each job in a tree of
-        its own, on a project that allows more than one change at once, with nothing from before
-        trees under way there."""
+        its own, on a project that allows more than one change at once (or as a trial's arm),
+        with nothing from before trees under way there."""
         project = self.store.project(job.slug)
-        if not job.worktree or project is None or project.parallel_jobs <= 1:
+        if not job.worktree or project is None or (project.parallel_jobs <= 1 and not self.store.on_trial(job)):
             return False
-        others = self.store.change_jobs(job.slug) + [j for j in self.running_jobs() if j.slug == job.slug]
+        others = self.store.change_jobs(job.slug, arms=True) + [j for j in self.running_jobs() if j.slug == job.slug]
         return all(j.worktree for j in others)
 
     def fill(self) -> bool:
         """Start steps while there's a free worker slot and a job to give it. Whether any started.
-        With fewer slots than are running (the setting was lowered), nothing new starts."""
+        With fewer slots than are running (the setting was lowered), nothing new starts. A trial's
+        arms run in slots of their own, so neither waits for one (trials.py)."""
         started = False
-        while len(self.running) < self.workers and (job := self.pick()) is not None:
+        while (job := self.pick(full=self.counted() >= self.workers)) is not None:
             self.dispatch(job)
             started = True
         return started
@@ -285,7 +299,7 @@ class Scheduler:
         self.prepare(job)
         taken = {r.slot for r in self.running.values()}
         slot = next(i for i in range(len(taken) + 1) if i not in taken)
-        self.running[job.id] = Running(job.slug, slot, asyncio.create_task(self.work(job)))
+        self.running[job.id] = Running(job.slug, slot, asyncio.create_task(self.work(job)), own=self.store.on_trial(job))
 
     async def work(self, job: Job) -> None:
         """A step in its slot, giving the slot back when it ends however it ends."""
@@ -311,7 +325,7 @@ class Scheduler:
 
     def propose(self) -> Job | None:
         """With nothing else to do (a worker spare), a proposals job for the project most overdue for one."""
-        project = proposals.due(self.store, datetime.now(UTC), spare=len(self.running) < self.workers)
+        project = proposals.due(self.store, datetime.now(UTC), spare=self.counted() < self.workers)
         if project is None:
             return None
         job = proposals.start(self.store, project)
@@ -321,7 +335,7 @@ class Scheduler:
     def triage_reports(self) -> Job | None:
         """With nothing else to do (a worker spare), golem's triage of the reports about itself, if
         it's on and they're due one (triage.py)."""
-        if not triage.due(self.store, datetime.now(UTC), spare=len(self.running) < self.workers):
+        if not triage.due(self.store, datetime.now(UTC), spare=self.counted() < self.workers):
             return None
         job = triage.start(self.store)
         log.info("job %s: %s", job.id, job.request)
@@ -383,6 +397,8 @@ class Scheduler:
             wf = fallback
         wf = self.library.instead(wf, mode)
         snap = self.library.pin(wf, job.start, mode)
+        if job.trial:  # an arm: it waits for Riggy's pick at the end (trials.py)
+            snap = trials.with_pick(snap)
         return self.store.update_job(job.id, workflow=wf.key, mode=mode.key, graph=json.dumps(snap), graph_hash=engine.digest(snap))
 
     def insert(self, job_id: int, steps: list[Step], after: int) -> None:
@@ -418,11 +434,15 @@ class Scheduler:
     def needs_sync(self, job: Job, steps: list[Step], step: Step) -> bool:
         """Whether a change's branch should catch up with main before this step: the first of a
         turn at building or shipping, on a project where changes take turns. Others may have
-        shipped since it branched; building and shipping start from what's live."""
+        shipped since it branched; building and shipping start from what's live. A trial's arm
+        stays on the commit its trial started from until Riggy picks it, and the one he picks
+        catches up wherever it is: main moved on while it waited (trials.py)."""
         if job.kind != "change" or job.start in LOOKS or not job.worktree or step.started_at or step.kind == "sync":
             return False
+        if self.store.on_trial(job):
+            return False
         project = self.store.project(job.slug)
-        if project is None or project.parallel_jobs <= 1 or plan.turn_of(steps, step) not in turns.TURNS:
+        if project is None or (project.parallel_jobs <= 1 and not job.trial) or plan.turn_of(steps, step) not in turns.TURNS:
             return False
         return plan.run_before(steps, step)[0].position == step.position  # a catch-up before it would be in its turn
 
@@ -1005,7 +1025,9 @@ class Scheduler:
         await self.workspace.ensure_repo(slug, project.summary)
         await self.workspace.ensure_main(slug, f"# {project.name}\n\nLive at {url}\n\n{project.summary}\n")
         await self.workspace.sync_main(slug)
-        if job.worktree:  # the job's own, from the latest main
+        if job.trial:  # an arm: from the commit of main its trial started from, on the trial's issue
+            job = await self.arm_setup(job, project)
+        elif job.worktree:  # the job's own, from the latest main
             await self.workspace.ensure_tree(slug, job.id)
         if job.kind == "adopt" and job.issue is None:  # before its own issue, which would look like one of them
             await self.bring_back_history(job, project)
@@ -1028,12 +1050,30 @@ class Scheduler:
             await self.say(project, f"Making options: {plan.title(job)}", notice=True)
         elif job.workflow == "design":
             await self.say(project, f"Making design directions: {plan.title(job)}", notice=True)
+        elif job.trial:
+            await self.say(project, f"Working on it, as {trials.label(job)} ({trials.mode_name(job)}): {plan.title(job)}", notice=True)
         elif job.kind == "change":
             await self.say(project, f"Working on it: {plan.title(job)}", notice=True)
         links = {"repo": self.settings.repo_url(slug)}
         if job.issue:
             links["issue"] = f"{self.settings.repo_url(slug)}/issues/{job.issue}"
         return Outcome("done", "Repo, checkout and issue ready.", links)
+
+    async def arm_setup(self, job: Job, project: Project) -> Job:
+        """A trial's arm's tree, at the commit of main its trial started from (the first arm to
+        set up says which), and the trial's issue, opened by the first: both arms start alike."""
+        async with self.trial_locks.setdefault(job.trial, asyncio.Lock()):
+            trial = self.store.trial(job.trial)
+            if not trial.base:
+                trial = self.store.update_trial(trial.id, base=await self.workspace.main_sha(project.slug))
+            if job.worktree:
+                await self.workspace.ensure_tree(project.slug, job.id, at=trial.base)
+            if job.issue is None:
+                if trial.issue is None:
+                    body = f"Requested:\n\n> {job.request}\n\nWorked on by golem two ways, as trial {trial.id} (jobs {', '.join(str(j.id) for j in self.store.arms(trial.id))})."
+                    trial = self.store.update_trial(trial.id, issue=await self.workspace.open_issue(project.slug, plan.title(job), body))
+                job = self.store.update_job(job.id, issue=trial.issue)
+        return job
 
     async def bring_back_history(self, job: Job, project: Project) -> None:
         """An adopted repo's past golem jobs, from its issues and PRs (history.py), as finished jobs
@@ -1164,7 +1204,12 @@ class Scheduler:
         for rider in riders:
             at = plan.current(self.store.steps(rider.id))
             parts.append(self.pr_part(rider, project, at, rider=True) if at else (plan.title(rider), "", ""))
-        if not riders:
+        if job.trial:  # an arm's: it merges only if Riggy picks it (trials.py)
+            title, issue, work = parts[0]
+            said = (f"Opened by golem (job {job.id}) as {trials.label(job)}, in {trials.mode_name(job)}: the same request is being "
+                    f"worked on another way beside it. golem merges this only if it's the one picked.")  # fmt: skip
+            body = "\n\n".join([p for p in (issue, work) if p] + [said])
+        elif not riders:
             title, issue, work = parts[0]
             body = "\n\n".join([p for p in (issue, work) if p] + [f"Opened by golem (job {job.id}); it merges this once CI passes."])
         else:
@@ -1198,6 +1243,8 @@ class Scheduler:
         return self.carrying(job, await self.wait_for_ci(project, step, pr.sha, f"PR #{pr.number}"))
 
     async def do_merge(self, job: Job, project: Project, step: Step) -> Outcome:
+        if self.store.on_trial(job):
+            return Outcome("skipped", "Not merged: a trial's arm waits on its PR until you pick one.")
         pr = await self.workspace.pull_request(project.slug, self.branch(job))
         if pr is None:
             # An earlier try GitHub carried out though it answered with an error: finish it.
@@ -1213,7 +1260,10 @@ class Scheduler:
 
     async def do_deploy(self, job: Job, project: Project, step: Step) -> Outcome:
         """Deploy main once its CI passes; done only when the deployer has the site answering.
-        Skipped if this job already deployed that commit (nothing new since: a skipped design pass)."""
+        Skipped if this job already deployed that commit (nothing new since: a skipped design pass),
+        and by a trial's arm until it's picked: nothing of its is on main."""
+        if self.store.on_trial(job):
+            return Outcome("skipped", "Not deployed: a trial's arm ships only if you pick it.", port="pass")
         sha = await self.workspace.main_sha(project.slug)
         deployed = [s for s in self.store.steps(job.id) if s.kind == "deploy" and s.state == "done" and s.position < step.position]
         if deployed and deployed[-1].links.get("commit") == self.commit_url(project, sha):
@@ -1328,6 +1378,73 @@ class Scheduler:
         for i, image in enumerate(option.images):
             await self.send_image(project, folder / image, caption if i == 0 else f"{option.letter} ({i + 1})")
 
+    async def do_pick(self, job: Job, project: Project, step: Step) -> Outcome:
+        """A trial's arm, its work on its PR: wait for Riggy's pick on the Trials page (trials.py).
+        Picked, it goes back to its last push to ship (the next time here, past it to End);
+        otherwise on to End, which closes its PR."""
+        trial = self.store.trial(job.trial)
+        if trial is None:
+            return Outcome("done", "Not on trial any more.", port="end")
+        if trial.pick == job.arm:
+            shipped = any(s.kind == "pick" and s.port == "ship" for s in self.store.steps(job.id) if s.id != step.id)
+            return Outcome("done", "Shipped: you picked it." if shipped else "You picked it: shipping it.", port="end" if shipped else "ship")
+        if trial.pick:
+            return Outcome("done", f"Not shipped: {self.unpicked(trial)}.", port="end")
+        page = f"{self.settings.url('golem')}/trials/{trial.id}"
+        if step.state != "waiting":  # here for the first time: Riggy's told, once both arms are
+            others = [j for j in self.store.arms(trial.id) if j.id != job.id]
+            pending = [j for j in others if j.state in ACTIVE and not trials.at_pick(j, self.store.steps(j.id))]
+            pr = next((s.links["pr"] for s in reversed(self.store.steps(job.id)) if s.kind == "pr" and s.links.get("pr")), "")
+            done = _join(f"{trials.label(job, first=True)} ({trials.mode_name(job)}) is done" + (": its PR is open." if pr else "."), pr)
+            if pending:
+                await self.say(project, f"{done}\nWaiting for {', '.join(trials.label(j) for j in pending)} before you pick.", notice=True)
+            else:
+                await self.say(project, f"{done}\nTrial {trial.id} is ready: compare its arms and pick one to ship.\n{page}")
+        return Outcome("checkin", f"Waiting for your pick: trial {trial.id}.")
+
+    def unpicked(self, trial: Trial | None) -> str:
+        """Why an arm isn't shipping, in words: "you picked arm B", "you picked neither"."""
+        if trial is None or not trial.pick:
+            return "nobody picked it"
+        return f"you picked arm {trial.pick.upper()}" if trial.pick in trials.ARMS else "you picked neither"
+
+    async def decide(self, trial: Trial, pick: str, note: str = "") -> str:
+        """Riggy's pick of a trial's arm, or neither (trials.py), with what he said about it: the
+        arm he picked ships, the other closes its PR. An arm still working stops: there's no
+        more to compare."""
+        if trial.pick:
+            raise ValueError(f"Trial {trial.id} is decided already: {self.unpicked(trial)}.")
+        if pick not in (*trials.ARMS, trials.NEITHER):
+            raise ValueError("Pick A, B or neither.")
+        arms = self.store.arms(trial.id)
+        chosen = next((j for j in arms if j.arm == pick), None)
+        if pick != trials.NEITHER and (chosen is None or not trials.at_pick(chosen, self.store.steps(chosen.id))):
+            raise ValueError(f"Arm {pick.upper()} isn't ready to pick: it's done once it's waiting for you.")
+        trial = self.store.update_trial(trial.id, pick=pick, note=note.strip()[:4000], decided_at=now())
+        project = self.store.project(trial.slug)
+        why = self.unpicked(trial)
+        for job in arms:
+            if job.state in ACTIVE and trials.at_pick(job, self.store.steps(job.id)):
+                self.store.update_job(job.id, state="queued", attempts=0)  # on from its pick: to ship, or to close its PR
+            elif job.arm != pick:  # still working, or over: its PR (if any) goes
+                if job.state in ACTIVE:
+                    self.kill(job.id)
+                await self.close_arm(job, f"Closed: {why}.")
+        if pick == trials.NEITHER and trial.issue and project:
+            await self.workspace.close_issue(trial.slug, trial.issue, _join(f"Neither arm of trial {trial.id} was picked.", note.strip()))
+        said = f"Trial {trial.id}: {why}." + (f" “{_first_line(note, 200)}”" if note.strip() else "")
+        if project:
+            await self.say(project, said + (" Shipping it." if chosen and pick != trials.NEITHER else ""), notice=True, job=chosen or arms[0])
+        self.wake()
+        return said
+
+    async def close_arm(self, job: Job, comment: str) -> None:
+        """An arm's PR closed, its branch gone from GitHub. Best effort: it's only tidying."""
+        try:
+            await self.workspace.close_pr(job.slug, self.branch(job), comment)
+        except WorkspaceError as e:
+            log.warning("closing job %s's PR: %s", job.id, e)
+
     async def do_test(self, job: Job, project: Project, step: Step) -> Outcome:
         """A Test block: the project's own `bin/test`, run in the job's checkout (run)."""
         block = plan.node(job, step) or {}
@@ -1379,6 +1496,11 @@ class Scheduler:
         """The End of a job's workflow: Riggy told it's done, its issue closed if no PR did, and
         its card brought up to date. Live only if it deployed (or was live already): a workflow
         needn't deploy."""
+        if self.store.on_trial(job):  # an arm Riggy didn't pick: its PR goes, and the issue stays for the other's
+            why = self.unpicked(self.store.trial(job.trial))
+            await self.close_arm(job, f"Closed: {why}.")
+            await self.say(project, f"Closed {trials.label(job)}'s PR: {why}.", notice=True)
+            return Outcome("done", f"Closed its PR: {why}.")
         url = self.settings.project_url(project.slug)
         steps = self.store.steps(job.id)
         live = any(s.kind == "deploy" and s.state == "done" for s in steps) or self.store.card(project.slug) is not None

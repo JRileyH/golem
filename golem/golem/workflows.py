@@ -143,7 +143,7 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
     if isinstance(item, str):
         if item == "end":
             return {"type": "end", "_id": "end"}, {}
-        if item not in engine.CODE:
+        if item not in engine.CODE or item in engine.GOLEMS:
             raise ValueError(f"unknown block {item!r}")
         return {"type": item, "_id": item}, {}
     item = {("true" if k is True else "false" if k is False else k): v for k, v in item.items()}
@@ -171,7 +171,7 @@ def _block(item: str | dict, sections: dict[str, str]) -> tuple[dict, dict[str, 
         node.pop("id", None)
         return {**node, "_id": settings.get("id", node["name"])}, wires
     if kind == "do":
-        if value not in engine.CODE:
+        if value not in engine.CODE or value in engine.GOLEMS:
             raise ValueError(f"unknown block {value!r}")
         return {"type": value, "_id": settings.get("id", value)}, wires
     if kind == "use":

@@ -67,7 +67,8 @@ def modes_card(found: dict[str, modes.Mode], default_mode: str, signed_in: bool)
         "<section class=card id=modes><h2>Modes</h2><p class=sub>How golem works: who does the agent steps, on which "
         "models, with which texts. A request runs in the mode it asks for, else its project's default, else golem's "
         "(below). Each mode is files in golem's repo (<code>modes/</code>), and a job keeps the mode it started in.</p>"
-        f"{pick}<ul class=links-list>{items}</ul></section>"
+        f"{pick}<ul class=links-list>{items}</ul>"
+        "<p class=hint><a href=/trials>Trials ›</a> run one request in two modes side by side, for you to pick one to ship.</p></section>"
     )
 
 

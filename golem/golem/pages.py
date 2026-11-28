@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from pathlib import Path
 
-from . import brand, glance, options, plan, progress, pwa
+from . import brand, glance, options, plan, progress, pwa, trials
 from .control import SKIPPED
 from .glance import Glance
 from .insights import Eta, Report, Tally, estimate
@@ -32,7 +32,7 @@ from .watch import span
 ICONS = {"done": "✓", "skipped": "–", "running": "▶", "waiting": "?", "failed": "✗", "pending": ""}
 TABS = (("now", "/", "Now"), ("projects", "/p", "Projects"), ("settings", "/settings", "Settings"))
 # Which tab a page is under: any other (a project's, a job's, a new project) is under Projects.
-TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "reports": "settings"}
+TAB_OF = {"now": "now", "settings": "settings", "insights": "settings", "reports": "settings", "trials": "settings"}
 # What golem's own steps do, for their sheets.
 DOES = {
     "setup": "Makes sure the repo, the checkout and the job's issue exist.",
@@ -51,6 +51,8 @@ DOES = {
     "answer": "Sends you the answer. A question changes nothing: no commits, pushes or deploys.",
     "sync": "Brings the job's branch up to date with main where its turn at building or shipping begins, when "
     "changes on a project take turns. If what shipped since conflicts with it, a resolve step goes in to merge them.",
+    "pick": "A trial's arm, its work on its PR, waits for your pick on the Trials page. The arm you pick ships from "
+    "its push on; the other closes its PR.",
 }
 
 
@@ -244,7 +246,7 @@ def headline(lane: LaneData, now: datetime) -> str:
         return "Paused: nothing starts until it's resumed."
     if job.state == "waiting":
         step = plan.current(lane.steps)
-        asks = {"checkin": "Waiting for you to try it.", "choose": "Waiting for your pick."}
+        asks = {"checkin": "Waiting for you to try it.", "choose": "Waiting for your pick.", "pick": "Done: waiting for your pick in its trial."}
         return asks.get(step.kind if step else "", "Has a question for you." if job.resume_session else "Needs a hint from you.")
     piece = progress.current(progress.pieces(lane.steps))
     if piece is None:
@@ -319,6 +321,10 @@ def ask_card(lane: LaneData, signed_in: bool, back: str, reply: bool) -> str:
         body = f"<p>{escape(plan.last_said(lane.steps) or 'It’s live: have a look.')}</p><div class=row-form><a class=button href='{escape(lane.site)}' target=_blank rel=noopener>Try it ↗</a>"
         body += (skip_button(job, step, "Looks good, carry on", back=back) if signed_in else "") + "</div>"
         hint, placeholder = "Or say what to change.", "Looks good, or what to change…"
+    elif step.kind == "pick":  # a trial's arm: picked on the Trials page, side by side with the other
+        body = (f"<p>{escape(trials.label(job, first=True))} is done: compare it with the other arm and pick one to ship.</p>"
+                f"<div class=row-form><a class=button href='/trials/{job.trial}'>Compare them</a></div>")  # fmt: skip
+        return f"<section class='ask c{lane.color}'>{body}</section>"
     elif step.kind == "choose":
         made, shown = options.shown(lane.steps, step)
         design = options.design_of(made)
@@ -815,7 +821,8 @@ def _doing(lane: LaneData, s: Step, now: datetime) -> str:
         return f"{s.name}, {span(so_far)} in{about}"
     return {"checks": "waiting for CI", "deploy": "deploying", "merge": "merging", "pr": "opening a PR",
             "push": "pushing", "setup": "setting up",
-            "checkin": "waiting for you to try it", "choose": "waiting for your pick"}.get(s.kind, plan.label(s))  # fmt: skip
+            "checkin": "waiting for you to try it", "choose": "waiting for your pick",
+            "pick": "waiting for your pick of its trial's arms"}.get(s.kind, plan.label(s))  # fmt: skip
 
 
 def _waiting_words(lane: LaneData) -> str:
@@ -824,6 +831,8 @@ def _waiting_words(lane: LaneData) -> str:
         return "is waiting for you to try it"
     if step and step.kind == "choose":
         return "is waiting for you to pick an option"
+    if step and step.kind == "pick":
+        return "is waiting for you to pick one of its trial's arms"
     return "has a question for you" if lane.job.resume_session else "needs a hint from you"
 
 
@@ -1169,6 +1178,9 @@ main:has(> .project-grid) { max-width:min(100%, 78rem); }
 .proposals-now summary { cursor:pointer; list-style:none; } .proposals-now summary::-webkit-details-marker { display:none; }
 .proposals-now summary .count-pill { margin-left:auto; }
 .project-grid { display:grid; gap:.9rem; grid-template-columns:repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); align-items:start; }
+.arms { display:grid; gap:.9rem; grid-template-columns:repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); align-items:start; margin:.9rem 0; }
+.arm.picked { box-shadow:0 0 0 2px var(--accent); } .arm .better { color:var(--ink); }
+.pick-form textarea { width:100%; } .request { white-space:pre-wrap; margin:.5rem 0 0; }
 .project-card .meta { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; font-size:.85rem; margin:.3rem 0; }
 .project-card .latest { margin:.6rem 0 0; font-size:.9rem; }
 .tag-chip { font-size:.72rem; font-weight:700; padding:.05rem .45rem; border-radius:1px; background:var(--pc, var(--line)); color:#fff; }

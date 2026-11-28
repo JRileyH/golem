@@ -8,7 +8,8 @@ that need more than its settings.
   answer at once (adopt.py); then it's a project like any other, its job checking it over.
 - A request on a project's page: always a job of its own, queued behind any change under way
   (turns.py). The request call titles it and, unless Riggy picked them, says which workflow it's
-  for (a change, options first, a design pass, only an answer…).
+  for (a change, options first, a design pass, only an answer…). A change he asks to compare
+  with another mode is a trial: two jobs, one in each mode (trials.py).
 - Moving a project to a new address, and deleting one.
 
 One at a time, so two can't both take the same address.
@@ -20,7 +21,7 @@ import asyncio
 import logging
 import os
 
-from . import adopt, intake, options, plan, teardown
+from . import adopt, intake, modes, options, plan, teardown, trials
 from .config import Settings
 from .deployer_client import Deployer, DeployerError
 from .harness import Harness
@@ -164,10 +165,12 @@ class Bot:
 
     # --- requests on a project's page -------------------------------------------
 
-    async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None) -> Job:
+    async def ask(self, project: Project, text: str, *, workflow: str = "", mode: str | None = None, compare: str = "") -> Job:
         """What Riggy asked for on a project's page: always a job of its own, queued behind any
         change under way (turns.behind). The request call titles it and, unless he picked them,
-        says which workflow it's for. `mode` None for the project's default, "" for none."""
+        says which workflow it's for. `mode` None for the project's default, "" for none. A change
+        to `compare` with another mode is a trial (start_trial): its first arm's job. A question
+        has nothing to compare."""
         fallback = self.library.fallback("change")
         asked = await options.read_request(self.harness, self.settings, text, self.kinds(), fallback.key if fallback else "")
         picked = self.library.get(workflow)
@@ -175,9 +178,25 @@ class Bot:
             picked = self.library.get(asked.workflow) or fallback
         mode = plan.mode_for(project) if mode is None else plan.mode_for(None, mode)
         async with self.lock:
-            job = self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)
-        await self.chat.heard(project.slug, text, job=job.id)
-        return job
+            if compare in modes.load() and picked.start == "change":
+                jobs = self.start_trial(project, picked, mode, compare, text, asked.title)
+            else:
+                jobs = [self.start_job(project, picked, mode, text, asked.title, priority=QUESTION_PRIORITY if picked.start == "look" else 0)]
+        for job in jobs:  # each job's activity starts with what he said
+            await self.chat.heard(project.slug, text, job=job.id)
+        return jobs[0]
+
+    def start_trial(self, project: Project, wf: Builtin, mode: str, other: str, request: str, title: str = "") -> list[Job]:
+        """A request run two ways (trials.py): a job for each arm, A in `mode` (settled now, so
+        each arm says what it runs in from the start) and B in `other`."""
+        first = modes.chosen(mode, project.mode, self.store.get("default_mode") or "").key
+        trial = self.store.add_trial(project.slug, request, title)
+        jobs = []
+        for arm, key in zip(trials.ARMS, (first, other)):
+            job = self.store.add_job(project.slug, "change", request, wf.key, title=title, start=wf.start)
+            jobs.append(self.store.update_job(job.id, workflow=wf.key, mode=key, trial=trial.id, arm=arm))
+        self.scheduler.wake()
+        return jobs
 
     # --- a project's address, and deleting it -----------------------------------
 
